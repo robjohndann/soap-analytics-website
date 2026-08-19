@@ -1,0 +1,1274 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SOAP Analytics — School on a Page</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: Arial, Helvetica, sans-serif; background: #F0F4F8; color: #1B2A4A; }
+
+  header.top-bar {
+    background: #1B2A4A; padding: 0 3%; height: 60px;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .top-bar-actions { display: flex; align-items: center; gap: 14px; }
+  .print-btn {
+    background: #0D7377; color: #fff; border: none; border-radius: 6px;
+    font-family: Arial, Helvetica, sans-serif; font-weight: 700; font-size: 13px;
+    padding: 9px 18px; cursor: pointer;
+  }
+  .print-btn:hover { background: #0a5c5f; }
+  .back-link { color: rgba(255,255,255,0.7); text-decoration: none; font-size: 13px; }
+  .back-link:hover { color: #fff; }
+
+  .status-msg { max-width: 700px; margin: 60px auto; background: #fff; border-radius: 10px; padding: 30px; text-align: center; color: #5A6B80; }
+
+  .soap-sheet { max-width: 1500px; margin: 8px auto; padding: 0 1%; }
+
+  /* Masthead */
+  .masthead { display: grid; grid-template-columns: 160px 1fr 170px 130px; gap: 2px; margin-bottom: 2px; }
+  .badge-box { background: #1B2A4A; color: #fff; display: flex; align-items: center; justify-content: center; font-size: 11px; border-radius: 0; text-align: center; padding: 6px; }
+  .badge-box img { max-width: 100%; max-height: 46px; }
+  .title-box { background: #1B2A4A; color: #fff; display: flex; align-items: center; gap: 14px; padding: 0 20px; border-radius: 0; }
+  .title-box h1 { font-size: 20px; }
+  .current-period-box { background: #1B2A4A; color: #fff; border-radius: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 6px; }
+  .current-period-box .tag { font-size: 9px; letter-spacing: 1px; text-transform: uppercase; color: #3DCFB8; font-weight: 700; }
+  .current-period-box .period-name { font-size: 14px; font-weight: 700; color: #fff; margin-top: 4px; }
+  .period-box { background: #1B2A4A; color: #fff; border-radius: 0; display: flex; align-items: center; justify-content: center; text-align: center; padding: 6px; }
+  .period-box .slogan { font-size: 15px; font-weight: 700; font-style: italic; color: #3DCFB8; line-height: 1.3; }
+
+  .sub-header { background: #1B2A4A; color: #fff; border-radius: 0; padding: 4px 20px; font-size: 12px; margin-bottom: 2px; display: flex; justify-content: space-between; }
+  .sub-header .hint { color: rgba(255,255,255,0.5); font-style: italic; }
+  .sub-header .teal-text { color: #3DCFB8; }
+
+  /* Row bands & panels */
+  .band { display: flex; gap: 2px; margin-bottom: 2px; align-items: stretch; }
+  .band.wrap { flex-wrap: wrap; }
+  .panel { background: #9FE8CE; border-radius: 0; padding: 2px; flex: 1; min-width: 0; display: flex; flex-direction: column; border: 1px solid #1B2A4A; }
+  .panel-title { background: #1B2A4A; color: #fff; text-align: center; font-weight: 700; font-size: 10px; letter-spacing: 0.4px; text-transform: uppercase; padding: 3px; margin: -2px -2px 3px; }
+  .subpanel-title-navy { background: #1B2A4A; color: #fff; text-align: center; font-weight: 700; font-size: 10px; letter-spacing: 0.4px; text-transform: uppercase; padding: 3px; margin-bottom: 3px; }
+  .subpanel { margin-bottom: 3px; }
+  .subpanel-row { display: flex; gap: 3px; }
+  .subpanel-row .subpanel { flex: 1; min-width: 0; margin-bottom: 0; }
+  .subpanel:last-child { margin-bottom: 0; }
+  .subpanel-title { background: #1A7A6E; color: #fff; font-size: 8px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.2px; padding: 2px 5px; }
+
+  table.mini { width: 100%; border-collapse: collapse; font-size: 8px; background: #fff; }
+  table.mini th { background: #1B2A4A; color: #fff; padding: 1px 4px; font-weight: 600; white-space: nowrap; text-align: center; }
+  table.mini .gcse-divider { border-left: 2px solid #0D7377; }
+  table.mini .gcse-year-label { font-size: 10px; font-weight: 700; }
+  table.mini.wrap-headers th { white-space: normal; max-width: 65px; line-height: 1.15; }
+  table.mini td { padding: 1px 4px; border-bottom: 1px solid #E0E8E4; text-align: center; white-space: nowrap; }
+  table.mini.narrow-periods td:not(.rowlabel), table.mini.narrow-periods th:not(:first-child) { max-width: 26px; overflow: hidden; text-overflow: ellipsis; }
+  table.mini td.rowlabel { background: #DCEFE7; font-weight: 700; color: #1B2A4A; text-align: left; white-space: nowrap; }
+  table.mini.narrow-labels td.rowlabel { white-space: normal; line-height: 1.15; max-width: 68px; }
+  table.mini.tight-rowlabel td.rowlabel { width: 1%; white-space: nowrap; }
+  table.mini.narrow-labels th:not(:first-child), table.mini.narrow-labels td:not(.rowlabel) { max-width: 62px; }
+  table.mini.narrow-summary-cols th:nth-child(n+8), table.mini.narrow-summary-cols td:nth-child(n+8) { max-width: 34px; padding: 1px 2px; }
+  table.mini tbody tr:nth-child(even) td:not(.rowlabel):not([class*="rs-"]) { background: #F7FBF9; }
+
+  .section-band-title { background: #1B2A4A; color: #fff; text-align: center; font-weight: 700; font-size: 11px; letter-spacing: 0.4px; text-transform: uppercase; padding: 4px; border-radius: 0; margin: 6px 0 2px; }
+
+  .rating-scale { display: flex; margin-top: 14px; border-radius: 4px; overflow: hidden; font-size: 11px; font-weight: 700; text-align: center; }
+  .rating-scale div { flex: 1; padding: 8px; }
+  .rating-scale .rs-label { flex: 0 0 140px; background: #1B2A4A; color: #fff; }
+  .rs-exceptional { background: #B7DDF2; color: #1B2A4A; }
+  .rs-strong { background: #C7E6C7; color: #1B2A4A; }
+  .rs-expected { background: #E6EEDD; color: #1B2A4A; }
+  .rs-attention { background: #FBE1C6; color: #1B2A4A; }
+  .rs-urgent { background: #F3B8B8; color: #1B2A4A; }
+  .rs-ctx-1 { background: #FAF8FC; color: #1B2A4A; }
+  .rs-ctx-2 { background: #F1EAF7; color: #1B2A4A; }
+  .rs-ctx-3 { background: #E6D9F0; color: #1B2A4A; }
+  .rs-ctx-4 { background: #D8C3E6; color: #1B2A4A; }
+  .rs-ctx-5 { background: #C7A8D8; color: #1B2A4A; }
+  .ctx-key-btn {
+    background: rgba(255,255,255,0.22); color: #fff; border: 1px solid rgba(255,255,255,0.5);
+    border-radius: 3px; font-size: 7px; font-weight: 700; padding: 1px 5px; margin-left: 6px;
+    cursor: pointer; font-family: Arial, Helvetica, sans-serif; text-transform: uppercase; letter-spacing: 0.3px;
+  }
+  .ctx-key-btn:hover { background: rgba(255,255,255,0.35); }
+
+  .footer-credit { text-align: right; font-size: 10px; color: #8A97A8; margin-top: 6px; }
+
+  .panel-modal-overlay {
+    display: none;
+    position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(27,42,74,0.7);
+    z-index: 1000;
+    align-items: center;
+    justify-content: center;
+    padding: 30px;
+  }
+  .panel-modal-content {
+    background: #fff;
+    border-radius: 12px;
+    max-width: 900px;
+    width: 100%;
+    max-height: 85vh;
+    overflow-y: auto;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.4);
+  }
+  .panel-modal-header {
+    background: #1B2A4A;
+    color: #fff;
+    padding: 16px 24px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 16px;
+    font-weight: 700;
+    position: sticky;
+    top: 0;
+    border-radius: 12px 12px 0 0;
+  }
+  .panel-modal-close {
+    background: rgba(255,255,255,0.15);
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    padding: 6px 14px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    font-family: Arial, Helvetica, sans-serif;
+  }
+  .panel-modal-close:hover { background: rgba(255,255,255,0.28); }
+  .panel-modal-body { padding: 20px 24px 28px; font-size: 15px; }
+  .panel-modal-body .subpanel-row { display: flex; gap: 16px; flex-wrap: wrap; }
+  .panel-modal-body .subpanel-row .subpanel { flex: 1; min-width: 240px; }
+  .panel-modal-body .subpanel { margin-bottom: 18px; }
+  .panel-modal-body .subpanel-title { font-size: 13px; padding: 6px 10px; margin-bottom: 6px; }
+  .panel-modal-body .subpanel-title-navy { font-size: 13px; padding: 6px 10px; margin-bottom: 6px; }
+  .panel-modal-body table.mini { font-size: 14px; }
+  .panel-modal-body table.mini th, .panel-modal-body table.mini td { padding: 8px 10px; max-width: none; white-space: normal; }
+  .panel-modal-body table.mini.narrow-labels td.rowlabel,
+  .panel-modal-body table.mini.narrow-labels th,
+  .panel-modal-body table.mini.narrow-labels td,
+  .panel-modal-body table.mini.narrow-periods th,
+  .panel-modal-body table.mini.narrow-periods td,
+  .panel-modal-body table.mini.wrap-headers th { max-width: none; }
+  .panel-modal-body table.mini td.guidance-cell { font-size: 13px; }
+  .panel-modal-body table.mini td.rowlabel { min-width: 200px; }
+  .panel-modal-overlay.wide-modal .panel-modal-content { max-width: 1400px; width: 96%; }
+  .panel-modal-overlay.wide-modal table.mini td.rowlabel { min-width: 320px; white-space: nowrap; }
+
+  @page {
+    size: A3 landscape;
+    margin: 10mm;
+  }
+
+  @media print {
+    * {
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+      color-adjust: exact !important;
+    }
+    header.top-bar { display: none !important; }
+    .panel-modal-overlay { display: none !important; }
+    body { background: #fff; font-size: 10px; }
+    .soap-sheet { max-width: 100%; margin: 0; }
+    .band { break-inside: avoid; }
+    .panel { break-inside: avoid; }
+    .section-band-title { break-before: auto; break-after: avoid; }
+    table.mini { font-size: 8px; }
+    table.mini th, table.mini td { padding: 1px 4px; }
+    .masthead, .sub-header, .rating-scale { break-inside: avoid; }
+  }
+</style>
+</head>
+<body>
+
+<header class="top-bar">
+  <a href="index.html"><img src="images/logo-navy.png" alt="SOAP Analytics" style="height:30px;width:auto;border-radius:5px;"></a>
+  <div class="top-bar-actions">
+    <a href="admin.html" class="back-link">← Back to Admin Dashboard</a>
+    <button type="button" class="print-btn" onclick="window.print();">Print / Save as PDF</button>
+  </div>
+</header>
+
+<div id="content">
+  <div class="status-msg">Loading your school's SOAP…</div>
+</div>
+
+<div id="panelModal" class="panel-modal-overlay" onclick="closePanelModal()">
+  <div class="panel-modal-content" onclick="event.stopPropagation()">
+    <div class="panel-modal-header">
+      <span id="panelModalTitle"></span>
+      <span style="display:flex;align-items:center;">
+        <span id="panelModalKeySlot"></span>
+        <button type="button" class="panel-modal-close" onclick="closePanelModal()">✕ Close</button>
+      </span>
+    </div>
+    <div id="panelModalBody" class="panel-modal-body"></div>
+  </div>
+</div>
+
+<div id="ctxKeyModal" class="panel-modal-overlay" onclick="closeCtxKey()">
+  <div class="panel-modal-content" style="max-width:420px;" onclick="event.stopPropagation()">
+    <div class="panel-modal-header">
+      <span id="ctxKeyTitle">Colour Key</span>
+      <button type="button" class="panel-modal-close" onclick="closeCtxKey()">✕ Close</button>
+    </div>
+    <div class="panel-modal-body" style="font-size:13px;">
+      <p id="ctxKeyText" style="margin-bottom:14px;color:#5A6B80;"></p>
+      <div id="ctxKeySwatches" style="display:flex;flex-direction:column;gap:6px;"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+  const SUPABASE_URL = 'https://caopycszjzrmwhxxvtpx.supabase.co';
+  const SUPABASE_KEY = 'sb_publishable_2CTGR0PKyRPpSk59lcr3sA_hvvUDX97';
+  const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+  const PERIODS = ['AUT1 26', 'AUT2 26', 'SPR1 27', 'SPR2 27', 'SUM1 27', 'SUM2 27'];
+
+  // Builds a mini table. rows: [label, ...]. cols: [label, ...].
+  // valueFn(rowLabel, colLabel) => cell value or null. If dataset is null, every cell shows '—' (not-yet-available placeholder).
+  // cellClassFn(rowLabel, colLabel, value) => optional CSS class to colour that specific cell
+  function miniTable(cols, rows, valueFn, wrapHeaders, cellClassFn, extraClass) {
+    let html = `<table class="mini${wrapHeaders ? ' wrap-headers' : ''}${extraClass ? ' ' + extraClass : ''}"><thead><tr><th></th>`;
+    cols.forEach(c => html += `<th>${c}</th>`);
+    html += '</tr></thead><tbody>';
+    rows.forEach(r => {
+      html += `<tr><td class="rowlabel">${r}</td>`;
+      cols.forEach((c, idx) => {
+        const v = valueFn ? valueFn(r, c, idx) : null;
+        const cls = cellClassFn ? (cellClassFn(r, c, v) || '') : '';
+        html += `<td class="${cls}">${v ?? '—'}</td>`;
+      });
+      html += '</tr>';
+    });
+    html += '</tbody></table>';
+    return html;
+  }
+
+  // Like miniTable, but for GCSE/Post-16 Outcomes specifically — each year has a
+  // paired "Nat" column, so the header becomes two rows: the year merged across
+  // both, then "School" / "National Average" underneath. Whatever's left after
+  // the last year pair (PPE1, PPE2, Predicted) is grouped under one merged
+  // "2026/27" label, since they all belong to the current assessment cycle.
+  function gcseTrailingStart(cols) {
+    let i = 0;
+    while (i < cols.length && cols[i + 1] === 'Nat') i += 2;
+    return i;
+  }
+  function gcseMiniTable(cols, rows, valueFn, cellClassFn, extraClass) {
+    const trailingStart = gcseTrailingStart(cols);
+    let html = `<table class="mini${extraClass ? ' ' + extraClass : ''}"><thead>`;
+    html += '<tr><th rowspan="2"></th>';
+    let i = 0;
+    while (i < cols.length) {
+      if (cols[i + 1] === 'Nat') {
+        html += `<th colspan="2" class="gcse-divider gcse-year-label">${cols[i]}</th>`;
+        i += 2;
+      } else {
+        const remaining = cols.length - trailingStart;
+        html += `<th colspan="${remaining}" class="gcse-divider gcse-year-label">2026/27</th>`;
+        i = cols.length;
+      }
+    }
+    html += '</tr><tr>';
+    i = 0;
+    while (i < cols.length) {
+      if (cols[i + 1] === 'Nat') {
+        html += '<th class="gcse-divider">School</th><th>Nat Avg</th>';
+        i += 2;
+      } else {
+        html += `<th${i === trailingStart ? ' class="gcse-divider"' : ''}>${cols[i]}</th>`;
+        i += 1;
+      }
+    }
+    html += '</tr></thead><tbody>';
+    rows.forEach(r => {
+      html += `<tr><td class="rowlabel">${r}</td>`;
+      cols.forEach((c, idx) => {
+        const v = valueFn ? valueFn(r, c, idx) : null;
+        const cls = cellClassFn ? (cellClassFn(r, c, v) || '') : '';
+        const divider = (idx === trailingStart || (c !== 'Nat' && cols[idx + 1] === 'Nat')) ? ' gcse-divider' : '';
+        html += `<td class="${cls}${divider}">${v ?? '—'}</td>`;
+      });
+      html += '</tr>';
+    });
+    html += '</tbody></table>';
+    return html;
+  }
+
+  let panelCounter = 0;
+  function subpanel(title, tableHtml, flexBasis, navyTitle, titleButton) {
+    if (navyTitle) {
+      return `<div class="subpanel"${flexBasis ? ` style="flex:${flexBasis};"` : ''}><div class="subpanel-title-navy">${title}</div>${tableHtml}</div>`;
+    }
+    const id = 'panel-src-' + (panelCounter++);
+    return `<div class="subpanel"${flexBasis ? ` style="flex:${flexBasis};"` : ''}>
+      <div class="subpanel-title" style="cursor:zoom-in;" onclick="openPanelModal('${id}', event, '${title.replace(/'/g, "\\'")}')">${title}${titleButton || ''} <span style="float:right;opacity:0.85;font-size:7px;text-transform:none;letter-spacing:0;">🔍 Zoom</span></div>
+      <div id="${id}">${tableHtml}</div>
+    </div>`;
+  }
+
+  function panel(title, innerHtml, flexBasis) {
+    return `<div class="panel" style="${flexBasis ? 'flex:' + flexBasis + ';' : ''}"><div class="panel-title">${title}</div>${innerHtml}</div>`;
+  }
+
+  const TITLE_TO_KEY_SECTION = {
+    'Pupil Profile': 'pupilProfile',
+    'Workforce': 'workforce',
+    'Vulnerability Numbers': 'vulnerability',
+    'Inclusion Numbers': 'inclusionNumbers',
+    'Year Group Cohorts': 'yearGroupCohorts',
+    'Key Dates': 'keyDates',
+    'Compliance': 'compliance',
+    'Attendance — Key Metrics': 'attendanceNational',
+    'Attendance by Year Group': 'attendanceNational',
+    'Behaviour — Numbers by Half Term': 'internalRemoval',
+    'Enrichment &amp; Clubs': 'enrichment',
+    'GCSE Outcomes': 'gcseColour',
+    'Post-16 Outcomes': 'gcseColour',
+    'Financial Health': 'financialHealth',
+    'Staff Absence &amp; Cover': 'staffAbsence',
+    'Year 11 Destinations': 'destinations',
+    'Year 13 Destinations': 'destinations',
+    'Recruitment &amp; Retention': 'recruitment',
+    'Stakeholder Voice': 'stakeholderVoice'
+  };
+  function openPanelModal(id, e, title) {
+    if (e) e.stopPropagation();
+    const source = document.getElementById(id);
+    if (!source) return;
+    document.getElementById('panelModalBody').innerHTML = source.innerHTML;
+    document.getElementById('panelModalTitle').textContent = title || '';
+    const keySection = TITLE_TO_KEY_SECTION[title];
+    const keySlot = document.getElementById('panelModalKeySlot');
+    keySlot.innerHTML = keySection
+      ? `<button type="button" class="ctx-key-btn" style="margin-left:0;margin-right:10px;" onclick="openCtxKey('${keySection}')">Key</button>`
+      : '';
+    const modal = document.getElementById('panelModal');
+    modal.classList.toggle('wide-modal', title === 'GCSE Outcomes' || title === 'Post-16 Outcomes');
+    modal.style.display = 'flex';
+  }
+
+  function closePanelModal() {
+    document.getElementById('panelModal').style.display = 'none';
+  }
+
+  const PURPLE_SWATCHES = [
+    { cls: 'rs-ctx-5', label: 'Darkest shade' },
+    { cls: 'rs-ctx-4', label: 'Dark shade' },
+    { cls: 'rs-ctx-3', label: 'Mid shade' },
+    { cls: 'rs-ctx-2', label: 'Light shade' },
+    { cls: 'rs-ctx-1', label: 'Lightest shade' }
+  ];
+  const CTX_KEY_CONFIG = {
+    pupilProfile: {
+      text: "Shading is scaled against each row's own lowest and highest value across the six periods — it is a contextual indicator, not a performance judgement. For Boys %, FSM %, Pupil Premium %, SEND %, EHCP %, EAL % and Mobility %, the highest value in the row is the lightest shade and the lowest is the darkest. Girls % runs the opposite way.",
+      swatches: PURPLE_SWATCHES
+    },
+    workforce: {
+      text: "Shading is scaled against each row's own lowest and highest value across the six periods. The highest value in the row is always the darkest shade.",
+      swatches: PURPLE_SWATCHES
+    },
+    vulnerability: {
+      text: "Shading is scaled against each row's own lowest and highest value across the six periods. The highest value in the row is always the lightest shade.",
+      swatches: PURPLE_SWATCHES
+    },
+    inclusionNumbers: {
+      text: "Shading is scaled against each row's own lowest and highest value across the six periods. The highest value in the row is always the lightest shade.",
+      swatches: PURPLE_SWATCHES
+    },
+    internalRemoval: {
+      text: "Applies to Internal Removal Events, Suspensions, Permanent Exclusions (each Total, PP, SEND) and Late Arrivals / Punctuality Events. Shading is scaled against each row's own lowest and highest value across the six periods. The lowest value in the row is always the darkest shade.",
+      swatches: PURPLE_SWATCHES
+    },
+    enrichment: {
+      text: "Shading is scaled against each row's own lowest and highest value across the three terms. The highest value in the row is always the darkest shade.",
+      swatches: PURPLE_SWATCHES
+    },
+    staffAbsence: {
+      text: "Shading is scaled against each row's own lowest and highest value across the six periods. The lowest value in the row is always the darkest shade.",
+      swatches: PURPLE_SWATCHES
+    },
+    destinations: {
+      text: "Shading is scaled against each row's own lowest and highest value across the three years. Continue to Y12 %, Apprenticeships %, University % and Retention Y12 to Y13 % are darkest at their highest value, since higher is the better outcome. Other Further Education %, Employment %, NEET % and Unknown % run the opposite way, since higher isn't the better outcome for those.",
+      swatches: PURPLE_SWATCHES
+    },
+    financialHealth: {
+      text: 'Staffing Costs % of Income and PP Funding Deployed Y/N are shaded directly; the rest use the purple scale, row-relative across the three years shown. Smaller Staffing Costs is better and shaded darker; bigger Budget and bigger PP Funding are each better and shaded darker. 3 Year Forecast Position is ranked directly, from Secure (darkest) to Unsustainable (lightest).',
+      swatches: [
+        { cls: 'rs-exceptional', label: 'PP Funding Deployed: Yes' },
+        { cls: 'rs-attention', label: 'PP Funding Deployed: No' },
+        ...PURPLE_SWATCHES
+      ]
+    },
+    recruitment: {
+      text: "Teaching Vacancies, Support Staff Vacancies, Teacher Turnover %, Support Staff Turnover % and CPD Spend per Teacher use the purple scale, row-relative across the three years shown — lower is always better here, so lower is always the darkest shade. Recruitment Difficulty is ranked directly: Low (darkest) is best, High (lightest) is worst.",
+      swatches: PURPLE_SWATCHES
+    },
+    stakeholderVoice: {
+      text: 'Completed Status, Previous Positive Feedback and Current Positive Feedback are shaded on a fixed scale, not compared row-to-row: 90% and above is Exceptional, 70–90% is Strong Standard, 50–70% is Needs Attention, and below 50% is Urgent Improvement. Rating uses the standard 5-point rating scale.',
+      swatches: [
+        { cls: 'rs-exceptional', label: '90% and above' },
+        { cls: 'rs-strong', label: '70–90%' },
+        { cls: 'rs-attention', label: '50–70%' },
+        { cls: 'rs-urgent', label: 'Below 50%' }
+      ]
+    },
+    gcseColour: {
+      text: 'Applies across GCSE Outcomes and Post-16 Outcomes, comparing the School figure against National Average. Progress 8 and Attainment 8 Average Grade compare in score points (±0.25 / ±0.75 and ±0.3 / ±0.6 respectively); EBacc APS uses the same bands as Attainment 8. Every percentage measure — English & Maths Grade 4+/5+ %, EBacc Entry %, A*–A/B/C/E %, A Level APS (Per Entry) and Applied General APS (Per Entry) — uses ±5 / ±15 bands. Average A Level Grade and Average Applied General Grade aren\'t numeric, so each is shaded to match its linked APS row for that same year. PPE1, PPE2 and Predicted are shaded against the 2025/26 National Average specifically. National Average itself is never shaded.',
+      swatches: [
+        { cls: 'rs-exceptional', label: 'Best band for that row' },
+        { cls: 'rs-strong', label: 'Mid-to-high band, above national' },
+        { cls: 'rs-expected', label: 'Close to national' },
+        { cls: 'rs-attention', label: 'Mid-to-high band, below national' },
+        { cls: 'rs-urgent', label: 'Worst band for that row' }
+      ]
+    },
+    yearGroupCohorts: {
+      text: "The six half-term columns are shaded by comparing each year group's roll against its PAN (Published Admission Number). PAL % and PAH % use their own banding, since a lower PAL % and a higher PAH % are each more favourable.",
+      swatches: [
+        { cls: 'rs-strong', label: '100%+ of PAN' },
+        { cls: 'rs-expected', label: '95–100% of PAN' },
+        { cls: 'rs-attention', label: '85–95% of PAN' },
+        { cls: 'rs-urgent', label: 'Below 85% of PAN' }
+      ]
+    },
+    keyDates: {
+      text: 'Shading shows how long ago each date was, compared with today — it flags how current the record is, not a performance judgement.',
+      swatches: [
+        { cls: 'rs-exceptional', label: '0–6 months ago' },
+        { cls: 'rs-strong', label: '6–12 months ago' },
+        { cls: 'rs-attention', label: '1–2 years ago' },
+        { cls: 'rs-urgent', label: 'Over 2 years ago' }
+      ]
+    },
+    compliance: {
+      text: 'Two separate colour systems apply here — Status shows compliance standing, Date shows how current each check is.',
+      groups: [
+        { heading: 'Status', swatches: [
+          { cls: 'rs-exceptional', label: 'Fully Compliant' },
+          { cls: 'rs-attention', label: 'Partially Compliant' },
+          { cls: 'rs-urgent', label: 'Non-Compliant' }
+        ]},
+        { heading: 'Date — how long ago the check was carried out', swatches: [
+          { cls: 'rs-exceptional', label: '0–6 months ago' },
+          { cls: 'rs-strong', label: '6–12 months ago' },
+          { cls: 'rs-attention', label: '1–2 years ago' },
+          { cls: 'rs-urgent', label: 'Over 2 years ago' }
+        ]}
+      ]
+    },
+    attendanceNational: {
+      text: 'Persistent Absence %, PP Attendance %, PP Persistent Absence %, SEND Attendance % and SEND Persistent Absence % are shaded against the National Averages table, in percentage points — for attendance, higher than national is better; for persistent absence, lower is better. Overall Attendance % and every year group are shaded against the school\'s own entered National Attendance % for that period, as before. National Attendance % itself is never shaded.',
+      swatches: [
+        { cls: 'rs-exceptional', label: 'More than 2% better than national' },
+        { cls: 'rs-strong', label: '0.75–2% better than national' },
+        { cls: 'rs-expected', label: 'Within 0.75% of national' },
+        { cls: 'rs-attention', label: '0.75–2% worse than national' },
+        { cls: 'rs-urgent', label: 'More than 2% worse than national' }
+      ]
+    }
+  };
+  function openCtxKey(section) {
+    const cfg = CTX_KEY_CONFIG[section];
+    if (!cfg) return;
+    document.getElementById('ctxKeyText').textContent = cfg.text;
+    const swatchHtml = s => `<div class="${s.cls}" style="padding:8px 12px;border-radius:5px;">${s.label}</div>`;
+    document.getElementById('ctxKeySwatches').innerHTML = cfg.groups
+      ? cfg.groups.map(g => `
+          <div style="font-size:12px;font-weight:700;color:#1B2A4A;margin:14px 0 6px;padding-top:10px;border-top:1px solid #DCE3EA;">${g.heading}</div>
+          <div style="display:flex;flex-direction:column;gap:6px;">${g.swatches.map(swatchHtml).join('')}</div>
+        `).join('').replace('border-top:1px solid #DCE3EA;', '') // no top border on the first heading
+      : cfg.swatches.map(swatchHtml).join('');
+    document.getElementById('ctxKeyModal').style.display = 'flex';
+  }
+  function closeCtxKey() {
+    document.getElementById('ctxKeyModal').style.display = 'none';
+  }
+
+  async function init() {
+    const content = document.getElementById('content');
+    const { data: { session } } = await sb.auth.getSession();
+
+    if (!session) {
+      content.innerHTML = '<div class="status-msg">Please <a href="login.html">log in</a> to view this school\'s SOAP.</div>';
+      return;
+    }
+
+    const { data: adminRow } = await sb
+      .from('admins').select('auth_user_id').eq('auth_user_id', session.user.id).maybeSingle();
+
+    if (!adminRow) {
+      content.innerHTML = '<div class="status-msg">This page is currently only available from the Admin Dashboard.</div>';
+      return;
+    }
+
+    const urlParams = new URLSearchParams(window.location.search);
+    const schoolId = urlParams.get('school_id');
+
+    if (!schoolId) {
+      content.innerHTML = '<div class="status-msg">No school selected. Please open a SOAP from the <a href="admin.html">Admin Dashboard</a>.</div>';
+      return;
+    }
+
+    const [schoolRes, contextRes, ofstedRes, periodsRes, safeguardingRes, inclusionRes, curriculumRes, achievementRes, assessRes, attendanceRes, pdwRes, leadershipRes, financeRes, resourceStatsRes] = await Promise.all([
+      sb.from('schools').select('*').eq('id', schoolId).maybeSingle(),
+      sb.from('context_data').select('*').eq('school_id', schoolId),
+      sb.from('ofsted_judgements').select('*').eq('school_id', schoolId),
+      sb.from('reporting_periods').select('*').eq('school_id', schoolId),
+      sb.from('safeguarding_data').select('*').eq('school_id', schoolId),
+      sb.from('inclusion_data').select('*').eq('school_id', schoolId),
+      sb.from('curriculum_data').select('*').eq('school_id', schoolId),
+      sb.from('achievement_data').select('*').eq('school_id', schoolId),
+      sb.from('assessment_setup').select('*').eq('school_id', schoolId),
+      sb.from('attendance_data').select('*').eq('school_id', schoolId),
+      sb.from('pdw_data').select('*').eq('school_id', schoolId),
+      sb.from('leadership_governance_data').select('*').eq('school_id', schoolId),
+      sb.from('finance_data').select('*').eq('school_id', schoolId),
+      sb.from('resource_stats').select('*')
+    ]);
+
+    const school = schoolRes.data;
+    const context = contextRes.data || [];
+    const ofstedData = ofstedRes.data || [];
+    const reportingPeriods = periodsRes.data || [];
+    const safeguardingData = safeguardingRes.data || [];
+    const inclusionData = inclusionRes.data || [];
+    const curriculumData = curriculumRes.data || [];
+    const achievementData = achievementRes.data || [];
+    const assessmentSetup = assessRes.data || [];
+    const attendanceData = attendanceRes.data || [];
+    const pdwData = pdwRes.data || [];
+    const leadershipData = leadershipRes.data || [];
+    const financeData = financeRes.data || [];
+    const resourceStats = resourceStatsRes.data || [];
+    if (resourceStatsRes.error) console.error('resource_stats fetch failed — check the read-access RLS policy has been run:', resourceStatsRes.error);
+    if (!school) { content.innerHTML = '<div class="status-msg">Couldn\'t find that school\'s record.</div>'; return; }
+
+    // Checks whether a given assessment (e.g. "Year 11 PPE 2") was marked as Planned in School Setup
+    function assessmentPlanned(assessmentName) {
+      const row = assessmentSetup.find(r => r.assessment_name === assessmentName);
+      return row ? row.planned === 'Yes' : false;
+    }
+
+    // Attendance & Behaviour value lookup helper
+    function attVal(category, metric, period) {
+      const row = attendanceData.find(r => r.category === category && r.metric === metric && r.period === period);
+      return row ? row.value : null;
+    }
+    // Maps each attendance row to its National Averages equivalent, and whether a
+    // higher figure is better (Attendance) or worse (Persistent Absence).
+    // Rows that compare against the new National Averages table (resource_stats),
+    // with direction flipped for Persistent Absence rows since lower is better there.
+    const ATTENDANCE_NATIONAL_MAPPING = {
+      'Persistent Absence %': { metric: 'Persistent Absence %', reverse: true },
+      'PP Attendance %': { metric: 'PP Attendance %', reverse: false },
+      'PP Persistent Absence %': { metric: 'PP Persistent Absence %', reverse: true },
+      'SEND Attendance %': { metric: 'SEND Attendance %', reverse: false },
+      'SEND Persistent Absence %': { metric: 'SEND Persistent Absence %', reverse: true }
+    };
+    function diffToRatingClass(diff) {
+      if (diff > 2) return 'rs-exceptional';
+      if (diff > 0.75) return 'rs-strong';
+      if (diff >= -0.75) return 'rs-expected';
+      if (diff >= -2) return 'rs-attention';
+      return 'rs-urgent';
+    }
+    // Colours an attendance figure. Persistent Absence %, PP Attendance %, PP
+    // Persistent Absence %, SEND Attendance % and SEND Persistent Absence % compare
+    // against National Averages (resource_stats), a flat figure not tied to a
+    // period. Overall Attendance % and every year group keep the original
+    // behaviour: compared against the school's own entered National Attendance %
+    // for that same period. National Attendance % itself is never shaded.
+    function attendanceNationalDiffClass(row, value, period) {
+      if (ATTENDANCE_NATIONAL_MAPPING[row]) {
+        const mapping = ATTENDANCE_NATIONAL_MAPPING[row];
+        const rawNational = natAvgVal(mapping.metric);
+        const national = parseFloat(rawNational);
+        const raw = parseFloat(value);
+        if (isNaN(national)) {
+          console.warn(`No National Averages match for metric "${mapping.metric}" (row "${row}") — check the metric name in your National Averages table matches exactly, including capitalisation and spacing.`);
+          return '';
+        }
+        if (isNaN(raw)) return '';
+        const diff = mapping.reverse ? (national - raw) : (raw - national);
+        return diffToRatingClass(diff);
+      }
+      if (row === 'Overall Attendance %' || /^Year \d+ Attendance %$/.test(row)) {
+        const raw = parseFloat(value);
+        const national = parseFloat(attVal('Attendance Percentages', 'National Attendance %', period));
+        if (isNaN(raw) || isNaN(national)) return '';
+        return diffToRatingClass(raw - national);
+      }
+      return '';
+    }
+
+    // Safeguarding value lookup helper
+    function sgVal(category, metric, period) {
+      const row = safeguardingData.find(r => r.category === category && r.metric === metric && r.period === period);
+      return row ? row.value : null;
+    }
+    // Inclusion value lookup helper
+    function incVal(category, metric, period) {
+      const row = inclusionData.find(r => r.category === category && r.metric === metric && r.period === period);
+      return row ? row.value : null;
+    }
+    // Curriculum & Teaching value lookup helper
+    function curVal(category, metric, period) {
+      const row = curriculumData.find(r => r.category === category && r.metric === metric && r.period === period);
+      return row ? row.value : null;
+    }
+    // Achievement value lookup helper
+    function achVal(category, metric, period) {
+      const row = achievementData.find(r => r.category === category && r.metric === metric && r.period === period);
+      return row ? row.value : null;
+    }
+    // PDW value lookup helper
+    function pdwVal(category, metric, period) {
+      const row = pdwData.find(r => r.category === category && r.metric === metric && r.period === period);
+      return row ? row.value : null;
+    }
+    // Leadership & Governance value lookup helper
+    function lgVal(category, metric, period) {
+      const row = leadershipData.find(r => r.category === category && r.metric === metric && r.period === period);
+      return row ? row.value : null;
+    }
+    // Finance & Resources value lookup helper
+    function finVal(category, metric, period) {
+      const row = financeData.find(r => r.category === category && r.metric === metric && r.period === period);
+      return row ? row.value : null;
+    }
+    // Guarantees a £ sign on currency figures for display, regardless of how the
+    // value happens to be stored (e.g. entered before accountancy formatting existed).
+    function finCurrency(category, metric, period) {
+      const raw = finVal(category, metric, period);
+      if (raw === null || raw === undefined || raw === '') return null;
+      const trimmed = String(raw).trim();
+      if (trimmed.includes('£')) return trimmed;
+      const negative = trimmed.startsWith('(') || trimmed.startsWith('-');
+      const cleaned = trimmed.replace(/[£,()\s]/g, '').replace(/^-/, '');
+      const num = parseFloat(cleaned);
+      if (isNaN(num)) return trimmed;
+      const formatted = Math.abs(num).toLocaleString('en-GB', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+      return negative ? `(£${formatted})` : `£${formatted}`;
+    }
+    // Maps display columns (which may repeat, e.g. multiple "Nat" columns) to the
+    // unique storage keys used by achievement-form.html — Nat1, Nat2, Nat3…
+    function periodKeysFor(yearCols) {
+      let natCount = 0;
+      return yearCols.map(c => {
+        if (c === 'Nat') { natCount += 1; return `Nat${natCount}`; }
+        return c;
+      });
+    }
+    // National Averages lookup helper — reads the admin-managed global reference
+    // table (resource_stats), not per-school data. Ignores period, since this
+    // figure applies flat across every half-term rather than varying by period.
+    function natAvgVal(metric) {
+      const row = resourceStats.find(r => r.category === 'National Averages' && r.metric === metric);
+      return row ? row.value : null;
+    }
+    // GCSE Results / A Level national averages — unlike Attendance, these vary by
+    // year, so period must match exactly (e.g. "2022/23").
+    function gcseNatAvgVal(metric, period) {
+      const row = resourceStats.find(r => r.category === 'GCSE Results' && r.metric === metric && r.period === period);
+      return row ? row.value : null;
+    }
+    function alevelNatAvgVal(metric, period) {
+      const row = resourceStats.find(r => r.category === 'A Level' && r.metric === metric && r.period === period);
+      return row ? row.value : null;
+    }
+    // Colours Progress 8, Progress 8 - Disadvantaged, Attainment 8 Average Grade
+    // and Attainment 8 Average Grade - Disadvantaged School cells against their
+    // matching National Average, in score points. PPE1, PPE2 and Predicted are
+    // also shaded, compared against the 2025/26 National Average specifically,
+    // since they represent the current assessment cycle. National Average itself
+    // is never shaded.
+    const GCSE_COLOUR_BANDS = {
+      'Progress 8': { high: 0.75, mid: 0.25 },
+      'Progress 8 - Disadvantaged': { high: 0.75, mid: 0.25 },
+      'Attainment 8 Average Grade': { high: 0.6, mid: 0.3 },
+      'Attainment 8 Average Grade - Disadvantaged': { high: 0.6, mid: 0.3 },
+      'English & Maths Grade 4+ %': { high: 15, mid: 5 },
+      'English & Maths Grade 4+ % - Disadvantaged': { high: 15, mid: 5 },
+      'English & Maths Grade 5+ %': { high: 15, mid: 5 },
+      'English & Maths Grade 5+ % - Disadvantaged': { high: 15, mid: 5 },
+      'EBacc Entry %': { high: 15, mid: 5 },
+      'A*–A %': { high: 15, mid: 5 },
+      'A*–B %': { high: 15, mid: 5 },
+      'A*–C %': { high: 15, mid: 5 },
+      'A*–E %': { high: 15, mid: 5 },
+      'EBacc APS': { high: 0.6, mid: 0.3 },
+      'A Level APS (Per Entry)': { high: 15, mid: 5 },
+      'Applied General APS (Per Entry)': { high: 15, mid: 5 }
+    };
+    // Average A Level Grade and Average Applied General Grade aren't numeric, so
+    // they're coloured to match their linked APS row's colour for the same column
+    // instead of computing their own diff.
+    const GCSE_LINKED_GRADE_ROWS = {
+      'Average A Level Grade': 'A Level APS (Per Entry)',
+      'Average Applied General Grade': 'Applied General APS (Per Entry)'
+    };
+    function gcseBandedDiffClass(diff, bands) {
+      if (diff >= bands.high) return 'rs-exceptional';
+      if (diff >= bands.mid) return 'rs-strong';
+      if (diff >= -bands.mid) return 'rs-expected';
+      if (diff >= -bands.high) return 'rs-attention';
+      return 'rs-urgent';
+    }
+    function gcseColourClass(row, col, value, natLookupFn, category) {
+      if (col === 'Nat') return '';
+      const comparisonYear = (col === 'PPE1' || col === 'PPE2' || col === 'Predicted') ? '2025/26' : col;
+      const lookupNational = (metric) => parseFloat((natLookupFn || gcseNatAvgVal)(metric, comparisonYear));
+
+      if (GCSE_LINKED_GRADE_ROWS[row]) {
+        const linkedRow = GCSE_LINKED_GRADE_ROWS[row];
+        const bands = GCSE_COLOUR_BANDS[linkedRow];
+        if (!bands) return '';
+        const linkedRaw = parseFloat(achVal(category, linkedRow, col));
+        const national = lookupNational(linkedRow);
+        if (isNaN(linkedRaw) || isNaN(national)) return '';
+        return gcseBandedDiffClass(linkedRaw - national, bands);
+      }
+
+      const bands = GCSE_COLOUR_BANDS[row];
+      if (!bands) return '';
+      const national = lookupNational(row);
+      const raw = parseFloat(value);
+      if (isNaN(raw) || isNaN(national)) return '';
+      return gcseBandedDiffClass(raw - national, bands);
+    }
+
+    // Context value lookup helper: category + metric + period -> value
+    function ctxVal(category, metric, period) {
+      const row = context.find(r => r.category === category && r.metric === metric && r.period === period);
+      return row ? row.value : null;
+    }
+    // Ofsted Judgements lookup: the grading recorded from the school's last inspection
+    function ofstedVal(area) {
+      const row = ofstedData.find(r => r.area === area);
+      return row ? row.grading : null;
+    }
+    // Maps any rating-scale word (Exceptional, Strong Standard, etc.) to its legend colour
+    function ratingClass(grading) {
+      const map = {
+        'Exceptional': 'rs-exceptional',
+        'Strong Standard': 'rs-strong',
+        'Expected Standard': 'rs-expected',
+        'Needs Attention': 'rs-attention',
+        'Urgent Improvement': 'rs-urgent',
+        'Met': 'rs-exceptional',
+        'Not Met': 'rs-urgent'
+      };
+      return grading ? (map[grading] || '') : '';
+    }
+    // Formats a stored YYYY-MM-DD date as UK-style DD/MM/YYYY
+    function ukDate(isoDate) {
+      if (!isoDate) return null;
+      const d = new Date(isoDate);
+      if (isNaN(d.getTime())) return isoDate;
+      const dd = String(d.getDate()).padStart(2, '0');
+      const mm = String(d.getMonth() + 1).padStart(2, '0');
+      return `${dd}/${mm}/${d.getFullYear()}`;
+    }
+    // Works out which of the 6 reporting periods is currently active, based on real dates entered in School Setup
+    const PERIOD_TO_REPORTING_NAME = {
+      'AUT1 26': 'Autumn 1', 'AUT2 26': 'Autumn 2',
+      'SPR1 27': 'Spring 1', 'SPR2 27': 'Spring 2',
+      'SUM1 27': 'Summer 1', 'SUM2 27': 'Summer 2'
+    };
+    const PERIOD_DISPLAY = {
+      'AUT1 26': 'Autumn 1 2026', 'AUT2 26': 'Autumn 2 2026',
+      'SPR1 27': 'Spring 1 2027', 'SPR2 27': 'Spring 2 2027',
+      'SUM1 27': 'Summer 1 2027', 'SUM2 27': 'Summer 2 2027'
+    };
+    function currentPeriodLabel() {
+      const today = new Date();
+      let current = null;
+      PERIODS.forEach(p => {
+        const match = reportingPeriods.find(r => r.period_name === PERIOD_TO_REPORTING_NAME[p]);
+        if (match && match.start_date && new Date(match.start_date) <= today) current = p;
+      });
+      return current ? PERIOD_DISPLAY[current] : null;
+    }
+    // Calculated workforce percentages: what share of teachers fall into each group, per period
+    function workforcePct(numeratorMetric, period) {
+      const teachers = parseFloat(ctxVal('Workforce', 'Number of Teachers', period));
+      const num = parseFloat(ctxVal('Workforce', numeratorMetric, period));
+      if (isNaN(teachers) || teachers === 0 || isNaN(num)) return null;
+      return Math.round((num / teachers) * 100) + '%';
+    }
+    // Colour a year group's roll figure against its PAN using a 4-tier scale:
+    // Strong Standard green (full/over PAN), Expected Standard green (95-100%), orange (85-95%), red (below 85%)
+    function fillRateClass(yearGroup, period) {
+      const roll = parseFloat(ctxVal('Year Group Profile', yearGroup, period));
+      const pan = parseFloat(ctxVal('Year Group Profile', yearGroup, 'PAN'));
+      if (isNaN(roll) || isNaN(pan) || pan === 0) return '';
+      const pct = (roll / pan) * 100;
+      if (pct >= 100) return 'rs-strong';
+      if (pct >= 95) return 'rs-expected';
+      if (pct >= 85) return 'rs-attention';
+      return 'rs-urgent';
+    }
+    // PAL % (Prior Attainment Low): lower is more favourable, matching standard banding
+    function palClass(value) {
+      const v = parseFloat(value);
+      if (isNaN(v)) return '';
+      if (v < 10) return 'rs-exceptional';
+      if (v < 15) return 'rs-strong';
+      if (v < 25) return 'rs-expected';
+      if (v < 35) return 'rs-attention';
+      return 'rs-urgent';
+    }
+    // PAH % (Prior Attainment High): higher is more favourable — bands run in reverse
+    function pahClass(value) {
+      const v = parseFloat(value);
+      if (isNaN(v)) return '';
+      if (v > 35) return 'rs-exceptional';
+      if (v > 28) return 'rs-strong';
+      if (v > 18) return 'rs-expected';
+      if (v > 10) return 'rs-attention';
+      return 'rs-urgent';
+    }
+    // Pupil Premium %, SEND %, EHCP %, EAL % — calculated live from Inclusion Numbers
+    // ÷ Whole School Number on Roll, for every period, rather than relying on a
+    // value that was only saved for whichever periods had Inclusion data at the time.
+    function pupilProfilePct(inclusionMetric, period) {
+      const roll = parseFloat(ctxVal('Whole School', 'Number on Roll', period));
+      const row = inclusionData.find(r => r.category === 'Inclusion Numbers' && r.metric === inclusionMetric && r.period === period);
+      const count = row ? parseFloat(row.value) : NaN;
+      if (isNaN(roll) || roll <= 0 || isNaN(count)) return null;
+      return (Math.round((count / roll) * 1000) / 10).toFixed(1);
+    }
+    // Forces any Pupil Profile percentage to display with exactly 1 decimal place
+    function formatPct1dp(raw) {
+      if (raw === null || raw === undefined || raw === '') return null;
+      const n = parseFloat(raw);
+      return isNaN(n) ? raw : n.toFixed(1);
+    }
+    // Pupil Profile purple contextual scale — describes relative prevalence of a
+    // characteristic within the school, NOT performance. Never maps to the
+    // green/amber/red rating scale used elsewhere on this page. Each row is scaled
+    // against its OWN lowest and highest value across the six periods, since fixed
+    // 0-100 thresholds flatten out rows with a naturally narrow range (e.g. Boys %
+    // sitting around 43-45% all year). For most Pupil Profile rows the highest value
+    // in the row is the lightest shade and the lowest is the darkest; Girls % runs
+    // the opposite way. Workforce reuses the same scale with a simpler rule: bigger
+    // number is always darker, no exceptions.
+    function rowRelativePurpleClass(range, value, biggerIsDarker) {
+      if (!range) return '';
+      const raw = parseFloat(value);
+      if (isNaN(raw) || range.min === range.max) return '';
+      const normalized = (raw - range.min) / (range.max - range.min); // 0 = lowest in row, 1 = highest in row
+      const darkness = biggerIsDarker ? normalized : (1 - normalized);
+      if (darkness < 0.2) return 'rs-ctx-1';
+      if (darkness < 0.4) return 'rs-ctx-2';
+      if (darkness < 0.6) return 'rs-ctx-3';
+      if (darkness < 0.8) return 'rs-ctx-4';
+      return 'rs-ctx-5';
+    }
+    const PUPIL_PROFILE_ROWS = ['Boys %','Girls %','FSM %','Pupil Premium %','SEND %','EHCP %','EAL %','Mobility %'];
+    const PUPIL_PROFILE_INCLUSION_MAPPING = { 'Pupil Premium %': 'Pupil Premium', 'SEND %': 'SEND', 'EHCP %': 'EHCP', 'EAL %': 'EAL' };
+    function pupilProfileValue(r, c) {
+      if (PUPIL_PROFILE_INCLUSION_MAPPING[r]) return pupilProfilePct(PUPIL_PROFILE_INCLUSION_MAPPING[r], c);
+      return formatPct1dp(ctxVal('Pupil Profile', r, c));
+    }
+    const pupilProfileRowRange = {};
+    PUPIL_PROFILE_ROWS.forEach(r => {
+      const vals = PERIODS.map(c => parseFloat(pupilProfileValue(r, c))).filter(v => !isNaN(v));
+      pupilProfileRowRange[r] = vals.length ? { min: Math.min(...vals), max: Math.max(...vals) } : null;
+    });
+    function contextualBlueClass(row, value) {
+      return rowRelativePurpleClass(pupilProfileRowRange[row], value, row === 'Girls %');
+    }
+    const WORKFORCE_ROWS = ['Number of Teachers','Number of Support Staff','Number of SLT','Number of ECTs','Number of UPS Teachers','SLT %','ECT %','UPS Teachers %'];
+    function workforceValue(r, c) {
+      if (r === 'SLT %') return workforcePct('Number of SLT', c);
+      if (r === 'ECT %') return workforcePct('Number of ECTs', c);
+      if (r === 'UPS Teachers %') return workforcePct('Number of UPS Teachers', c);
+      return ctxVal('Workforce', r, c);
+    }
+    const workforceRowRange = {};
+    WORKFORCE_ROWS.forEach(r => {
+      const vals = PERIODS.map(c => parseFloat(workforceValue(r, c))).filter(v => !isNaN(v));
+      workforceRowRange[r] = vals.length ? { min: Math.min(...vals), max: Math.max(...vals) } : null;
+    });
+    function workforceContextClass(row, value) {
+      return rowRelativePurpleClass(workforceRowRange[row], value, true);
+    }
+    const VULNERABILITY_ROWS = ['Child Protection (CP)','Child in Need (CIN)','Early Help','CLA','Young Carers'];
+    const vulnerabilityRowRange = {};
+    VULNERABILITY_ROWS.forEach(r => {
+      const vals = PERIODS.map(c => parseFloat(sgVal('Vulnerability Numbers', r, c))).filter(v => !isNaN(v));
+      vulnerabilityRowRange[r] = vals.length ? { min: Math.min(...vals), max: Math.max(...vals) } : null;
+    });
+    function vulnerabilityContextClass(row, value) {
+      return rowRelativePurpleClass(vulnerabilityRowRange[row], value, false);
+    }
+    const INCLUSION_NUMBERS_ROWS = ['SEND','EHCP','Pupil Premium','EAL','AP Placements'];
+    const inclusionNumbersRowRange = {};
+    INCLUSION_NUMBERS_ROWS.forEach(r => {
+      const vals = PERIODS.map(c => parseFloat(incVal('Inclusion Numbers', r, c))).filter(v => !isNaN(v));
+      inclusionNumbersRowRange[r] = vals.length ? { min: Math.min(...vals), max: Math.max(...vals) } : null;
+    });
+    function inclusionNumbersContextClass(row, value) {
+      return rowRelativePurpleClass(inclusionNumbersRowRange[row], value, false);
+    }
+    const INTERNAL_REMOVAL_ROWS = ['Internal Removal Events — Total','Internal Removal Events — PP','Internal Removal Events — SEND','Suspensions — Total','Suspensions — PP','Suspensions — SEND','Permanent Exclusions — Total','Permanent Exclusions — PP','Permanent Exclusions — SEND','Late Arrivals / Punctuality Events'];
+    const internalRemovalRowRange = {};
+    INTERNAL_REMOVAL_ROWS.forEach(r => {
+      const vals = PERIODS.map(c => parseFloat(attVal('Behaviour Numbers', r, c))).filter(v => !isNaN(v));
+      internalRemovalRowRange[r] = vals.length ? { min: Math.min(...vals), max: Math.max(...vals) } : null;
+    });
+    function internalRemovalContextClass(row, value) {
+      if (!INTERNAL_REMOVAL_ROWS.includes(row)) return '';
+      return rowRelativePurpleClass(internalRemovalRowRange[row], value, false);
+    }
+    const ENRICH_ROWS = ['No. of Clubs Offered','Club Participation %','No. of Educational Visits','No. of Residentials','Duke of Edinburgh Candidates','Duke of Edinburgh Completion %'];
+    const ENRICH_TERMS = ['AUT','SPR','SUM'];
+    const enrichRowRange = {};
+    ENRICH_ROWS.forEach(r => {
+      const vals = ENRICH_TERMS.map(c => parseFloat(pdwVal('Enrichment & Clubs', r, c))).filter(v => !isNaN(v));
+      enrichRowRange[r] = vals.length ? { min: Math.min(...vals), max: Math.max(...vals) } : null;
+    });
+    function enrichContextClass(row, value) {
+      return rowRelativePurpleClass(enrichRowRange[row], value, true);
+    }
+    // Key Dates staleness: how long ago the date was, against today — reuses the
+    // existing rating colours (blue/green/orange/red) rather than the purple scale,
+    // since this is a currency/freshness signal, not a contextual-prevalence one.
+    function keyDateClass(rawDate) {
+      if (!rawDate) return '';
+      const d = new Date(rawDate);
+      if (isNaN(d.getTime())) return '';
+      const today = new Date();
+      let months = (today.getFullYear() - d.getFullYear()) * 12 + (today.getMonth() - d.getMonth());
+      if (today.getDate() < d.getDate()) months -= 1;
+      if (months <= 6) return 'rs-exceptional'; // blue
+      if (months <= 12) return 'rs-strong'; // green
+      if (months <= 24) return 'rs-attention'; // orange
+      return 'rs-urgent'; // red
+    }
+    const ALL_YEAR_GROUPS = ['EYFS','Y1','Y2','Y3','Y4','Y5','Y6','Y7','Y8','Y9','Y10','Y11','Y12','Y13'];
+    const PHASE_YEAR_GROUPS = {
+      'Primary': ['EYFS','Y1','Y2','Y3','Y4','Y5','Y6'],
+      'Infant': ['EYFS','Y1','Y2'],
+      'Junior': ['Y3','Y4','Y5','Y6'],
+      'Secondary': ['Y7','Y8','Y9','Y10','Y11','Y12','Y13'],
+      'Sixth Form College': ['Y12','Y13']
+    };
+    const yearGroupOrder = PHASE_YEAR_GROUPS[school.phase] || ALL_YEAR_GROUPS;
+
+    // ---------- MASTHEAD ----------
+    let html = `
+      <div class="soap-sheet">
+        <div class="masthead">
+          <div class="badge-box"><img src="images/logo-navy.png" alt="Badge"></div>
+          <div class="title-box">
+            <h1>SOAP Analytics — School on a Page</h1>
+          </div>
+          <div class="current-period-box">
+            <div class="tag">Current Period</div>
+            <div class="period-name">${currentPeriodLabel() || '—'}</div>
+          </div>
+          <div class="period-box">
+            <div class="slogan">Clarity.<br>Insight.<br>Impact.</div>
+          </div>
+        </div>
+        <div class="sub-header">
+          <div><strong>${school.name || 'Untitled School'}${school.trust ? ' (' + school.trust + ')' : ''}</strong> &nbsp;·&nbsp; <span class="teal-text">Academic Year: ${school.academic_year || '—'}</span> &nbsp;·&nbsp; <span class="teal-text">Number on Roll: ${ctxVal('Whole School','Number on Roll',PERIODS.find(p=>ctxVal('Whole School','Number on Roll',p))) || '—'}</span> &nbsp;·&nbsp; <span class="teal-text">PAN: ${ctxVal('Whole School','PAN',PERIODS.find(p=>ctxVal('Whole School','PAN',p))) || '—'}</span> &nbsp;·&nbsp; <span class="teal-text">Last Ofsted Inspection: ${ukDate(school.last_inspection_date) || '—'}${school.inspection_type ? ' (' + school.inspection_type + ')' : ''}</span> &nbsp;·&nbsp; <span class="teal-text">URN: ${school.urn || '—'}</span></div>
+          <div>Headteacher: ${school.person_responsible || '—'}</div>
+        </div>
+    `;
+
+    // ---------- BAND 1: OFSTED | CONTEXT | LEADERSHIP & GOVERNANCE ----------
+    const ofstedRows = ['Safeguarding','Inclusion','Curriculum & Teaching','Achievement','Attendance & Behaviour','PDW','Leadership & Governance'];
+    const ofstedPanel = panel('Ofsted', `
+      ${subpanel('Ofsted vs Self-Evaluation', miniTable(['Ofsted Grade','Self-Evaluation'], ofstedRows, (area, col) => {
+        if (col === 'Ofsted Grade') return ofstedVal(area);
+        if (col === 'Self-Evaluation' && area === 'Safeguarding') return sgVal('Overall Rating', 'Overall Safeguarding SEF Rating', 'Rating');
+        if (col === 'Self-Evaluation' && area === 'Inclusion') return incVal('Overall Rating', 'Overall Inclusion SEF Rating', 'Rating');
+        if (col === 'Self-Evaluation' && area === 'Attendance & Behaviour') return attVal('Overall Rating', 'Overall Attendance & Behaviour SEF Rating', 'Rating');
+        if (col === 'Self-Evaluation' && area === 'Curriculum & Teaching') return curVal('Overall Rating', 'Overall Curriculum & Teaching SEF Rating', 'Rating');
+        if (col === 'Self-Evaluation' && area === 'Achievement') return achVal('Overall Rating', 'Overall Achievement SEF Rating', 'Rating');
+        if (col === 'Self-Evaluation' && area === 'PDW') return pdwVal('Overall Rating', 'Overall PDW SEF Rating', 'Rating');
+        if (col === 'Self-Evaluation' && area === 'Leadership & Governance') return lgVal('Overall Rating', 'Overall Leadership & Governance SEF Rating', 'Rating');
+        return null;
+      }, false, (area, col, v) => (col === 'Ofsted Grade' || (col === 'Self-Evaluation' && ['Safeguarding','Inclusion','Attendance & Behaviour','Curriculum & Teaching','Achievement','PDW','Leadership & Governance'].includes(area))) ? ratingClass(v) : '', 'narrow-labels'))}
+    `, 0.85);
+
+    const contextPanel = panel('Context', `
+      <div class="subpanel-row">
+        ${subpanel('Year Group Cohorts', miniTable([...PERIODS,'PAN','PAL %','PAH %'], yearGroupOrder.length ? yearGroupOrder : ['—'], (r,c) => ctxVal('Year Group Profile', r, c), false, (r,c,v) => {
+          if (c === 'PAL %') return palClass(v);
+          if (c === 'PAH %') return pahClass(v);
+          if (c === 'PAN') return '';
+          return fillRateClass(r,c);
+        }, 'narrow-summary-cols'), undefined, undefined, ` <button type="button" class="ctx-key-btn" onclick="event.stopPropagation(); openCtxKey('yearGroupCohorts');">Key</button>`)}
+        ${subpanel('Pupil Profile', miniTable(PERIODS, PUPIL_PROFILE_ROWS, (r,c) => pupilProfileValue(r,c), false, (r,c,v) => contextualBlueClass(r, v)), undefined, undefined, ` <button type="button" class="ctx-key-btn" onclick="event.stopPropagation(); openCtxKey('pupilProfile');">Key</button>`)}
+        ${subpanel('Workforce', miniTable(PERIODS, WORKFORCE_ROWS, (r,c) => workforceValue(r,c), false, (r,c,v) => workforceContextClass(r,v)), undefined, undefined, ` <button type="button" class="ctx-key-btn" onclick="event.stopPropagation(); openCtxKey('workforce');">Key</button>`)}
+      </div>
+    `, 3.05);
+
+    const lgRows = ['Leadership Capacity','School Improvement','Quality Assurance','Self-Evaluation','Governance','Governor Visits','Governor Skills Audit'];
+
+    html += `<div class="band">${ofstedPanel}${contextPanel}</div>`;
+
+    // ---------- BAND 2: SAFEGUARDING | INCLUSION ----------
+    const safeguardingPanel = panel('Safeguarding', `
+      <div class="subpanel-row">
+        ${subpanel('Vulnerability Numbers', miniTable(PERIODS, VULNERABILITY_ROWS, (r,c) => sgVal('Vulnerability Numbers', r, c), false, (r,c,v) => vulnerabilityContextClass(r,v), 'narrow-periods'), 1.8, undefined, ` <button type="button" class="ctx-key-btn" onclick="event.stopPropagation(); openCtxKey('vulnerability');">Key</button>`)}
+        ${subpanel('Compliance', miniTable(['Status','Date'], ['SCR Status','Safeguarding Audit','Governor Training'], (r,c) => c==='Date' ? ukDate(sgVal('Compliance', r, c)) : sgVal('Compliance', r, c), false, (r,c,v) => {
+          if (c === 'Status') return v==='Fully Compliant' ? 'rs-exceptional' : v==='Partially Compliant' ? 'rs-attention' : v==='Non-Compliant' ? 'rs-urgent' : '';
+          if (c === 'Date') return keyDateClass(sgVal('Compliance', r, 'Date'));
+          return '';
+        }), 1, undefined, ` <button type="button" class="ctx-key-btn" onclick="event.stopPropagation(); openCtxKey('compliance');">Key</button>`)}
+      </div>
+    `, 1);
+
+    const inclusionRows = INCLUSION_NUMBERS_ROWS;
+    const inclusionEvalRows = ['Identification of Need','Quality First Teaching','Graduated Approach','External Agency Support','Parental Engagement','Inclusion Leadership'];
+    const inclusionPanel = panel('Inclusion', `
+      <div class="subpanel-row">
+        ${subpanel('Inclusion Numbers', miniTable(PERIODS, inclusionRows, (r,c) => incVal('Inclusion Numbers', r, c), false, (r,c,v) => inclusionNumbersContextClass(r,v), 'narrow-periods'), 1.8, undefined, ` <button type="button" class="ctx-key-btn" onclick="event.stopPropagation(); openCtxKey('inclusionNumbers');">Key</button>`)}
+        ${subpanel('Inclusion Evaluation', miniTable(['Rating'], inclusionEvalRows, (r,c) => incVal('Inclusion Evaluation', r, 'Rating'), false, (r,c,v) => ratingClass(v)), 0.85)}
+        ${subpanel('Key Dates', miniTable(['Date'], ['SEND Review Completed','SEND Audit Completed','SEND Governor Visit','Inclusion Review'], (r,c) => ukDate(incVal('Key Dates', r, 'Date')), false, (r,c) => keyDateClass(incVal('Key Dates', r, 'Date'))), 0.8, undefined, ` <button type="button" class="ctx-key-btn" onclick="event.stopPropagation(); openCtxKey('keyDates');">Key</button>`)}
+      </div>
+    `, 1.4);
+
+    html += `<div class="band">${safeguardingPanel}${inclusionPanel}</div>`;
+
+    // ---------- BAND 3: ATTENDANCE & BEHAVIOUR | ACHIEVEMENT (foundational) ----------
+    const attRows = ['Overall Attendance %','National Attendance %','Persistent Absence %','PP Attendance %','PP Persistent Absence %','SEND Attendance %','SEND Persistent Absence %'];
+    const attYGRows = ['Year 7 Attendance %','Year 8 Attendance %','Year 9 Attendance %','Year 10 Attendance %','Year 11 Attendance %','Year 12 Attendance %','Year 13 Attendance %'];
+    const behRows = ['Internal Removal Events — Total','Internal Removal Events — PP','Internal Removal Events — SEND','Suspensions — Total','Suspensions — PP','Suspensions — SEND','Permanent Exclusions — Total','Permanent Exclusions — PP','Permanent Exclusions — SEND','Late Arrivals / Punctuality Events'];
+    const attendancePanel = panel('Attendance &amp; Behaviour', `
+      <div class="subpanel-row">
+        ${subpanel('Attendance — Key Metrics', miniTable([...PERIODS,'YTD'], attRows, (r,c) => attVal('Attendance Percentages', r, c), false, (r,c,v) => attendanceNationalDiffClass(r, v, c)), 1, undefined, ` <button type="button" class="ctx-key-btn" onclick="event.stopPropagation(); openCtxKey('attendanceNational');">Key</button>`)}
+        ${subpanel('Attendance by Year Group', miniTable([...PERIODS,'YTD'], attYGRows, (r,c) => attVal('Attendance Percentages', r, c), false, (r,c,v) => attendanceNationalDiffClass(r, v, c), 'narrow-periods tight-rowlabel'), 1, undefined, ` <button type="button" class="ctx-key-btn" onclick="event.stopPropagation(); openCtxKey('attendanceNational');">Key</button>`)}
+        ${subpanel('Behaviour — Numbers by Half Term', miniTable([...PERIODS,'YTD'], behRows, (r,c) => attVal('Behaviour Numbers', r, c), false, (r,c,v) => internalRemovalContextClass(r,v)), 1, undefined, ` <button type="button" class="ctx-key-btn" onclick="event.stopPropagation(); openCtxKey('internalRemoval');">Key</button>`)}
+      </div>
+    `, '1');
+
+    const foundationalRows = ['Literacy','Numeracy','Knowledge Retention','Intervention & Support'];
+    const achievementFoundPanel = panel('Achievement', `
+      ${subpanel('Foundational Knowledge', miniTable(['Rating'], foundationalRows, (r,c) => achVal('Foundational Knowledge', r, 'Rating'), false, (r,c,v) => ratingClass(v), 'tight-rowlabel'))}
+    `, '0 0 220px');
+
+    html += `<div class="band">${attendancePanel}${achievementFoundPanel}</div>`;
+
+    // ---------- BAND 4: ACHIEVEMENT (GCSE/Post-16) | CURRICULUM & TEACHING ----------
+    const baseYearCols = ['2022/23','Nat','2023/24','Nat','2024/25','Nat','2025/26','Nat'];
+    const gcseYearCols = [...baseYearCols];
+    if (assessmentPlanned('Year 11 PPE 1')) gcseYearCols.push('PPE1');
+    if (assessmentPlanned('Year 11 PPE 2')) gcseYearCols.push('PPE2');
+    gcseYearCols.push('Predicted');
+
+    const post16YearCols = [...baseYearCols];
+    if (assessmentPlanned('Year 13 PPE 1')) post16YearCols.push('PPE1');
+    if (assessmentPlanned('Year 13 PPE 2')) post16YearCols.push('PPE2');
+    post16YearCols.push('Predicted');
+
+    const gcseRows = ['Progress 8','Progress 8 - Disadvantaged','Attainment 8 Average Grade','Attainment 8 Average Grade - Disadvantaged','English & Maths Grade 4+ %','English & Maths Grade 4+ % - Disadvantaged','English & Maths Grade 5+ %','English & Maths Grade 5+ % - Disadvantaged','EBacc Entry %','EBacc APS'];
+    const post16Rows = ['Average A Level Grade','A Level APS (Per Entry)','A*–A %','A*–B %','A*–C %','A*–E %','Average Applied General Grade','Applied General APS (Per Entry)'];
+    const gcsePeriodKeys = periodKeysFor(gcseYearCols);
+    const post16PeriodKeys = periodKeysFor(post16YearCols);
+    // Progress 8 measures were not recorded, in school or nationally, for 24/25 or 25/26
+    const PROGRESS8_NA_ROWS = ['Progress 8', 'Progress 8 - Disadvantaged'];
+    const PROGRESS8_NA_PERIODS = ['2024/25', 'Nat3', '2025/26', 'Nat4'];
+    const achievementDetailPanel = panel('Achievement', `
+      ${subpanel('GCSE Outcomes', gcseMiniTable(gcseYearCols, gcseRows, (r,c,idx) => {
+        if (PROGRESS8_NA_ROWS.includes(r) && PROGRESS8_NA_PERIODS.includes(gcsePeriodKeys[idx])) return 'N/A';
+        if (c === 'Nat') return gcseNatAvgVal(r, gcseYearCols[idx - 1]);
+        return achVal('GCSE Outcomes', r, gcsePeriodKeys[idx]);
+      }, (r,c,v) => gcseColourClass(r, c, v, gcseNatAvgVal, 'GCSE Outcomes')), undefined, undefined, ` <button type="button" class="ctx-key-btn" onclick="event.stopPropagation(); openCtxKey('gcseColour');">Key</button>`)}
+      ${subpanel('Post-16 Outcomes', gcseMiniTable(post16YearCols, post16Rows, (r,c,idx) => {
+        if (c === 'Nat') return alevelNatAvgVal(r, post16YearCols[idx - 1]);
+        return achVal('Post-16 Outcomes', r, post16PeriodKeys[idx]);
+      }, (r,c,v) => gcseColourClass(r, c, v, alevelNatAvgVal, 'Post-16 Outcomes')), undefined, undefined, ` <button type="button" class="ctx-key-btn" onclick="event.stopPropagation(); openCtxKey('gcseColour');">Key</button>`)}
+    `, 2.2);
+
+    const curricRows = ['Curriculum Design','Structure','Sequencing','Ambition','Curriculum Delivery','Teaching','Assessment','Adaptation','Literacy & Oracy','Subject Review','Curriculum Monitoring','Professional Development'];
+    const lgEvalId = 'panel-src-' + (panelCounter++);
+    const curricPanel = panel('Curriculum &amp; Teaching', `
+      ${subpanel('Intent, Implementation &amp; Assurance', miniTable(['Rating'], curricRows, (r,c) => curVal('Intent, Implementation & Assurance', r, 'Rating'), false, (r,c,v) => ratingClass(v), 'narrow-labels'))}
+      <div class="subpanel">
+        <div class="subpanel-title-navy">Leadership &amp; Governance</div>
+        <div class="subpanel-title" style="cursor:zoom-in;" onclick="openPanelModal('${lgEvalId}', event, 'Leadership &amp; Governance — Evaluation')">Evaluation <span style="float:right;opacity:0.85;font-size:7px;text-transform:none;letter-spacing:0;">🔍 Zoom</span></div>
+        <div id="${lgEvalId}">${miniTable(['Rating'], lgRows, (r,c) => lgVal('Evaluation', r, 'Rating'), false, (r,c,v) => ratingClass(v))}</div>
+      </div>
+    `, 1);
+
+    html += `<div class="band">${achievementDetailPanel}${curricPanel}</div>`;
+
+    // ---------- BAND 5: PDW ----------
+    html += `<div class="section-band-title">Personal Development &amp; Well-Being</div>`;
+    const stakeholderRows = ['Pupil - Quality of Education %','Pupil - Behaviour & Attitudes %','Pupil - Personal Development %','Parent - Quality of Education %','Parent - Personal Development %','Staff — Overall %'];
+    // Fixed percentage bands, applied directly (not row-relative) across
+    // Completed Status, Previous Positive Feedback and Current Positive Feedback
+    function stakeholderPctClass(value) {
+      const v = parseFloat(value);
+      if (isNaN(v)) return '';
+      if (v >= 90) return 'rs-exceptional';
+      if (v >= 70) return 'rs-strong';
+      if (v >= 50) return 'rs-attention';
+      return 'rs-urgent';
+    }
+    const STAKEHOLDER_PCT_COLS = ['Completed Status', 'Previous Positive Feedback', 'Current Positive Feedback'];
+    const stakeholderPanel = panel('Stakeholder Voice', `
+      ${subpanel('Stakeholder Voice', miniTable(['Completed Status','Previous Positive Feedback','Current Positive Feedback','Rating'], stakeholderRows, (r,c) => pdwVal('Stakeholder Voice', r, c), true, (r,c,v) => c === 'Rating' ? ratingClass(v) : (STAKEHOLDER_PCT_COLS.includes(c) ? stakeholderPctClass(v) : '')), undefined, undefined, ` <button type="button" class="ctx-key-btn" onclick="event.stopPropagation(); openCtxKey('stakeholderVoice');">Key</button>`)}
+    `, 1.6);
+
+    const destRows = ['Continue to Y12 %','Other Further Education %','Apprenticeships %','Employment %','NEET %','Unknown %'];
+    const destRowsY13 = ['University %','Other Further Education %','Apprenticeships %','Employment %','NEET %','Unknown %','Retention Y12 to Y13 %'];
+    const DEST_YEARS = ['23/24','24/25','25/26'];
+    // Purple row-relative scaling, direction per row: bigger = darker where a
+    // higher figure is the better outcome, bigger = lighter where it isn't.
+    const DEST_PURPLE_DIRECTION = {
+      'Continue to Y12 %': true,
+      'Other Further Education %': false,
+      'Apprenticeships %': true,
+      'Employment %': false,
+      'NEET %': false,
+      'Unknown %': false,
+      'University %': true,
+      'Retention Y12 to Y13 %': true
+    };
+    const destY11RowRange = {};
+    destRows.forEach(r => {
+      const vals = DEST_YEARS.map(c => parseFloat(pdwVal('Year 11 Destinations', r, c))).filter(v => !isNaN(v));
+      destY11RowRange[r] = vals.length ? { min: Math.min(...vals), max: Math.max(...vals) } : null;
+    });
+    const destY13RowRange = {};
+    destRowsY13.forEach(r => {
+      const vals = DEST_YEARS.map(c => parseFloat(pdwVal('Year 13 Destinations', r, c))).filter(v => !isNaN(v));
+      destY13RowRange[r] = vals.length ? { min: Math.min(...vals), max: Math.max(...vals) } : null;
+    });
+    const y11Panel = panel('Year 11 Destinations', `
+      ${subpanel('Year 11 Destinations', miniTable(DEST_YEARS, destRows, (r,c) => pdwVal('Year 11 Destinations', r, c), false, (r,c,v) => rowRelativePurpleClass(destY11RowRange[r], v, DEST_PURPLE_DIRECTION[r])), undefined, undefined, ` <button type="button" class="ctx-key-btn" onclick="event.stopPropagation(); openCtxKey('destinations');">Key</button>`)}
+    `, 1);
+    const y13Panel = panel('Year 13 Destinations', `
+      ${subpanel('Year 13 Destinations', miniTable(DEST_YEARS, destRowsY13, (r,c) => pdwVal('Year 13 Destinations', r, c), false, (r,c,v) => rowRelativePurpleClass(destY13RowRange[r], v, DEST_PURPLE_DIRECTION[r])), undefined, undefined, ` <button type="button" class="ctx-key-btn" onclick="event.stopPropagation(); openCtxKey('destinations');">Key</button>`)}
+    `, 1);
+
+    const enrichRows = ['No. of Clubs Offered','Club Participation %','No. of Educational Visits','No. of Residentials','Duke of Edinburgh Candidates','Duke of Edinburgh Completion %'];
+    const enrichPanel = panel('Enrichment &amp; Clubs', `
+      ${subpanel('Enrichment &amp; Clubs', miniTable(['AUT','SPR','SUM'], enrichRows, (r,c) => pdwVal('Enrichment & Clubs', r, c), false, (r,c,v) => enrichContextClass(r,v)), undefined, undefined, ` <button type="button" class="ctx-key-btn" onclick="event.stopPropagation(); openCtxKey('enrichment');">Key</button>`)}
+    `, 1);
+
+    const gatsbyRows = ['BM1: Stable Careers Programme','BM2: Labour Market Info','BM3: Needs of Each Pupil','BM4: Curriculum to Careers','BM5: Employer Encounters','BM6: Workplace Experience','BM7: FE/HE Encounters','BM8: Personal Guidance'];
+    const gatsbyPanel = panel('Gatsby Benchmarks', `
+      ${subpanel('Gatsby Benchmarks', miniTable(['Rating'], gatsbyRows, (r,c) => pdwVal('Gatsby Benchmarks', r, 'Rating'), false, (r,c,v) => ratingClass(v)))}
+    `, 1);
+
+    html += `<div class="band wrap">${stakeholderPanel}${y11Panel}${y13Panel}${enrichPanel}${gatsbyPanel}</div>`;
+
+    // ---------- BAND 6: FINANCE & RESOURCES ----------
+    html += `<div class="section-band-title">Finance &amp; Resources</div>`;
+    const finYears = ['2024/25','2025/26','2026/27'];
+    const finRows = ['Staffing Costs % of Income','Budget (Surplus/Deficit)','PP Funding (£)','PP Funding Deployed Y/N','3 Year Forecast Position'];
+    const FIN_CURRENCY_ROWS = ['Budget (Surplus/Deficit)', 'PP Funding (£)'];
+    // Purple row-relative scaling, direction per row: smaller Staffing Costs is
+    // better (smaller = darker); bigger Budget/PP Funding is better (bigger = darker)
+    const FIN_HEALTH_PURPLE_ROWS = { 'Staffing Costs % of Income': false, 'Budget (Surplus/Deficit)': true, 'PP Funding (£)': true };
+    const finHealthRowRange = {};
+    Object.keys(FIN_HEALTH_PURPLE_ROWS).forEach(r => {
+      const vals = finYears.map(c => parseFloat(String(finVal('Financial Health', r, c) || '').replace(/[£,()]/g, ''))).filter(v => !isNaN(v));
+      finHealthRowRange[r] = vals.length ? { min: Math.min(...vals), max: Math.max(...vals) } : null;
+    });
+    const FIN_FORECAST_RANK = { 'Secure': 'rs-ctx-5', 'Some Pressure': 'rs-ctx-4', 'Significant Pressure': 'rs-ctx-2', 'Unsustainable': 'rs-ctx-1' };
+    function finHealthClass(row, colValue) {
+      if (row === 'PP Funding Deployed Y/N') return colValue === 'Yes' ? 'rs-exceptional' : colValue === 'No' ? 'rs-attention' : '';
+      if (row === '3 Year Forecast Position') return FIN_FORECAST_RANK[colValue] || '';
+      if (FIN_HEALTH_PURPLE_ROWS.hasOwnProperty(row)) {
+        const cleaned = parseFloat(String(colValue || '').replace(/[£,()]/g, ''));
+        return rowRelativePurpleClass(finHealthRowRange[row], cleaned, FIN_HEALTH_PURPLE_ROWS[row]);
+      }
+      return '';
+    }
+    const finPanel = panel('Financial Health', `${subpanel('Financial Health', miniTable(finYears, finRows, (r,c) => FIN_CURRENCY_ROWS.includes(r) ? finCurrency('Financial Health', r, c) : finVal('Financial Health', r, c), false, (r,c,v) => finHealthClass(r, v)), undefined, undefined, ` <button type="button" class="ctx-key-btn" onclick="event.stopPropagation(); openCtxKey('financialHealth');">Key</button>`)}`, 1);
+
+    const recruitRows = ['Teaching Vacancies','Support Staff Vacancies','Teacher Turnover %','Support Staff Turnover %','Recruitment Difficulty','CPD Spend per Teacher'];
+    // Purple row-relative scaling for the five numeric rows — lower is always
+    // better here, so lower is always the darkest shade.
+    const RECRUIT_PURPLE_ROWS = ['Teaching Vacancies','Support Staff Vacancies','Teacher Turnover %','Support Staff Turnover %','CPD Spend per Teacher'];
+    const recruitRowRange = {};
+    RECRUIT_PURPLE_ROWS.forEach(r => {
+      const vals = finYears.map(c => parseFloat(String(finVal('Recruitment & Retention', r, c) || '').replace(/[£,()]/g, ''))).filter(v => !isNaN(v));
+      recruitRowRange[r] = vals.length ? { min: Math.min(...vals), max: Math.max(...vals) } : null;
+    });
+    const RECRUIT_DIFFICULTY_RANK = { 'Low': 'rs-ctx-5', 'Moderate': 'rs-ctx-3', 'High': 'rs-ctx-1' };
+    function recruitClass(row, colValue) {
+      if (row === 'Recruitment Difficulty') return RECRUIT_DIFFICULTY_RANK[colValue] || '';
+      if (RECRUIT_PURPLE_ROWS.includes(row)) {
+        const cleaned = parseFloat(String(colValue || '').replace(/[£,()]/g, ''));
+        return rowRelativePurpleClass(recruitRowRange[row], cleaned, false);
+      }
+      return '';
+    }
+    const recruitPanel = panel('Recruitment &amp; Retention', `${subpanel('Recruitment &amp; Retention', miniTable(finYears, recruitRows, (r,c) => r === 'CPD Spend per Teacher' ? finCurrency('Recruitment & Retention', r, c) : finVal('Recruitment & Retention', r, c), false, (r,c,v) => recruitClass(r, v)), undefined, undefined, ` <button type="button" class="ctx-key-btn" onclick="event.stopPropagation(); openCtxKey('recruitment');">Key</button>`)}`, 1);
+
+    const absenceRows = ['Teacher Absence %','Cover Lessons / Day','Support Staff Absence %'];
+    const absenceRowRange = {};
+    absenceRows.forEach(r => {
+      const vals = PERIODS.map(c => parseFloat(finVal('Staff Absence & Cover', r, c))).filter(v => !isNaN(v));
+      absenceRowRange[r] = vals.length ? { min: Math.min(...vals), max: Math.max(...vals) } : null;
+    });
+    function absenceContextClass(row, value) {
+      return rowRelativePurpleClass(absenceRowRange[row], value, false);
+    }
+    const absencePanel = panel('Staff Absence &amp; Cover', `${subpanel('Staff Absence &amp; Cover', miniTable([...PERIODS,'YTD'], absenceRows, (r,c) => finVal('Staff Absence & Cover', r, c), false, (r,c,v) => absenceContextClass(r,v)), undefined, undefined, ` <button type="button" class="ctx-key-btn" onclick="event.stopPropagation(); openCtxKey('staffAbsence');">Key</button>`)}`, 1);
+
+    const resourceRows = ['Staffing Resources','SEND Resources','Estates','Technology','Curriculum Resources'];
+    const resourcePanel = panel('Resource Effectiveness', `${subpanel('Resource Effectiveness', miniTable(['Rating'], resourceRows, (r,c) => finVal('Resource Effectiveness', r, 'Rating'), false, (r,c,v) => ratingClass(v)))}`, 0.8);
+
+    html += `<div class="band wrap">${finPanel}${recruitPanel}${absencePanel}${resourcePanel}</div>`;
+
+    // ---------- RATING SCALE ----------
+    html += `
+      <div class="rating-scale">
+        <div class="rs-label">Rating Scale</div>
+        <div class="rs-exceptional">Exceptional</div>
+        <div class="rs-strong">Strong Standard</div>
+        <div class="rs-expected">Expected Standard</div>
+        <div class="rs-attention">Needs Attention</div>
+        <div class="rs-urgent">Urgent Improvement</div>
+      </div>
+      <div class="footer-credit">Generated by SOAP Analytics · robin@soapanalytics.co.uk · <a href="#" onclick="exportStaticCopy(event);" style="color:#8A97A8;">Export Static Copy</a></div>
+    </div>`;
+
+    content.innerHTML = html;
+
+    // Saves the current fully-rendered page as a standalone HTML file — same
+    // approach as idsr-dashboard.html, just generated automatically instead of
+    // hand-built. The exported copy has real data baked in and never calls
+    // Supabase again, so it opens anywhere, works offline, and keeps the zoom
+    // and Key popups fully working since those only ever read from the DOM.
+    window.exportStaticCopy = function(e) {
+      if (e) e.preventDefault();
+      const clone = document.documentElement.cloneNode(true);
+      // Remove the auto-fetch call so the saved copy doesn't try Supabase again
+      clone.querySelectorAll('script:not([src])').forEach(s => {
+        if (s.textContent.includes('init();')) {
+          s.textContent = s.textContent.replace(/\n\s*init\(\);\s*\n/, '\n  // Export: live fetch disabled — this copy already has its data baked in\n');
+        }
+      });
+      const exportedHtml = '<!DOCTYPE html>\n' + clone.outerHTML;
+      const blob = new Blob([exportedHtml], { type: 'text/html' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      const schoolName = (school && school.name ? school.name : 'soap-exemplar').replace(/[^a-z0-9]+/gi, '-').toLowerCase();
+      a.href = url;
+      a.download = `${schoolName}-soap-static.html`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    };
+  }
+
+  init();
+</script>
+
+</body>
+</html>

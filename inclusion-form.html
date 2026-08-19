@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SOAP Analytics — Inclusion</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: Arial, Helvetica, sans-serif;
+    background: #F0F4F8;
+    color: #1B2A4A;
+    min-height: 100vh;
+    padding-bottom: 80px;
+  }
+  header.page-head { background: #1B2A4A; padding: 28px 5%; display: flex; justify-content: space-between; align-items: flex-start; }
+  header.page-head a { display: inline-block; }
+  .eyebrow { font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: #3DCFB8; font-weight: 700; margin-bottom: 6px; }
+  header.page-head h1 { color: #fff; font-size: 24px; margin-top: 14px; }
+  header.page-head p { font-size: 13px; color: rgba(255,255,255,0.6); margin-top: 4px; }
+  .responsible-box { background: #0D7377; border-radius: 8px; padding: 10px 16px; text-align: right; min-width: 160px; }
+  .responsible-box .tag { font-size: 10px; letter-spacing: 1px; text-transform: uppercase; color: rgba(255,255,255,0.7); font-weight: 700; }
+  .responsible-box .name { font-size: 14px; font-weight: 700; color: #fff; margin-top: 4px; }
+
+  .wrap { max-width: 1100px; margin: 32px auto; padding: 0 5%; }
+  .status-banner { background: #FEF3CD; border: 1px solid #E6C96E; color: #7A5C00; font-size: 13px; border-radius: 8px; padding: 12px 16px; margin-bottom: 22px; }
+
+  .card { background: #fff; border: 1px solid #DCE3EA; border-radius: 10px; margin-bottom: 22px; overflow: hidden; }
+  .card-head { background: #1A7A6E; color: #fff; font-size: 13px; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; padding: 12px 20px; }
+  .card-body { padding: 16px; overflow-x: auto; }
+
+  table.grid-table { width: 100%; border-collapse: collapse; min-width: 620px; }
+  table.grid-table th { background: #1B2A4A; color: #fff; font-size: 11px; text-transform: uppercase; letter-spacing: 0.3px; text-align: left; padding: 8px 10px; white-space: nowrap; }
+  table.grid-table td { padding: 6px 8px; border-bottom: 1px solid #DCE3EA; font-size: 13px; vertical-align: middle; }
+  table.grid-table tbody tr:nth-child(even) { background: #F0F4F8; }
+  table.grid-table td.label-cell { font-weight: 700; color: #1B2A4A; white-space: nowrap; }
+  table.grid-table td.guidance-cell { color: #5A6B80; font-size: 12px; font-style: italic; max-width: 340px; white-space: normal; line-height: 1.4; }
+  table.grid-table input, table.grid-table select { width: 100%; font-family: Arial, Helvetica, sans-serif; font-size: 13px; padding: 6px 8px; border: 1px solid #DCE3EA; border-radius: 5px; }
+  table.grid-table input[type="date"] { min-width: 150px; }
+  table.grid-table input:focus, table.grid-table select:focus { outline: none; border-color: #0D7377; box-shadow: 0 0 0 3px rgba(13,115,119,0.12); }
+
+  .rating-field { display: flex; align-items: center; gap: 14px; }
+  .rating-field select { max-width: 260px; }
+
+  .rating-header-cell { display: flex; align-items: center; gap: 6px; }
+  .key-btn {
+    background: rgba(255,255,255,0.18); color: #fff; border: 1px solid rgba(255,255,255,0.5);
+    border-radius: 50%; width: 18px; height: 18px; font-size: 11px; font-weight: 700;
+    line-height: 1; cursor: pointer; display: inline-flex; align-items: center; justify-content: center;
+    font-family: Arial, Helvetica, sans-serif; text-transform: none; letter-spacing: 0;
+  }
+  .key-btn:hover { background: rgba(255,255,255,0.32); }
+
+  .key-modal-overlay {
+    display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(27,42,74,0.7); z-index: 1000; align-items: center; justify-content: center; padding: 24px;
+  }
+  .key-modal-overlay.open { display: flex; }
+  .key-modal-content { background: #fff; border-radius: 12px; max-width: 620px; width: 100%; max-height: 84vh; overflow-y: auto; }
+  .key-modal-head { background: #1B2A4A; color: #fff; padding: 16px 22px; display: flex; justify-content: space-between; align-items: center; border-radius: 12px 12px 0 0; }
+  .key-modal-head h3 { font-size: 15px; letter-spacing: 0.3px; }
+  .key-modal-close { background: none; border: none; color: #fff; font-size: 20px; cursor: pointer; line-height: 1; padding: 0 4px; }
+  .key-modal-body { padding: 18px 22px 22px; }
+  .rating-key-row { border-radius: 8px; padding: 12px 16px; margin-bottom: 10px; }
+  .rating-key-row:last-child { margin-bottom: 0; }
+  .rating-key-row .rk-title { font-size: 13px; font-weight: 700; margin-bottom: 3px; }
+  .rating-key-row .rk-desc { font-size: 12.5px; line-height: 1.45; }
+  .rk-exceptional { background: #B7DDF2; color: #1B2A4A; }
+  .rk-strong { background: #C7E6C7; color: #1B2A4A; }
+  .rk-expected { background: #E6EEDD; color: #1B2A4A; }
+  .rk-attention { background: #FBE1C6; color: #1B2A4A; }
+  .rk-urgent { background: #F3B8B8; color: #1B2A4A; }
+
+  .submit-bar { position: sticky; bottom: 0; background: #1B2A4A; padding: 14px 5%; display: flex; justify-content: space-between; align-items: center; gap: 16px; box-shadow: 0 -4px 16px rgba(0,0,0,0.15); }
+  .submit-bar .note { font-size: 12px; color: rgba(255,255,255,0.55); }
+  .save-btn { background: #0D7377; color: #fff; font-family: Arial, Helvetica, sans-serif; font-weight: 700; font-size: 14px; border: none; border-radius: 8px; padding: 12px 26px; cursor: pointer; }
+  .save-btn:hover { background: #0a5c5f; }
+  .save-btn:disabled { opacity: 0.6; cursor: default; }
+
+  .toast { position: fixed; top: 20px; left: 50%; transform: translateX(-50%) translateY(-20px); background: #1A7A6E; color: #fff; font-size: 13px; font-weight: 700; padding: 12px 22px; border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,0.2); opacity: 0; pointer-events: none; transition: opacity 0.25s, transform 0.25s; z-index: 999; max-width: 80vw; text-align: center; }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  .status-msg { background: #fff; border-radius: 10px; padding: 30px; text-align: center; color: #5A6B80; }
+</style>
+</head>
+<body>
+
+<header class="page-head">
+  <div>
+    <a href="index.html"><img src="images/logo-navy.png" alt="SOAP Analytics" style="height:34px;width:auto;border-radius:6px;"></a>
+    <div style="margin-top:14px;"><a href="portal.html" style="color:rgba(255,255,255,0.7);text-decoration:none;font-size:13px;">← Back to Portal</a></div>
+    <div class="eyebrow" style="margin-top:10px;">SOAP Analytics — Data Entry</div>
+    <h1>Inclusion</h1>
+    <p>Inclusion numbers, evaluation against guidance questions, key dates, and overall rating.</p>
+  </div>
+  <div class="responsible-box" id="responsibleBox" style="display:none;">
+    <div class="tag">Person Responsible</div>
+    <div class="name" id="responsibleName">—</div>
+  </div>
+</header>
+
+<div class="wrap" id="wrap">
+  <div class="status-msg" id="statusMsg">Checking you're logged in…</div>
+  <form id="inclusionForm" style="display:none;"></form>
+</div>
+
+<div class="submit-bar" id="submitBar" style="display:none;">
+  <span class="note">Saves directly to your school's record</span>
+  <button type="button" class="save-btn" id="saveBtn" onclick="saveForm()">Save Inclusion</button>
+</div>
+
+<div class="toast" id="toast">✓ Inclusion saved</div>
+
+<div class="key-modal-overlay" id="ratingKeyModal" onclick="if(event.target===this) closeRatingKey();">
+  <div class="key-modal-content">
+    <div class="key-modal-head">
+      <h3>Rating Scale — Key</h3>
+      <button type="button" class="key-modal-close" onclick="closeRatingKey();">×</button>
+    </div>
+    <div class="key-modal-body" id="ratingKeyBody"></div>
+  </div>
+</div>
+
+<script>
+  const SUPABASE_URL = 'https://caopycszjzrmwhxxvtpx.supabase.co';
+  const SUPABASE_KEY = 'sb_publishable_2CTGR0PKyRPpSk59lcr3sA_hvvUDX97';
+  const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+  const PERIODS = ['AUT1 26', 'AUT2 26', 'SPR1 27', 'SPR2 27', 'SUM1 27', 'SUM2 27'];
+  const INCLUSION_NUMBERS_ROWS = ['SEND', 'EHCP', 'Pupil Premium', 'EAL', 'AP Placements'];
+  const EVAL_ROWS = [
+    { area: 'Identification of Need', question: 'How effectively does the school identify pupils requiring additional support and ensure needs are understood at the earliest opportunity?' },
+    { area: 'Quality First Teaching', question: 'How effectively do teachers adapt classroom practice to meet the needs of all learners, including those with SEND?' },
+    { area: 'Graduated Approach', question: 'How effectively does the school assess, plan, deliver and review support to ensure interventions have measurable impact?' },
+    { area: 'External Agency Support', question: 'How effectively does the school utilise specialist external support to improve outcomes for pupils?' },
+    { area: 'Parental Engagement', question: 'How effectively are parents and carers involved in planning, reviewing and supporting provision?' },
+    { area: 'Inclusion Leadership', question: 'How effectively is inclusion strategically led, monitored and embedded across the school?' }
+  ];
+  const KEY_DATES_ROWS = ['SEND Review Completed', 'SEND Audit Completed', 'SEND Governor Visit', 'Inclusion Review'];
+  const RATING_OPTIONS = ['Exceptional', 'Strong Standard', 'Expected Standard', 'Needs Attention', 'Urgent Improvement'];
+  const RATING_KEY = [
+    { label: 'Exceptional', cls: 'rk-exceptional', desc: 'Practice is exemplary, deeply embedded and consistently demonstrable. Impact is exceptionally strong and could reasonably be shared as best practice.' },
+    { label: 'Strong Standard', cls: 'rk-strong', desc: 'Practice is secure, embedded and consistently effective, with clear supporting evidence.' },
+    { label: 'Expected Standard', cls: 'rk-expected', desc: 'Appropriate practice is in place and broadly secure. Any weaknesses are minor and do not materially undermine implementation.' },
+    { label: 'Needs Attention', cls: 'rk-attention', desc: 'There are identifiable weaknesses or inconsistencies that require improvement, but these are not yet sufficiently serious to represent a major concern.' },
+    { label: 'Urgent Improvement', cls: 'rk-urgent', desc: 'There are significant or systemic weaknesses, insufficient evidence of effective implementation, or concerns requiring prompt leadership action.' }
+  ];
+
+  function openRatingKey() {
+    const body = document.getElementById('ratingKeyBody');
+    body.innerHTML = RATING_KEY.map(k => `
+      <div class="rating-key-row ${k.cls}">
+        <div class="rk-title">${k.label}</div>
+        <div class="rk-desc">${k.desc}</div>
+      </div>
+    `).join('');
+    document.getElementById('ratingKeyModal').classList.add('open');
+  }
+  function closeRatingKey() {
+    document.getElementById('ratingKeyModal').classList.remove('open');
+  }
+
+  let currentSchoolId = null;
+
+  const PERIOD_TO_REPORTING_NAME = {
+    'AUT1 26': 'Autumn 1', 'AUT2 26': 'Autumn 2',
+    'SPR1 27': 'Spring 1', 'SPR2 27': 'Spring 2',
+    'SUM1 27': 'Summer 1', 'SUM2 27': 'Summer 2'
+  };
+
+  function buildForm(lockedPeriods) {
+    const form = document.getElementById('inclusionForm');
+    let html = '';
+
+    // Inclusion Numbers
+    html += '<div class="card"><div class="card-head">Inclusion Numbers</div><div class="card-body">';
+    html += '<table class="grid-table"><thead><tr><th>Metric</th>';
+    PERIODS.forEach(p => html += `<th>${p}${lockedPeriods[p] ? ' 🔒' : ''}</th>`);
+    html += '</tr></thead><tbody>';
+    INCLUSION_NUMBERS_ROWS.forEach(r => {
+      html += `<tr data-category="Inclusion Numbers" data-metric="${r}"><td class="label-cell">${r}</td>`;
+      PERIODS.forEach(p => {
+        const locked = lockedPeriods[p];
+        html += `<td><input type="text" data-period="${p}" ${locked ? 'disabled style="background:#EDEFF2;color:#A0ADB8;"' : ''}></td>`;
+      });
+      html += '</tr>';
+    });
+    html += '</tbody></table></div></div>';
+
+    // Inclusion Evaluation
+    html += '<div class="card"><div class="card-head">Inclusion Evaluation</div><div class="card-body">';
+    html += '<table class="grid-table"><thead><tr><th>Area</th><th>Guidance Question</th><th><div class="rating-header-cell">Rating <button type="button" class="key-btn" title="View rating scale key" onclick="openRatingKey();">?</button></div></th></tr></thead><tbody>';
+    EVAL_ROWS.forEach(r => {
+      html += `<tr data-category="Inclusion Evaluation" data-metric="${r.area}">`;
+      html += `<td class="label-cell">${r.area}</td>`;
+      html += `<td class="guidance-cell">${r.question}</td>`;
+      html += `<td><select data-period="Rating"><option value="">—</option>${RATING_OPTIONS.map(o => `<option>${o}</option>`).join('')}</select></td>`;
+      html += '</tr>';
+    });
+    html += '</tbody></table></div></div>';
+
+    // Key Dates
+    html += '<div class="card"><div class="card-head">Key Dates</div><div class="card-body">';
+    html += '<table class="grid-table"><thead><tr><th>Activity</th><th>Date</th></tr></thead><tbody>';
+    KEY_DATES_ROWS.forEach(r => {
+      html += `<tr data-category="Key Dates" data-metric="${r}"><td class="label-cell">${r}</td><td><input type="date" data-period="Date"></td></tr>`;
+    });
+    html += '</tbody></table></div></div>';
+
+    // Overall Rating
+    html += `<div class="card"><div class="card-head">Overall Inclusion SEF Rating</div><div class="card-body">
+      <div class="rating-field" data-category="Overall Rating" data-metric="Overall Inclusion SEF Rating">
+        <select data-period="Rating"><option value="">Select a rating…</option>${RATING_OPTIONS.map(o => `<option>${o}</option>`).join('')}</select>
+        <button type="button" class="key-btn" style="background:#0D7377;border-color:#0D7377;" title="View rating scale key" onclick="openRatingKey();">?</button>
+      </div>
+    </div></div>`;
+
+    form.innerHTML = html;
+  }
+
+  function showToast(msg, isError) {
+    const toast = document.getElementById('toast');
+    toast.textContent = msg;
+    toast.style.background = isError ? '#B3261E' : '#1A7A6E';
+    toast.classList.add('show');
+    setTimeout(() => toast.classList.remove('show'), 3400);
+  }
+
+  async function prefillForm(schoolId) {
+    const { data: existingRows } = await sb
+      .from('inclusion_data').select('category, metric, period, value').eq('school_id', schoolId);
+    (existingRows || []).forEach(r => {
+      let el;
+      if (r.category === 'Overall Rating') {
+        el = document.querySelector('.rating-field select');
+      } else {
+        const row = Array.from(document.querySelectorAll('#inclusionForm tr')).find(
+          tr => tr.dataset.category === r.category && tr.dataset.metric === r.metric
+        );
+        if (!row) return;
+        el = Array.from(row.querySelectorAll('input, select')).find(input => input.dataset.period === r.period);
+      }
+      if (el && r.value) el.value = r.value;
+    });
+  }
+
+  async function showResponsiblePerson(schoolId) {
+    const { data } = await sb
+      .from('completion_tracker').select('responsible_person').eq('school_id', schoolId).eq('section', 'Inclusion').maybeSingle();
+    if (data && data.responsible_person) {
+      document.getElementById('responsibleName').textContent = data.responsible_person;
+      document.getElementById('responsibleBox').style.display = '';
+    }
+  }
+
+  async function init() {
+    const statusMsg = document.getElementById('statusMsg');
+    const { data: { session } } = await sb.auth.getSession();
+
+    if (!session) {
+      statusMsg.innerHTML = 'Please <a href="login.html">log in</a> to access this form.';
+      return;
+    }
+
+    const { data: linkRow } = await sb
+      .from('school_users').select('school_id, role').eq('auth_user_id', session.user.id).maybeSingle();
+
+    if (!linkRow) {
+      statusMsg.innerHTML = 'Your login isn\'t linked to a school yet. Please complete <a href="school-setup-form.html">School Setup</a> first.';
+      return;
+    }
+
+    if (linkRow.role !== 'Headteacher' && linkRow.role !== 'Inclusion') {
+      statusMsg.innerHTML = `You're logged in, but this account is assigned to ${linkRow.role}, not Inclusion.`;
+      return;
+    }
+
+    currentSchoolId = linkRow.school_id;
+    await showResponsiblePerson(currentSchoolId);
+
+    const { data: repPeriods } = await sb
+      .from('reporting_periods').select('period_name, start_date').eq('school_id', currentSchoolId);
+
+    const lockedPeriods = {};
+    const today = new Date();
+    let anyDatesSet = false;
+    PERIODS.forEach(p => {
+      const match = (repPeriods || []).find(r => r.period_name === PERIOD_TO_REPORTING_NAME[p]);
+      if (match && match.start_date) {
+        anyDatesSet = true;
+        lockedPeriods[p] = new Date(match.start_date) > today;
+      } else {
+        lockedPeriods[p] = true;
+      }
+    });
+
+    if (!anyDatesSet) {
+      const note = document.createElement('div');
+      note.className = 'status-banner';
+      note.textContent = "Every period is currently locked because term dates haven't been set in School Setup yet. Ask your Headteacher to complete the Reporting Periods section first — periods will unlock automatically once their dates are added.";
+      document.getElementById('wrap').insertBefore(note, document.getElementById('inclusionForm'));
+    }
+
+    buildForm(lockedPeriods);
+    await prefillForm(currentSchoolId);
+
+    statusMsg.style.display = 'none';
+    document.getElementById('inclusionForm').style.display = '';
+    document.getElementById('submitBar').style.display = '';
+  }
+
+  async function saveForm() {
+    if (!currentSchoolId) return;
+    const btn = document.getElementById('saveBtn');
+    btn.disabled = true;
+    btn.textContent = 'Saving…';
+
+    const rows = [];
+    document.querySelectorAll('#inclusionForm [data-category]').forEach(el => {
+      const category = el.dataset.category;
+      const metric = el.dataset.metric;
+      el.querySelectorAll('input, select').forEach(input => {
+        const val = input.value.trim();
+        if (val) rows.push({ school_id: currentSchoolId, category, metric, period: input.dataset.period, value: val });
+      });
+    });
+
+    const { error: delError } = await sb.from('inclusion_data').delete().eq('school_id', currentSchoolId);
+    if (delError) {
+      showToast('⚠ Save failed — see browser console', true);
+      console.error(delError);
+      btn.disabled = false;
+      btn.textContent = 'Save Inclusion';
+      return;
+    }
+
+    if (rows.length) {
+      const { error } = await sb.from('inclusion_data').insert(rows);
+      if (error) {
+        showToast('⚠ Save failed — see browser console', true);
+        console.error(error);
+        btn.disabled = false;
+        btn.textContent = 'Save Inclusion';
+        return;
+      }
+    }
+
+    showToast('✓ Inclusion saved');
+    btn.disabled = false;
+    btn.textContent = 'Save Inclusion';
+  }
+
+  init();
+</script>
+
+</body>
+</html>

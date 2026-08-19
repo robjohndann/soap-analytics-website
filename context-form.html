@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SOAP Analytics — Context</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: Arial, Helvetica, sans-serif;
+    background: #F0F4F8;
+    color: #1B2A4A;
+    min-height: 100vh;
+    padding-bottom: 80px;
+  }
+  header.page-head { background: #1B2A4A; padding: 28px 5%; display: flex; justify-content: space-between; align-items: flex-start; }
+  header.page-head a { display: inline-block; }
+  .eyebrow { font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: #3DCFB8; font-weight: 700; margin-bottom: 6px; }
+  header.page-head h1 { color: #fff; font-size: 24px; margin-top: 14px; }
+  header.page-head p { font-size: 13px; color: rgba(255,255,255,0.6); margin-top: 4px; }
+  .responsible-box { background: #0D7377; border-radius: 8px; padding: 10px 16px; text-align: right; min-width: 160px; }
+  .responsible-box .tag { font-size: 10px; letter-spacing: 1px; text-transform: uppercase; color: rgba(255,255,255,0.7); font-weight: 700; }
+  .responsible-box .name { font-size: 14px; font-weight: 700; color: #fff; margin-top: 4px; }
+
+  .wrap { max-width: 1100px; margin: 32px auto; padding: 0 5%; }
+  .status-banner { background: #FEF3CD; border: 1px solid #E6C96E; color: #7A5C00; font-size: 13px; border-radius: 8px; padding: 12px 16px; margin-bottom: 22px; }
+
+  .card { background: #fff; border: 1px solid #DCE3EA; border-radius: 10px; margin-bottom: 22px; overflow: hidden; }
+  .card-head { background: #1A7A6E; color: #fff; font-size: 13px; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; padding: 12px 20px; }
+  .card-body { padding: 16px; overflow-x: auto; }
+
+  table.grid-table { width: 100%; border-collapse: collapse; min-width: 760px; }
+  table.grid-table th { background: #1B2A4A; color: #fff; font-size: 11px; text-transform: uppercase; letter-spacing: 0.3px; text-align: left; padding: 8px 10px; white-space: nowrap; }
+  table.grid-table td { padding: 6px 8px; border-bottom: 1px solid #DCE3EA; font-size: 13px; vertical-align: middle; }
+  table.grid-table tbody tr:nth-child(even) { background: #F0F4F8; }
+  table.grid-table td.label-cell { font-weight: 700; color: #1B2A4A; white-space: nowrap; }
+  table.grid-table input { width: 78px; font-family: Arial, Helvetica, sans-serif; font-size: 13px; padding: 6px 8px; border: 1px solid #DCE3EA; border-radius: 5px; }
+  table.grid-table input:focus { outline: none; border-color: #0D7377; box-shadow: 0 0 0 3px rgba(13,115,119,0.12); }
+  table.grid-table input.calculated-cell { background: #E8F4F4; color: #1A7A6E; font-weight: 700; cursor: default; }
+
+  .submit-bar { position: sticky; bottom: 0; background: #1B2A4A; padding: 14px 5%; display: flex; justify-content: space-between; align-items: center; gap: 16px; box-shadow: 0 -4px 16px rgba(0,0,0,0.15); }
+  .submit-bar .note { font-size: 12px; color: rgba(255,255,255,0.55); }
+  .save-btn { background: #0D7377; color: #fff; font-family: Arial, Helvetica, sans-serif; font-weight: 700; font-size: 14px; border: none; border-radius: 8px; padding: 12px 26px; cursor: pointer; }
+  .save-btn:hover { background: #0a5c5f; }
+  .save-btn:disabled { opacity: 0.6; cursor: default; }
+
+  .toast { position: fixed; top: 20px; left: 50%; transform: translateX(-50%) translateY(-20px); background: #1A7A6E; color: #fff; font-size: 13px; font-weight: 700; padding: 12px 22px; border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,0.2); opacity: 0; pointer-events: none; transition: opacity 0.25s, transform 0.25s; z-index: 999; max-width: 80vw; text-align: center; }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  .status-msg { background: #fff; border-radius: 10px; padding: 30px; text-align: center; color: #5A6B80; }
+</style>
+</head>
+<body>
+
+<header class="page-head">
+  <div>
+    <a href="index.html"><img src="images/logo-navy.png" alt="SOAP Analytics" style="height:34px;width:auto;border-radius:6px;"></a>
+    <div style="margin-top:14px;"><a href="portal.html" style="color:rgba(255,255,255,0.7);text-decoration:none;font-size:13px;">← Back to Portal</a></div>
+    <div class="eyebrow" style="margin-top:10px;">SOAP Analytics — Data Entry</div>
+    <h1>Context</h1>
+    <div id="completionBadge" style="margin-top:10px;background:rgba(255,255,255,0.12);display:inline-block;padding:6px 14px;border-radius:100px;font-size:12px;font-weight:700;color:#3DCFB8;"></div>
+    <p>Whole school, year group, pupil, and workforce data across the six reporting periods.</p>
+  </div>
+  <div class="responsible-box" id="responsibleBox" style="display:none;">
+    <div class="tag">Person Responsible</div>
+    <div class="name" id="responsibleName">—</div>
+  </div>
+</header>
+
+<div class="wrap" id="wrap">
+  <div class="status-msg" id="statusMsg">Checking you're logged in…</div>
+  <form id="contextForm" style="display:none;"></form>
+</div>
+
+<div class="submit-bar" id="submitBar" style="display:none;">
+  <span class="note">Saves directly to your school's record</span>
+  <button type="button" class="save-btn" id="saveBtn" onclick="saveForm()">Save Context</button>
+</div>
+
+<div class="toast" id="toast">✓ Context saved</div>
+
+<script>
+  const SUPABASE_URL = 'https://caopycszjzrmwhxxvtpx.supabase.co';
+  const SUPABASE_KEY = 'sb_publishable_2CTGR0PKyRPpSk59lcr3sA_hvvUDX97';
+  const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+  const PERIODS = ['AUT1 26', 'AUT2 26', 'SPR1 27', 'SPR2 27', 'SUM1 27', 'SUM2 27'];
+
+  const ALL_YEAR_GROUPS = ['EYFS','Y1','Y2','Y3','Y4','Y5','Y6','Y7','Y8','Y9','Y10','Y11','Y12','Y13'];
+
+  // Which year groups are relevant per phase. Anything not listed here (or an
+  // unrecognised/blank phase) falls back to showing every year group, since it's
+  // safer to show too many than to hide a year group a school actually has.
+  const PHASE_YEAR_GROUPS = {
+    'Primary': ['EYFS','Y1','Y2','Y3','Y4','Y5','Y6'],
+    'Infant': ['EYFS','Y1','Y2'],
+    'Junior': ['Y3','Y4','Y5','Y6'],
+    'Secondary': ['Y7','Y8','Y9','Y10','Y11','Y12','Y13'],
+    'Sixth Form College': ['Y12','Y13']
+  };
+
+  function yearGroupsForPhase(phase) {
+    return PHASE_YEAR_GROUPS[phase] || ALL_YEAR_GROUPS;
+  }
+
+  function buildSections(phase) {
+    return [
+      { category: 'Whole School', rows: ['Number on Roll', 'PAN'], extraCols: [] },
+      { category: 'Year Group Profile', rows: yearGroupsForPhase(phase), extraCols: ['PAN', 'PAL %', 'PAH %'] },
+      { category: 'Pupil Profile', rows: ['Boys %', 'Girls %', 'FSM %', 'Pupil Premium %', 'SEND %', 'EHCP %', 'EAL %', 'Mobility %'], extraCols: [] },
+      { category: 'Workforce', rows: ['Number of Teachers', 'Number of Support Staff', 'Number of SLT', 'Number of ECTs', 'Number of UPS Teachers'], extraCols: [] }
+    ];
+  }
+
+  let currentSchoolId = null;
+
+  const PERIOD_TO_REPORTING_NAME = {
+    'AUT1 26': 'Autumn 1', 'AUT2 26': 'Autumn 2',
+    'SPR1 27': 'Spring 1', 'SPR2 27': 'Spring 2',
+    'SUM1 27': 'Summer 1', 'SUM2 27': 'Summer 2'
+  };
+
+  function buildForm(sections, lockedPeriods) {
+    const form = document.getElementById('contextForm');
+    let html = '';
+    sections.forEach((section, sIdx) => {
+      html += `<div class="card"><div class="card-head">${section.category}</div><div class="card-body">`;
+      html += '<table class="grid-table"><thead><tr><th>' + (section.category === 'Year Group Profile' ? 'Year Group' : 'Metric') + '</th>';
+      PERIODS.forEach(p => html += `<th>${p}${lockedPeriods[p] ? ' 🔒' : ''}</th>`);
+      section.extraCols.forEach(col => html += `<th>${col}</th>`);
+      html += '</tr></thead><tbody>';
+      section.rows.forEach((rowName, rIdx) => {
+        html += `<tr data-category="${section.category}" data-metric="${rowName}">`;
+        html += `<td class="label-cell">${rowName}</td>`;
+        const CALCULATED_PUPIL_PROFILE = ['Girls %', 'Pupil Premium %', 'SEND %', 'EHCP %', 'EAL %'];
+        const isCalculated = (section.category === 'Whole School' && (rowName === 'Number on Roll' || rowName === 'PAN'))
+          || (section.category === 'Pupil Profile' && CALCULATED_PUPIL_PROFILE.includes(rowName));
+        PERIODS.forEach(p => {
+          const locked = lockedPeriods[p];
+          if (isCalculated) {
+            const tip = section.category === 'Whole School' ? 'Calculated automatically from Year Group Profile below'
+              : rowName === 'Girls %' ? 'Calculated automatically as 100% minus Boys %'
+              : 'Calculated automatically from Inclusion Numbers, based on Whole School Number on Roll';
+            html += `<td><input type="text" data-period="${p}" readonly class="calculated-cell" title="${tip}"></td>`;
+          } else {
+            html += `<td><input type="text" data-period="${p}" ${locked ? 'disabled style="background:#EDEFF2;color:#A0ADB8;"' : ''}></td>`;
+          }
+        });
+        section.extraCols.forEach(col => {
+          html += `<td><input type="text" data-period="${col}"></td>`;
+        });
+        html += '</tr>';
+      });
+      html += '</tbody></table></div></div>';
+    });
+    form.innerHTML = html;
+  }
+
+  function recalculateWholeSchool() {
+    const wholeSchoolRow = tr => tr.dataset.category === 'Whole School';
+    const yearGroupRows = Array.from(document.querySelectorAll('#contextForm tr[data-category="Year Group Profile"]'));
+    if (!yearGroupRows.length) return;
+
+    // Number on Roll: sum each period's Year Group values across all year groups
+    const norRow = Array.from(document.querySelectorAll('#contextForm tr')).find(
+      tr => wholeSchoolRow(tr) && tr.dataset.metric === 'Number on Roll'
+    );
+    if (norRow) {
+      PERIODS.forEach(p => {
+        const input = norRow.querySelector(`input[data-period="${p}"]`);
+        if (!input) return;
+        let sum = 0, anyValue = false;
+        yearGroupRows.forEach(yr => {
+          const yrInput = yr.querySelector(`input[data-period="${p}"]`);
+          const v = yrInput ? parseFloat(yrInput.value) : NaN;
+          if (!isNaN(v)) { sum += v; anyValue = true; }
+        });
+        input.value = anyValue ? sum : '';
+      });
+    }
+
+    // PAN: sum the single PAN column across all year groups, shown across every period
+    const panRow = Array.from(document.querySelectorAll('#contextForm tr')).find(
+      tr => wholeSchoolRow(tr) && tr.dataset.metric === 'PAN'
+    );
+    if (panRow) {
+      let sum = 0, anyValue = false;
+      yearGroupRows.forEach(yr => {
+        const yrInput = yr.querySelector('input[data-period="PAN"]');
+        const v = yrInput ? parseFloat(yrInput.value) : NaN;
+        if (!isNaN(v)) { sum += v; anyValue = true; }
+      });
+      PERIODS.forEach(p => {
+        const input = panRow.querySelector(`input[data-period="${p}"]`);
+        if (input) input.value = anyValue ? sum : '';
+      });
+    }
+  }
+
+  function recalculateGirlsPercent() {
+    const boysRow = Array.from(document.querySelectorAll('#contextForm tr')).find(
+      tr => tr.dataset.category === 'Pupil Profile' && tr.dataset.metric === 'Boys %'
+    );
+    const girlsRow = Array.from(document.querySelectorAll('#contextForm tr')).find(
+      tr => tr.dataset.category === 'Pupil Profile' && tr.dataset.metric === 'Girls %'
+    );
+    if (!boysRow || !girlsRow) return;
+    PERIODS.forEach(p => {
+      const boysInput = boysRow.querySelector(`input[data-period="${p}"]`);
+      const girlsInput = girlsRow.querySelector(`input[data-period="${p}"]`);
+      if (!boysInput || !girlsInput) return;
+      const boys = parseFloat(boysInput.value);
+      girlsInput.value = isNaN(boys) ? '' : (Math.round((100 - boys) * 10) / 10).toFixed(1);
+    });
+  }
+
+  function updateCompletion() {
+    const openInputs = document.querySelectorAll('#contextForm input:not([disabled]):not(.calculated-cell)');
+    const filled = Array.from(openInputs).filter(i => i.value.trim() !== '').length;
+    const total = openInputs.length;
+    const pct = total ? Math.round((filled / total) * 100) : 0;
+    const badge = document.getElementById('completionBadge');
+    badge.textContent = `${pct}% complete (${filled} of ${total} available fields)`;
+  }
+
+  function showToast(msg, isError) {
+    const toast = document.getElementById('toast');
+    toast.textContent = msg;
+    toast.style.background = isError ? '#B3261E' : '#1A7A6E';
+    toast.classList.add('show');
+    setTimeout(() => toast.classList.remove('show'), 3400);
+  }
+
+  async function showResponsiblePerson(schoolId) {
+    const { data } = await sb
+      .from('completion_tracker').select('responsible_person').eq('school_id', schoolId).eq('section', 'Context').maybeSingle();
+    if (data && data.responsible_person) {
+      document.getElementById('responsibleName').textContent = data.responsible_person;
+      document.getElementById('responsibleBox').style.display = '';
+    }
+  }
+
+  async function init() {
+    const statusMsg = document.getElementById('statusMsg');
+    const { data: { session } } = await sb.auth.getSession();
+
+    if (!session) {
+      statusMsg.innerHTML = 'Please <a href="login.html">log in</a> to access this form.';
+      return;
+    }
+
+    const { data: linkRow } = await sb
+      .from('school_users').select('school_id, role').eq('auth_user_id', session.user.id).maybeSingle();
+
+    if (!linkRow) {
+      statusMsg.innerHTML = 'Your login isn\'t linked to a school yet. Please complete <a href="school-setup-form.html">School Setup</a> first.';
+      return;
+    }
+
+    if (linkRow.role !== 'Headteacher' && linkRow.role !== 'Context') {
+      statusMsg.innerHTML = `You're logged in, but this account is assigned to ${linkRow.role}, not Context.`;
+      return;
+    }
+
+    currentSchoolId = linkRow.school_id;
+    await showResponsiblePerson(currentSchoolId);
+
+    const { data: school } = await sb
+      .from('schools').select('phase').eq('id', currentSchoolId).maybeSingle();
+
+    const { data: repPeriods } = await sb
+      .from('reporting_periods').select('period_name, start_date').eq('school_id', currentSchoolId);
+
+    const lockedPeriods = {};
+    const today = new Date();
+    let anyDatesSet = false;
+    PERIODS.forEach(p => {
+      const reportingName = PERIOD_TO_REPORTING_NAME[p];
+      const match = (repPeriods || []).find(r => r.period_name === reportingName);
+      if (match && match.start_date) {
+        anyDatesSet = true;
+        lockedPeriods[p] = new Date(match.start_date) > today;
+      } else {
+        // We don't know this period's date yet, so treat it as locked until it's set —
+        // safer to under-show than let someone enter data for a period we can't place in time
+        lockedPeriods[p] = true;
+      }
+    });
+
+    if (anyDatesSet) {
+      statusMsg.style.display = 'none';
+    } else {
+      // No term dates set at all yet — everything is locked until the Headteacher adds them
+      const note = document.createElement('div');
+      note.className = 'status-banner';
+      note.textContent = "Every period is currently locked because term dates haven't been set in School Setup yet. Ask your Headteacher to complete the Reporting Periods section first — periods will unlock automatically once their dates are added.";
+      document.getElementById('wrap').insertBefore(note, document.getElementById('contextForm'));
+      statusMsg.style.display = 'none';
+    }
+
+    buildForm(buildSections(school ? school.phase : null), lockedPeriods);
+
+    // Load back in any previously saved values, so returning to this form
+    // doesn't show blank fields (and doesn't risk wiping saved data on next save)
+    const { data: existingRows } = await sb
+      .from('context_data').select('category, metric, period, value').eq('school_id', currentSchoolId);
+    (existingRows || []).forEach(r => {
+      const row = Array.from(document.querySelectorAll('#contextForm tr')).find(
+        el => el.dataset.category === r.category && el.dataset.metric === r.metric
+      );
+      if (!row) return;
+      const input = Array.from(row.querySelectorAll('input')).find(el => el.dataset.period === r.period);
+      if (input && !input.disabled) input.value = r.value;
+    });
+
+    recalculateWholeSchool();
+    await recalculatePupilProfileFromInclusion(currentSchoolId);
+    recalculateGirlsPercent();
+    updateCompletion();
+    document.getElementById('contextForm').addEventListener('input', () => {
+      recalculateWholeSchool();
+      recalculateGirlsPercent();
+      updateCompletion();
+    });
+    document.getElementById('contextForm').style.display = '';
+    document.getElementById('submitBar').style.display = '';
+  }
+
+  async function recalculatePupilProfileFromInclusion(schoolId) {
+    const { data: inclusionRows } = await sb
+      .from('inclusion_data').select('metric, period, value').eq('school_id', schoolId).eq('category', 'Inclusion Numbers');
+
+    // Maps Pupil Profile field -> the matching Inclusion Numbers metric
+    const mapping = {
+      'Pupil Premium %': 'Pupil Premium',
+      'SEND %': 'SEND',
+      'EHCP %': 'EHCP',
+      'EAL %': 'EAL'
+    };
+
+    Object.entries(mapping).forEach(([pupilProfileField, inclusionMetric]) => {
+      const row = Array.from(document.querySelectorAll('#contextForm tr')).find(
+        tr => tr.dataset.category === 'Pupil Profile' && tr.dataset.metric === pupilProfileField
+      );
+      if (!row) return;
+      PERIODS.forEach(p => {
+        const input = row.querySelector(`input[data-period="${p}"]`);
+        if (!input) return;
+        const norRow = Array.from(document.querySelectorAll('#contextForm tr')).find(
+          tr => tr.dataset.category === 'Whole School' && tr.dataset.metric === 'Number on Roll'
+        );
+        const norInput = norRow ? norRow.querySelector(`input[data-period="${p}"]`) : null;
+        const roll = norInput ? parseFloat(norInput.value) : NaN;
+        const inclusionRow = (inclusionRows || []).find(r => r.metric === inclusionMetric && r.period === p);
+        const count = inclusionRow ? parseFloat(inclusionRow.value) : NaN;
+        input.value = (!isNaN(roll) && roll > 0 && !isNaN(count)) ? (Math.round((count / roll) * 1000) / 10).toFixed(1) : '';
+      });
+    });
+  }
+
+  async function saveForm() {
+    if (!currentSchoolId) return;
+    const btn = document.getElementById('saveBtn');
+    btn.disabled = true;
+    btn.textContent = 'Saving…';
+
+    const rows = [];
+    document.querySelectorAll('#contextForm tr[data-category]').forEach(tr => {
+      const category = tr.dataset.category;
+      const metric = tr.dataset.metric;
+      tr.querySelectorAll('input').forEach(input => {
+        const val = input.value.trim();
+        if (val) {
+          rows.push({
+            school_id: currentSchoolId,
+            category,
+            metric,
+            period: input.dataset.period,
+            value: val
+          });
+        }
+      });
+    });
+
+    if (!rows.length) {
+      showToast('⚠ Nothing entered yet', true);
+      btn.disabled = false;
+      btn.textContent = 'Save Context';
+      return;
+    }
+
+    // Clear previous entries for this school before saving fresh values
+    const { error: delError } = await sb.from('context_data').delete().eq('school_id', currentSchoolId);
+    if (delError) {
+      showToast('⚠ Save failed — see browser console', true);
+      console.error(delError);
+      btn.disabled = false;
+      btn.textContent = 'Save Context';
+      return;
+    }
+
+    const { error } = await sb.from('context_data').insert(rows);
+    if (error) {
+      showToast('⚠ Save failed — see browser console', true);
+      console.error(error);
+    } else {
+      showToast('✓ Context saved');
+    }
+    btn.disabled = false;
+    btn.textContent = 'Save Context';
+  }
+
+  init();
+</script>
+
+</body>
+</html>

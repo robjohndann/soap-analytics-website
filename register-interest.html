@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SOAP Analytics — Register Interest</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: Arial, Helvetica, sans-serif;
+    background: #F0F4F8;
+    min-height: 100vh;
+  }
+  header.page-head {
+    background: #1B2A4A;
+    padding: 28px 5%;
+  }
+  header.page-head a { display: inline-block; }
+  .eyebrow {
+    font-size: 11px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: #3DCFB8;
+    font-weight: 700;
+    margin-bottom: 6px;
+  }
+  header.page-head h1 { color: #fff; font-size: 24px; }
+  header.page-head p { font-size: 13px; color: rgba(255,255,255,0.6); margin-top: 4px; }
+
+  .wrap { max-width: 640px; margin: 40px auto; padding: 0 5% 60px; }
+  .card { background: #fff; border-radius: 12px; padding: 30px; box-shadow: 0 4px 20px rgba(0,0,0,0.06); }
+
+  .field { display: flex; flex-direction: column; gap: 5px; margin-bottom: 18px; }
+  .field label { font-size: 13px; font-weight: 700; color: #1B2A4A; }
+  input[type="text"], input[type="email"], input[type="tel"], textarea {
+    font-family: Arial, Helvetica, sans-serif;
+    font-size: 14px;
+    padding: 10px 12px;
+    border: 1px solid #DCE3EA;
+    border-radius: 6px;
+  }
+  input:focus, textarea:focus { outline: none; border-color: #0D7377; box-shadow: 0 0 0 3px rgba(13,115,119,0.12); }
+  textarea { resize: vertical; min-height: 70px; }
+
+  .services-title { font-size: 13px; font-weight: 700; color: #1B2A4A; margin-bottom: 10px; }
+  .service-option {
+    display: flex; align-items: center; gap: 10px;
+    border: 1px solid #DCE3EA; border-radius: 8px;
+    padding: 12px 14px; margin-bottom: 8px; cursor: pointer;
+  }
+  .service-option input { width: 16px; height: 16px; }
+  .service-option label { font-size: 14px; color: #1B2A4A; cursor: pointer; }
+
+  .submit-btn {
+    width: 100%;
+    background: #0D7377;
+    color: #fff;
+    font-family: Arial, Helvetica, sans-serif;
+    font-weight: 700;
+    font-size: 15px;
+    border: none;
+    border-radius: 8px;
+    padding: 14px;
+    cursor: pointer;
+    margin-top: 8px;
+  }
+  .submit-btn:hover { background: #0a5c5f; }
+  .submit-btn:disabled { opacity: 0.6; cursor: default; }
+
+  .msg { margin-top: 16px; font-size: 13px; text-align: center; padding: 12px; border-radius: 8px; display: none; }
+  .msg.show { display: block; }
+  .msg.ok { background: #E6F4F1; color: #0D7377; }
+  .msg.err { background: #FBE9E7; color: #B3261E; }
+</style>
+</head>
+<body>
+
+<header class="page-head">
+  <a href="index.html"><img src="images/logo-navy.png" alt="SOAP Analytics" style="height:34px;width:auto;border-radius:6px;"></a>
+  <div style="margin-top:20px;">
+    <div class="eyebrow">SOAP Analytics</div>
+    <h1>Register Interest</h1>
+    <p>Tell us a bit about your school and what you're looking for, and we'll be in touch.</p>
+  </div>
+</header>
+
+<div class="wrap">
+  <div class="card">
+    <form id="regForm" onsubmit="event.preventDefault(); submitForm();">
+      <div class="field">
+        <label for="name">Your name</label>
+        <input type="text" id="name" placeholder="e.g. Jane Smith">
+      </div>
+      <div class="field">
+        <label for="schoolName">School name</label>
+        <input type="text" id="schoolName" placeholder="e.g. St Augustine's Catholic High School">
+      </div>
+      <div class="field">
+        <label for="email">Email address</label>
+        <input type="email" id="email" placeholder="you@yourschool.sch.uk">
+      </div>
+      <div class="field">
+        <label for="phone">Phone number <span style="font-weight:400;color:#5A6B80;">(optional)</span></label>
+        <input type="tel" id="phone" placeholder="e.g. 07800 000000">
+      </div>
+
+      <div class="services-title">Which packages are you interested in?</div>
+      <div class="service-option">
+        <input type="checkbox" id="wantsIdsrSummary"><label for="wantsIdsrSummary">IDSR Intelligence Summary</label>
+      </div>
+      <div class="service-option">
+        <input type="checkbox" id="wantsIdsrDashboard"><label for="wantsIdsrDashboard">IDSR Intelligence Dashboard</label>
+      </div>
+      <div class="service-option">
+        <input type="checkbox" id="wantsSoapSummary"><label for="wantsSoapSummary">SOAP Performance Summary</label>
+      </div>
+      <div class="service-option">
+        <input type="checkbox" id="wantsSoapSuite"><label for="wantsSoapSuite">SOAP Performance Suite</label>
+      </div>
+      <div class="service-option">
+        <input type="checkbox" id="wantsSurvey"><label for="wantsSurvey">Survey Service <span style="color:#5A6B80;font-weight:400;">(bespoke — we'll discuss pricing with you)</span></label>
+      </div>
+
+      <div class="field" style="margin-top:8px;">
+        <label for="message">Anything else you'd like us to know? <span style="font-weight:400;color:#5A6B80;">(optional)</span></label>
+        <textarea id="message" placeholder="e.g. we're a trust of 6 schools, looking to roll this out from September..."></textarea>
+      </div>
+
+      <button type="submit" class="submit-btn" id="submitBtn">Register Interest</button>
+      <div class="msg" id="msg"></div>
+    </form>
+  </div>
+</div>
+
+<script>
+  const SUPABASE_URL = 'https://caopycszjzrmwhxxvtpx.supabase.co';
+  const SUPABASE_KEY = 'sb_publishable_2CTGR0PKyRPpSk59lcr3sA_hvvUDX97';
+  const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+  function showMsg(text, isError) {
+    const msg = document.getElementById('msg');
+    msg.textContent = text;
+    msg.className = 'msg show ' + (isError ? 'err' : 'ok');
+  }
+
+  async function submitForm() {
+    const name = document.getElementById('name').value.trim();
+    const schoolName = document.getElementById('schoolName').value.trim();
+    const email = document.getElementById('email').value.trim();
+
+    if (!name || !schoolName || !email) {
+      showMsg('⚠ Please fill in your name, school name, and email.', true);
+      return;
+    }
+
+    const btn = document.getElementById('submitBtn');
+    btn.disabled = true;
+    btn.textContent = 'Submitting…';
+
+    const payload = {
+      name,
+      school_name: schoolName,
+      email,
+      phone: document.getElementById('phone').value.trim() || null,
+      wants_idsr_summary: document.getElementById('wantsIdsrSummary').checked ? 'Yes' : 'No',
+      wants_idsr_dashboard: document.getElementById('wantsIdsrDashboard').checked ? 'Yes' : 'No',
+      wants_soap_summary: document.getElementById('wantsSoapSummary').checked ? 'Yes' : 'No',
+      wants_soap_suite: document.getElementById('wantsSoapSuite').checked ? 'Yes' : 'No',
+      wants_survey: document.getElementById('wantsSurvey').checked ? 'Yes' : 'No',
+      message: document.getElementById('message').value.trim() || null
+    };
+
+    const { error } = await sb.from('registrations').insert(payload);
+
+    if (error) {
+      showMsg('⚠ Something went wrong — please try again, or email robin@soapanalytics.co.uk directly.', true);
+      btn.disabled = false;
+      btn.textContent = 'Register Interest';
+    } else {
+      document.getElementById('regForm').innerHTML =
+        '<p style="text-align:center;color:#0D7377;font-weight:700;font-size:16px;">Thanks — we\'ve received your details and will be in touch shortly.</p>';
+    }
+  }
+</script>
+
+</body>
+</html>

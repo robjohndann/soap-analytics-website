@@ -1,0 +1,662 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SOAP Analytics — School Setup Data Entry Form</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --navy: #1B2A4A;
+    --teal: #0D7377;
+    --teal-deep: #1A7A6E;
+    --pale: #F0F4F8;
+    --border: #DCE3EA;
+    --text: #1B2A4A;
+    --muted: #5A6B80;
+    --white: #ffffff;
+    --good: #1A7A6E;
+    --bad: #B3261E;
+  }
+  body {
+    font-family: Arial, Helvetica, sans-serif;
+    background: var(--pale);
+    color: var(--text);
+    min-height: 100vh;
+    padding-bottom: 80px;
+  }
+  header.page-head {
+    background: var(--navy);
+    color: #fff;
+    padding: 28px 5%;
+  }
+  .page-head .eyebrow {
+    font-size: 11px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: #3DCFB8;
+    font-weight: 700;
+    margin-bottom: 6px;
+  }
+  .page-head h1 {
+    font-size: 24px;
+    font-weight: 700;
+  }
+  .page-head p {
+    font-size: 13px;
+    color: rgba(255,255,255,0.6);
+    margin-top: 4px;
+  }
+  .wrap {
+    max-width: 980px;
+    margin: 32px auto;
+    padding: 0 5%;
+  }
+  .card {
+    background: var(--white);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    margin-bottom: 22px;
+    overflow: hidden;
+  }
+  .card-head {
+    background: var(--teal-deep);
+    color: #fff;
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    padding: 12px 20px;
+  }
+  .card-body {
+    padding: 20px;
+  }
+  .field-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 16px 20px;
+  }
+  .field-grid.cols-1 { grid-template-columns: 1fr; }
+  .field {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+  .field label {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--navy);
+  }
+  .field .hint {
+    font-size: 11px;
+    color: var(--muted);
+    font-weight: 400;
+    margin-left: 6px;
+    text-transform: none;
+    letter-spacing: 0;
+  }
+  input[type="text"], input[type="number"], input[type="date"], input[type="email"], select {
+    font-family: Arial, Helvetica, sans-serif;
+    font-size: 13px;
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: #fff;
+    color: var(--text);
+  }
+  input:focus, select:focus {
+    outline: none;
+    border-color: var(--teal);
+    box-shadow: 0 0 0 3px rgba(13,115,119,0.12);
+  }
+  select { cursor: pointer; }
+
+  table.grid-table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+  table.grid-table th {
+    background: var(--navy);
+    color: #fff;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    text-align: left;
+    padding: 8px 10px;
+  }
+  table.grid-table td {
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--border);
+    font-size: 13px;
+    vertical-align: middle;
+  }
+  table.grid-table tbody tr:nth-child(even) { background: var(--pale); }
+  table.grid-table td.label-cell { font-weight: 700; color: var(--navy); white-space: nowrap; }
+  table.grid-table input, table.grid-table select { width: 100%; }
+  table.grid-table input[type="date"] { min-width: 150px; }
+
+  .submit-bar {
+    position: sticky;
+    bottom: 0;
+    background: var(--navy);
+    padding: 14px 5%;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 16px;
+    box-shadow: 0 -4px 16px rgba(0,0,0,0.15);
+  }
+  .submit-bar .note {
+    font-size: 12px;
+    color: rgba(255,255,255,0.55);
+  }
+  .save-btn {
+    background: var(--teal);
+    color: #fff;
+    font-family: Arial, Helvetica, sans-serif;
+    font-weight: 700;
+    font-size: 14px;
+    border: none;
+    border-radius: 8px;
+    padding: 12px 26px;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  .save-btn:hover { background: #0a5c5f; }
+  .save-btn:disabled { opacity: 0.6; cursor: default; }
+
+  .toast {
+    position: fixed;
+    top: 20px;
+    left: 50%;
+    transform: translateX(-50%) translateY(-20px);
+    background: var(--good);
+    color: #fff;
+    font-size: 13px;
+    font-weight: 700;
+    padding: 12px 22px;
+    border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.2);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.25s, transform 0.25s;
+    z-index: 999;
+    max-width: 80vw;
+    text-align: center;
+  }
+  .toast.show {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+
+  .demo-banner {
+    background: #FEF3CD;
+    border: 1px solid #E6C96E;
+    color: #7A5C00;
+    font-size: 12px;
+    border-radius: 8px;
+    padding: 10px 16px;
+    margin-bottom: 22px;
+  }
+
+  @media (max-width: 700px) {
+    .field-grid { grid-template-columns: 1fr; }
+    table.grid-table { font-size: 12px; }
+  }
+</style>
+</head>
+<body>
+
+<header class="page-head">
+  <a href="portal.html" style="color:rgba(255,255,255,0.7);text-decoration:none;font-size:13px;">← Back to Portal</a>
+  <div class="eyebrow" style="margin-top:14px;">SOAP Analytics — New SOAP Data Entry</div>
+  <h1>School Setup</h1>
+  <p>Example of an interactive completion form for building a new SOAP Analytics Workbook</p>
+</header>
+
+<div class="wrap">
+  <div class="demo-banner" id="statusBanner">Checking you're logged in…</div>
+
+  <form id="setupForm" style="display:none;">
+
+    <div class="card">
+      <div class="card-head">School Information</div>
+      <div class="card-body">
+        <div class="field-grid">
+          <div class="field"><label>Person Responsible</label><input type="text" id="personResponsible" placeholder="e.g. Robin Dann"></div>
+          <div class="field"><label>School Name</label><input type="text" id="schoolName" placeholder="e.g. St Augustine's Catholic High School"></div>
+          <div class="field"><label>URN</label><input type="text" id="urn" placeholder="e.g. 123456"></div>
+          <div class="field"><label>Trust / MAT <span class="hint">(if applicable)</span></label><input type="text" id="trust" placeholder="e.g. Bishop Trust"></div>
+          <div class="field"><label>School Type</label>
+            <select id="schoolType">
+              <option value="">Select school type…</option>
+              <option>Academy Converter</option>
+              <option>Academy Sponsor-Led</option>
+              <option>Free School</option>
+              <option>Maintained School</option>
+              <option>Voluntary Aided</option>
+              <option>Voluntary Controlled</option>
+              <option>Foundation School</option>
+              <option>Independent School</option>
+              <option>Special School</option>
+              <option>Alternative Provision</option>
+            </select>
+          </div>
+          <div class="field"><label>Phase</label>
+            <select id="phase">
+              <option value="">Select phase…</option>
+              <option>Primary</option>
+              <option>Secondary</option>
+              <option>All-Through</option>
+              <option>Infant</option>
+              <option>Junior</option>
+              <option>Middle School</option>
+              <option>Sixth Form College</option>
+              <option>Special</option>
+              <option>Alternative Provision</option>
+            </select>
+          </div>
+          <div class="field"><label>Number on Roll</label><input type="number" id="numberOnRoll" placeholder="e.g. 1363"></div>
+          <div class="field"><label>PAN</label><input type="number" id="pan" placeholder="e.g. 1400"></div>
+          <div class="field"><label>Academic Year</label>
+            <select id="academicYear">
+              <option value="">Select year…</option>
+              <option>2024/25</option>
+              <option>2025/26</option>
+              <option>2026/27</option>
+              <option>2027/28</option>
+              <option>2028/29</option>
+            </select>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">Key Contacts</div>
+      <div class="card-body">
+        <table class="grid-table">
+          <thead><tr><th>Role</th><th>Name / Surname</th><th>Email Address</th></tr></thead>
+          <tbody id="contactsBody">
+            <tr data-role="Headteacher"><td class="label-cell">Headteacher</td><td><input type="text"></td><td><input type="email"></td></tr>
+            <tr data-role="Headteacher's PA"><td class="label-cell">Headteacher's PA</td><td><input type="text"></td><td><input type="email"></td></tr>
+            <tr data-role="Data Lead"><td class="label-cell">Data Lead</td><td><input type="text"></td><td><input type="email"></td></tr>
+            <tr data-role="Data Manager"><td class="label-cell">Data Manager</td><td><input type="text"></td><td><input type="email"></td></tr>
+            <tr data-role="DSL"><td class="label-cell">DSL</td><td><input type="text"></td><td><input type="email"></td></tr>
+            <tr data-role="SENDCo"><td class="label-cell">SENDCo</td><td><input type="text"></td><td><input type="email"></td></tr>
+            <tr data-role="Business Manager"><td class="label-cell">Business Manager</td><td><input type="text"></td><td><input type="email"></td></tr>
+            <tr data-role="Office Manager"><td class="label-cell">Office Manager</td><td><input type="text"></td><td><input type="email"></td></tr>
+            <tr data-role="Chair of Governors"><td class="label-cell">Chair of Governors</td><td><input type="text"></td><td><input type="email"></td></tr>
+            <tr data-role="School Improvement Partner"><td class="label-cell">School Improvement Partner</td><td><input type="text"></td><td><input type="email"></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">Ofsted Judgements</div>
+      <div class="card-body">
+        <div class="field-grid" style="margin-bottom:18px;">
+          <div class="field"><label>Inspection Type</label>
+            <select id="inspectionType">
+              <option value="">Select type…</option>
+              <option>Section 5</option>
+              <option>Section 8</option>
+              <option>Monitoring Visit</option>
+              <option>No Inspection Under New Framework</option>
+            </select>
+          </div>
+          <div class="field"><label>Last Inspection Date</label><input type="date" id="lastInspectionDate"></div>
+        </div>
+        <table class="grid-table">
+          <thead><tr><th style="width:40%">Area</th><th>Grading</th></tr></thead>
+          <tbody id="ofstedRows"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">Reporting Periods</div>
+      <div class="card-body">
+        <table class="grid-table">
+          <thead><tr><th style="width:25%">Period</th><th>Start Date</th><th>End Date</th></tr></thead>
+          <tbody id="periodsBody">
+            <tr data-period="Autumn 1"><td class="label-cell">Autumn 1</td><td><input type="date"></td><td><input type="date"></td></tr>
+            <tr data-period="Autumn 2"><td class="label-cell">Autumn 2</td><td><input type="date"></td><td><input type="date"></td></tr>
+            <tr data-period="Spring 1"><td class="label-cell">Spring 1</td><td><input type="date"></td><td><input type="date"></td></tr>
+            <tr data-period="Spring 2"><td class="label-cell">Spring 2</td><td><input type="date"></td><td><input type="date"></td></tr>
+            <tr data-period="Summer 1"><td class="label-cell">Summer 1</td><td><input type="date"></td><td><input type="date"></td></tr>
+            <tr data-period="Summer 2"><td class="label-cell">Summer 2</td><td><input type="date"></td><td><input type="date"></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">Assessment Setup</div>
+      <div class="card-body">
+        <table class="grid-table">
+          <thead><tr><th style="width:40%">Assessment</th><th style="width:25%">Planned</th><th>Date</th></tr></thead>
+          <tbody id="assessBody">
+            <tr data-assessment="Year 11 PPE 1"><td class="label-cell">Year 11 PPE 1</td><td><select><option value="">—</option><option>Yes</option><option>No</option></select></td><td><input type="date"></td></tr>
+            <tr data-assessment="Year 11 PPE 2"><td class="label-cell">Year 11 PPE 2</td><td><select><option value="">—</option><option>Yes</option><option>No</option></select></td><td><input type="date"></td></tr>
+            <tr data-assessment="Year 13 PPE 1"><td class="label-cell">Year 13 PPE 1</td><td><select><option value="">—</option><option>Yes</option><option>No</option></select></td><td><input type="date"></td></tr>
+            <tr data-assessment="Year 13 PPE 2"><td class="label-cell">Year 13 PPE 2</td><td><select><option value="">—</option><option>Yes</option><option>No</option></select></td><td><input type="date"></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">Completion Tracker</div>
+      <div class="card-body">
+        <table class="grid-table">
+          <thead><tr><th style="width:22%">Section</th><th>Responsible Person</th><th>Job Title</th><th>Email Address</th></tr></thead>
+          <tbody id="trackerBody">
+            <tr data-section="Context"><td class="label-cell">Context</td><td><input type="text"></td><td><input type="text"></td><td><input type="email"></td></tr>
+            <tr data-section="Safeguarding"><td class="label-cell">Safeguarding</td><td><input type="text"></td><td><input type="text"></td><td><input type="email"></td></tr>
+            <tr data-section="Inclusion"><td class="label-cell">Inclusion</td><td><input type="text"></td><td><input type="text"></td><td><input type="email"></td></tr>
+            <tr data-section="Curriculum &amp; Teaching"><td class="label-cell">Curriculum &amp; Teaching</td><td><input type="text"></td><td><input type="text"></td><td><input type="email"></td></tr>
+            <tr data-section="Achievement"><td class="label-cell">Achievement</td><td><input type="text"></td><td><input type="text"></td><td><input type="email"></td></tr>
+            <tr data-section="Attendance &amp; Behaviour"><td class="label-cell">Attendance &amp; Behaviour</td><td><input type="text"></td><td><input type="text"></td><td><input type="email"></td></tr>
+            <tr data-section="PDW"><td class="label-cell">PDW</td><td><input type="text"></td><td><input type="text"></td><td><input type="email"></td></tr>
+            <tr data-section="Leadership &amp; Governance"><td class="label-cell">Leadership &amp; Governance</td><td><input type="text"></td><td><input type="text"></td><td><input type="email"></td></tr>
+            <tr data-section="Finance &amp; Resources"><td class="label-cell">Finance &amp; Resources</td><td><input type="text"></td><td><input type="text"></td><td><input type="email"></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+  </form>
+</div>
+
+<div class="submit-bar" id="submitBar" style="display:none;">
+  <span class="note">Saves to the SOAP Analytics test database</span>
+  <button type="button" class="save-btn" id="saveBtn" onclick="saveForm()">Save School Setup</button>
+</div>
+
+<div class="toast" id="toast">✓ School Setup saved</div>
+
+<script>
+  const OFSTED_AREAS = [
+    {label:'Safeguarding', options:['Met','Not Met']},
+    {label:'Inclusion', options:['Exceptional','Strong Standard','Expected Standard','Needs Attention','Urgent Improvement']},
+    {label:'Curriculum &amp; Teaching', options:['Exceptional','Strong Standard','Expected Standard','Needs Attention','Urgent Improvement']},
+    {label:'Achievement', options:['Exceptional','Strong Standard','Expected Standard','Needs Attention','Urgent Improvement']},
+    {label:'Attendance &amp; Behaviour', options:['Exceptional','Strong Standard','Expected Standard','Needs Attention','Urgent Improvement']},
+    {label:'PDW', options:['Exceptional','Strong Standard','Expected Standard','Needs Attention','Urgent Improvement']},
+    {label:'Early Years <span class="hint">(if applicable)</span>', options:['Exceptional','Strong Standard','Expected Standard','Needs Attention','Urgent Improvement']},
+    {label:'Post 16 <span class="hint">(if applicable)</span>', options:['Exceptional','Strong Standard','Expected Standard','Needs Attention','Urgent Improvement']},
+    {label:'Leadership &amp; Governance', options:['Exceptional','Strong Standard','Expected Standard','Needs Attention','Urgent Improvement']},
+  ];
+
+  const tbody = document.getElementById('ofstedRows');
+  OFSTED_AREAS.forEach(area => {
+    const tr = document.createElement('tr');
+    const plainLabel = area.label.replace(/<[^>]+>/g, '').replace('&amp;', '&');
+    tr.dataset.area = plainLabel;
+    const opts = ['<option value="">—</option>'].concat(area.options.map(o => `<option>${o}</option>`)).join('');
+    tr.innerHTML = `<td class="label-cell">${area.label}</td><td><select>${opts}</select></td>`;
+    tbody.appendChild(tr);
+  });
+
+  // --- Supabase connection ---
+  const SUPABASE_URL = 'https://caopycszjzrmwhxxvtpx.supabase.co';
+  const SUPABASE_KEY = 'sb_publishable_2CTGR0PKyRPpSk59lcr3sA_hvvUDX97';
+  const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+  function showToast(msg, isError) {
+    const toast = document.getElementById('toast');
+    toast.textContent = msg;
+    toast.style.background = isError ? 'var(--bad)' : 'var(--good)';
+    toast.classList.add('show');
+    setTimeout(() => toast.classList.remove('show'), 3400);
+  }
+
+  let currentUserId = null;
+  let existingSchoolId = null;
+
+  async function requireLogin() {
+    const banner = document.getElementById('statusBanner');
+    const { data: { session } } = await sb.auth.getSession();
+
+    if (!session) {
+      banner.innerHTML = 'You need to be logged in to fill in a School Setup. <a href="login.html" style="color:#7A5C00;text-decoration:underline;">Go to login →</a>';
+      return;
+    }
+
+    currentUserId = session.user.id;
+
+    const { data: linkRow } = await sb
+      .from('school_users').select('role, school_id').eq('auth_user_id', currentUserId).maybeSingle();
+
+    if (linkRow && linkRow.role !== 'Headteacher') {
+      banner.innerHTML = `You're logged in as ${session.user.email}, but this account is assigned to ${linkRow.role}, not School Setup.`;
+      return;
+    }
+
+    if (linkRow) {
+      existingSchoolId = linkRow.school_id;
+      banner.textContent = `Logged in as ${session.user.email}. You're editing your existing school's record.`;
+      await prefillForm(existingSchoolId);
+    } else {
+      banner.textContent = `Logged in as ${session.user.email}. This form saves directly to your school's record.`;
+    }
+    document.getElementById('setupForm').style.display = '';
+    document.getElementById('submitBar').style.display = '';
+  }
+
+  async function prefillForm(schoolId) {
+    const { data: school } = await sb.from('schools').select('*').eq('id', schoolId).maybeSingle();
+    if (school) {
+      const set = (id, v) => { const el = document.getElementById(id); if (el && v != null) el.value = v; };
+      set('personResponsible', school.person_responsible);
+      set('schoolName', school.name);
+      set('urn', school.urn);
+      set('trust', school.trust);
+      set('schoolType', school.school_type);
+      set('phase', school.phase);
+      set('numberOnRoll', school.number_on_roll);
+      set('pan', school.pan);
+      set('academicYear', school.academic_year);
+      set('inspectionType', school.inspection_type);
+      set('lastInspectionDate', school.last_inspection_date);
+    }
+
+    const { data: contacts } = await sb.from('key_contacts').select('*').eq('school_id', schoolId);
+    (contacts || []).forEach(c => {
+      const tr = Array.from(document.querySelectorAll('#contactsBody tr')).find(el => el.dataset.role === c.role);
+      if (!tr) return;
+      if (c.name) tr.querySelector('input[type="text"]').value = c.name;
+      if (c.email) tr.querySelector('input[type="email"]').value = c.email;
+    });
+
+    const { data: judgements } = await sb.from('ofsted_judgements').select('*').eq('school_id', schoolId);
+    (judgements || []).forEach(j => {
+      const tr = Array.from(document.querySelectorAll('#ofstedRows tr')).find(el => el.dataset.area === j.area);
+      if (tr && j.grading) tr.querySelector('select').value = j.grading;
+    });
+
+    const { data: periods } = await sb.from('reporting_periods').select('*').eq('school_id', schoolId);
+    (periods || []).forEach(p => {
+      const tr = Array.from(document.querySelectorAll('#periodsBody tr')).find(el => el.dataset.period === p.period_name);
+      if (!tr) return;
+      const dates = tr.querySelectorAll('input[type="date"]');
+      if (p.start_date) dates[0].value = p.start_date;
+      if (p.end_date) dates[1].value = p.end_date;
+    });
+
+    const { data: assessments } = await sb.from('assessment_setup').select('*').eq('school_id', schoolId);
+    (assessments || []).forEach(a => {
+      const tr = Array.from(document.querySelectorAll('#assessBody tr')).find(el => el.dataset.assessment === a.assessment_name);
+      if (!tr) return;
+      if (a.planned) tr.querySelector('select').value = a.planned;
+      if (a.assessment_date) tr.querySelector('input[type="date"]').value = a.assessment_date;
+    });
+
+    const { data: tracker } = await sb.from('completion_tracker').select('*').eq('school_id', schoolId);
+    (tracker || []).forEach(t => {
+      const tr = Array.from(document.querySelectorAll('#trackerBody tr')).find(el => el.dataset.section === t.section);
+      if (!tr) return;
+      const texts = tr.querySelectorAll('input[type="text"]');
+      if (t.responsible_person) texts[0].value = t.responsible_person;
+      if (t.job_title) texts[1].value = t.job_title;
+      if (t.email) tr.querySelector('input[type="email"]').value = t.email;
+    });
+  }
+
+  requireLogin();
+
+  async function saveForm() {
+    if (!currentUserId) {
+      showToast('⚠ You need to be logged in to save', true);
+      return;
+    }
+    const schoolNameVal = document.getElementById('schoolName').value.trim();
+    if (!schoolNameVal) {
+      showToast('⚠ Please enter a School Name first', true);
+      return;
+    }
+
+    const btn = document.getElementById('saveBtn');
+    btn.disabled = true;
+    btn.textContent = 'Saving…';
+
+    try {
+      const val = id => document.getElementById(id).value || null;
+      const num = id => document.getElementById(id).value ? parseInt(document.getElementById(id).value, 10) : null;
+
+      const isNewSchool = !existingSchoolId;
+      const schoolId = existingSchoolId || ((window.crypto && crypto.randomUUID) ? crypto.randomUUID() :
+        'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+          const r = Math.random()*16|0, v = c === 'x' ? r : (r&0x3|0x8);
+          return v.toString(16);
+        }));
+
+      const schoolPayload = {
+        id: schoolId,
+        name: schoolNameVal,
+        urn: val('urn'),
+        trust: val('trust'),
+        school_type: val('schoolType'),
+        phase: val('phase'),
+        number_on_roll: num('numberOnRoll'),
+        pan: num('pan'),
+        academic_year: val('academicYear'),
+        person_responsible: val('personResponsible'),
+        inspection_type: val('inspectionType'),
+        last_inspection_date: val('lastInspectionDate')
+      };
+
+      if (isNewSchool) {
+        const { error: schoolError } = await sb.from('schools').insert(schoolPayload);
+        if (schoolError) throw schoolError;
+
+        const { error: linkError } = await sb
+          .from('school_users').insert({
+            auth_user_id: currentUserId,
+            school_id: schoolId,
+            role: 'Headteacher'
+          });
+        if (linkError) throw linkError;
+      } else {
+        console.log('Updating school with id:', schoolId);
+        console.log('Payload being saved:', schoolPayload);
+        const { data: updatedRows, error: schoolError } = await sb.from('schools').update(schoolPayload).eq('id', schoolId).select();
+        console.log('Rows actually updated:', updatedRows);
+        if (schoolError) throw schoolError;
+        if (!updatedRows || updatedRows.length === 0) {
+          console.warn('No rows were updated — the school ID may not match any existing record.');
+        }
+        if (schoolError) throw schoolError;
+
+        // Clear previous child rows so re-saving doesn't create duplicates
+        const deleteResults = await Promise.all([
+          sb.from('key_contacts').delete().eq('school_id', schoolId),
+          sb.from('ofsted_judgements').delete().eq('school_id', schoolId),
+          sb.from('reporting_periods').delete().eq('school_id', schoolId),
+          sb.from('assessment_setup').delete().eq('school_id', schoolId),
+          sb.from('completion_tracker').delete().eq('school_id', schoolId)
+        ]);
+        const deleteError = deleteResults.find(r => r.error);
+        if (deleteError) throw deleteError.error;
+      }
+
+      existingSchoolId = schoolId;
+
+      const contacts = Array.from(document.querySelectorAll('#contactsBody tr')).map(tr => ({
+        school_id: schoolId,
+        role: tr.dataset.role,
+        name: tr.querySelector('input[type="text"]').value || null,
+        email: tr.querySelector('input[type="email"]').value || null
+      })).filter(c => c.name || c.email);
+      if (contacts.length) {
+        const { error } = await sb.from('key_contacts').insert(contacts);
+        if (error) throw error;
+      }
+
+      const judgements = Array.from(document.querySelectorAll('#ofstedRows tr')).map(tr => ({
+        school_id: schoolId,
+        area: tr.dataset.area,
+        grading: tr.querySelector('select').value || null
+      })).filter(j => j.grading);
+      if (judgements.length) {
+        const { error } = await sb.from('ofsted_judgements').insert(judgements);
+        if (error) throw error;
+      }
+
+      const periods = Array.from(document.querySelectorAll('#periodsBody tr')).map(tr => {
+        const dates = tr.querySelectorAll('input[type="date"]');
+        return {
+          school_id: schoolId,
+          period_name: tr.dataset.period,
+          start_date: dates[0].value || null,
+          end_date: dates[1].value || null
+        };
+      }).filter(p => p.start_date || p.end_date);
+      if (periods.length) {
+        const { error } = await sb.from('reporting_periods').insert(periods);
+        if (error) throw error;
+      }
+
+      const assessments = Array.from(document.querySelectorAll('#assessBody tr')).map(tr => ({
+        school_id: schoolId,
+        assessment_name: tr.dataset.assessment,
+        planned: tr.querySelector('select').value || null,
+        assessment_date: tr.querySelector('input[type="date"]').value || null
+      })).filter(a => a.planned || a.assessment_date);
+      if (assessments.length) {
+        const { error } = await sb.from('assessment_setup').insert(assessments);
+        if (error) throw error;
+      }
+
+      const tracker = Array.from(document.querySelectorAll('#trackerBody tr')).map(tr => {
+        const texts = tr.querySelectorAll('input[type="text"]');
+        const email = tr.querySelector('input[type="email"]');
+        return {
+          school_id: schoolId,
+          section: tr.dataset.section,
+          responsible_person: texts[0].value || null,
+          job_title: texts[1].value || null,
+          email: email.value || null
+        };
+      }).filter(t => t.responsible_person || t.job_title || t.email);
+      if (tracker.length) {
+        const { error } = await sb.from('completion_tracker').insert(tracker);
+        if (error) throw error;
+      }
+
+      showToast('✓ School Setup saved to the database');
+    } catch (err) {
+      console.error(err);
+      showToast('⚠ Save failed — see browser console for details', true);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Save School Setup';
+    }
+  }
+</script>
+
+</body>
+</html>

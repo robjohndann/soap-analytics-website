@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SOAP Analytics — Personal Development & Wellbeing</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: Arial, Helvetica, sans-serif;
+    background: #F0F4F8;
+    color: #1B2A4A;
+    min-height: 100vh;
+    padding-bottom: 80px;
+  }
+  header.page-head { background: #1B2A4A; padding: 28px 5%; display: flex; justify-content: space-between; align-items: flex-start; }
+  header.page-head a { display: inline-block; }
+  .eyebrow { font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: #3DCFB8; font-weight: 700; margin-bottom: 6px; }
+  header.page-head h1 { color: #fff; font-size: 24px; margin-top: 14px; }
+  header.page-head p { font-size: 13px; color: rgba(255,255,255,0.6); margin-top: 4px; }
+  .responsible-box { background: #0D7377; border-radius: 8px; padding: 10px 16px; text-align: right; min-width: 160px; }
+  .responsible-box .tag { font-size: 10px; letter-spacing: 1px; text-transform: uppercase; color: rgba(255,255,255,0.7); font-weight: 700; }
+  .responsible-box .name { font-size: 14px; font-weight: 700; color: #fff; margin-top: 4px; }
+
+  .wrap { max-width: 1200px; margin: 32px auto; padding: 0 5%; }
+  .status-banner { background: #FEF3CD; border: 1px solid #E6C96E; color: #7A5C00; font-size: 13px; border-radius: 8px; padding: 12px 16px; margin-bottom: 22px; }
+
+  .card { background: #fff; border: 1px solid #DCE3EA; border-radius: 10px; margin-bottom: 22px; overflow: hidden; }
+  .card-head { background: #1A7A6E; color: #fff; font-size: 13px; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; padding: 12px 20px; }
+  .card-body { padding: 16px; overflow-x: auto; }
+
+  table.grid-table { width: 100%; border-collapse: collapse; min-width: 620px; }
+  table.grid-table th { background: #1B2A4A; color: #fff; font-size: 11px; text-transform: uppercase; letter-spacing: 0.3px; text-align: left; padding: 8px 10px; white-space: nowrap; }
+  table.grid-table td { padding: 6px 8px; border-bottom: 1px solid #DCE3EA; font-size: 13px; vertical-align: middle; }
+  table.grid-table tbody tr:nth-child(even) { background: #F0F4F8; }
+  table.grid-table td.label-cell { font-weight: 700; color: #1B2A4A; white-space: nowrap; }
+  table.grid-table td.guidance-cell { color: #5A6B80; font-size: 12px; font-style: italic; max-width: 340px; white-space: normal; line-height: 1.4; }
+  table.grid-table input, table.grid-table select { width: 100%; font-family: Arial, Helvetica, sans-serif; font-size: 13px; padding: 6px 8px; border: 1px solid #DCE3EA; border-radius: 5px; }
+  table.grid-table select.rating-select { width: 100%; min-width: 190px; }
+  table.grid-table input:focus, table.grid-table select:focus { outline: none; border-color: #0D7377; box-shadow: 0 0 0 3px rgba(13,115,119,0.12); }
+
+  .rating-field { display: flex; align-items: center; gap: 14px; }
+  .rating-field select { max-width: 260px; width: auto; }
+
+  .rating-header-cell { display: flex; align-items: center; gap: 6px; }
+  .key-btn {
+    background: rgba(255,255,255,0.18); color: #fff; border: 1px solid rgba(255,255,255,0.5);
+    border-radius: 50%; width: 18px; height: 18px; font-size: 11px; font-weight: 700;
+    line-height: 1; cursor: pointer; display: inline-flex; align-items: center; justify-content: center;
+    font-family: Arial, Helvetica, sans-serif; text-transform: none; letter-spacing: 0;
+  }
+  .key-btn:hover { background: rgba(255,255,255,0.32); }
+
+  .key-modal-overlay {
+    display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(27,42,74,0.7); z-index: 1000; align-items: center; justify-content: center; padding: 24px;
+  }
+  .key-modal-overlay.open { display: flex; }
+  .key-modal-content { background: #fff; border-radius: 12px; max-width: 620px; width: 100%; max-height: 84vh; overflow-y: auto; }
+  .key-modal-head { background: #1B2A4A; color: #fff; padding: 16px 22px; display: flex; justify-content: space-between; align-items: center; border-radius: 12px 12px 0 0; }
+  .key-modal-head h3 { font-size: 15px; letter-spacing: 0.3px; }
+  .key-modal-close { background: none; border: none; color: #fff; font-size: 20px; cursor: pointer; line-height: 1; padding: 0 4px; }
+  .key-modal-body { padding: 18px 22px 22px; }
+  .rating-key-row { border-radius: 8px; padding: 12px 16px; margin-bottom: 10px; }
+  .rating-key-row:last-child { margin-bottom: 0; }
+  .rating-key-row .rk-title { font-size: 13px; font-weight: 700; margin-bottom: 3px; }
+  .rating-key-row .rk-desc { font-size: 12.5px; line-height: 1.45; }
+  .rk-exceptional { background: #B7DDF2; color: #1B2A4A; }
+  .rk-strong { background: #C7E6C7; color: #1B2A4A; }
+  .rk-expected { background: #E6EEDD; color: #1B2A4A; }
+  .rk-attention { background: #FBE1C6; color: #1B2A4A; }
+  .rk-urgent { background: #F3B8B8; color: #1B2A4A; }
+
+  .submit-bar { position: sticky; bottom: 0; background: #1B2A4A; padding: 14px 5%; display: flex; justify-content: space-between; align-items: center; gap: 16px; box-shadow: 0 -4px 16px rgba(0,0,0,0.15); }
+  .submit-bar .note { font-size: 12px; color: rgba(255,255,255,0.55); }
+  .save-btn { background: #0D7377; color: #fff; font-family: Arial, Helvetica, sans-serif; font-weight: 700; font-size: 14px; border: none; border-radius: 8px; padding: 12px 26px; cursor: pointer; }
+  .save-btn:hover { background: #0a5c5f; }
+  .save-btn:disabled { opacity: 0.6; cursor: default; }
+
+  .toast { position: fixed; top: 20px; left: 50%; transform: translateX(-50%) translateY(-20px); background: #1A7A6E; color: #fff; font-size: 13px; font-weight: 700; padding: 12px 22px; border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,0.2); opacity: 0; pointer-events: none; transition: opacity 0.25s, transform 0.25s; z-index: 999; max-width: 80vw; text-align: center; }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  .status-msg { background: #fff; border-radius: 10px; padding: 30px; text-align: center; color: #5A6B80; }
+</style>
+</head>
+<body>
+
+<header class="page-head">
+  <div>
+    <a href="index.html"><img src="images/logo-navy.png" alt="SOAP Analytics" style="height:34px;width:auto;border-radius:6px;"></a>
+    <div style="margin-top:14px;"><a href="portal.html" style="color:rgba(255,255,255,0.7);text-decoration:none;font-size:13px;">← Back to Portal</a></div>
+    <div class="eyebrow" style="margin-top:10px;">SOAP Analytics — Data Entry</div>
+    <h1>Personal Development &amp; Wellbeing</h1>
+    <p>Stakeholder voice, destinations, enrichment, and Gatsby Benchmarks.</p>
+  </div>
+  <div class="responsible-box" id="responsibleBox" style="display:none;">
+    <div class="tag">Person Responsible</div>
+    <div class="name" id="responsibleName">—</div>
+  </div>
+</header>
+
+<div class="wrap" id="wrap">
+  <div class="status-msg" id="statusMsg">Checking you're logged in…</div>
+  <form id="pdwForm" style="display:none;"></form>
+</div>
+
+<div class="submit-bar" id="submitBar" style="display:none;">
+  <span class="note">Saves directly to your school's record</span>
+  <button type="button" class="save-btn" id="saveBtn" onclick="saveForm()">Save PDW</button>
+</div>
+
+<div class="toast" id="toast">✓ PDW saved</div>
+
+<div class="key-modal-overlay" id="ratingKeyModal" onclick="if(event.target===this) closeRatingKey();">
+  <div class="key-modal-content">
+    <div class="key-modal-head">
+      <h3>Rating Scale — Key</h3>
+      <button type="button" class="key-modal-close" onclick="closeRatingKey();">×</button>
+    </div>
+    <div class="key-modal-body" id="ratingKeyBody"></div>
+  </div>
+</div>
+
+<script>
+  const SUPABASE_URL = 'https://caopycszjzrmwhxxvtpx.supabase.co';
+  const SUPABASE_KEY = 'sb_publishable_2CTGR0PKyRPpSk59lcr3sA_hvvUDX97';
+  const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+  const RATING_OPTIONS = ['Exceptional', 'Strong Standard', 'Expected Standard', 'Needs Attention', 'Urgent Improvement'];
+  const RATING_KEY = [
+    { label: 'Exceptional', cls: 'rk-exceptional', desc: 'Practice is exemplary, deeply embedded and consistently demonstrable. Impact is exceptionally strong and could reasonably be shared as best practice.' },
+    { label: 'Strong Standard', cls: 'rk-strong', desc: 'Practice is secure, embedded and consistently effective, with clear supporting evidence.' },
+    { label: 'Expected Standard', cls: 'rk-expected', desc: 'Appropriate practice is in place and broadly secure. Any weaknesses are minor and do not materially undermine implementation.' },
+    { label: 'Needs Attention', cls: 'rk-attention', desc: 'There are identifiable weaknesses or inconsistencies that require improvement, but these are not yet sufficiently serious to represent a major concern.' },
+    { label: 'Urgent Improvement', cls: 'rk-urgent', desc: 'There are significant or systemic weaknesses, insufficient evidence of effective implementation, or concerns requiring prompt leadership action.' }
+  ];
+
+  const STAKEHOLDER_ROWS = [
+    'Pupil - Quality of Education %', 'Pupil - Behaviour & Attitudes %', 'Pupil - Personal Development %',
+    'Parent - Quality of Education %', 'Parent - Personal Development %', 'Staff — Overall %'
+  ];
+  const DEST_YEARS = ['23/24', '24/25', '25/26'];
+  const DEST_ROWS = ['Continue to Y12 %', 'Other Further Education %', 'Apprenticeships %', 'Employment %', 'NEET %', 'Unknown %'];
+  const DEST_ROWS_Y13 = ['University %', 'Other Further Education %', 'Apprenticeships %', 'Employment %', 'NEET %', 'Unknown %', 'Retention Y12 to Y13 %'];
+  const ENRICH_TERMS = ['AUT', 'SPR', 'SUM'];
+  const ENRICH_ROWS = ['No. of Clubs Offered', 'Club Participation %', 'No. of Educational Visits', 'No. of Residentials', 'Duke of Edinburgh Candidates', 'Duke of Edinburgh Completion %'];
+  const GATSBY_ROWS = [
+    { area: 'BM1: Stable Careers Programme', question: 'Does the school have a stable, well-structured careers programme known to pupils, parents, staff and employers?' },
+    { area: 'BM2: Labour Market Info', question: 'Are pupils and parents given accurate, up-to-date information on labour market trends and the value of different qualification routes?' },
+    { area: 'BM3: Needs of Each Pupil', question: 'Are opportunities tailored to the needs of each pupil, with accurate destination and progression data used to inform careers provision?' },
+    { area: 'BM4: Curriculum to Careers', question: 'Do all subject areas link curriculum learning to careers, helping pupils see the relevance of what they study?' },
+    { area: 'BM5: Employer Encounters', question: 'Does every pupil have multiple opportunities to learn from employers about work, employment and the skills valued in the workplace?' },
+    { area: 'BM6: Workplace Experience', question: 'Does every pupil have first-hand experiences of the workplace through visits, work shadowing or work experience?' },
+    { area: 'BM7: FE/HE Encounters', question: 'Does every pupil understand the full range of learning opportunities available to them, including academic and vocational routes?' },
+    { area: 'BM8: Personal Guidance', question: 'Does every pupil have at least one meaningful careers guidance conversation with a trained adviser during their time at the school?' }
+  ];
+
+  function openRatingKey() {
+    const body = document.getElementById('ratingKeyBody');
+    body.innerHTML = RATING_KEY.map(k => `
+      <div class="rating-key-row ${k.cls}">
+        <div class="rk-title">${k.label}</div>
+        <div class="rk-desc">${k.desc}</div>
+      </div>
+    `).join('');
+    document.getElementById('ratingKeyModal').classList.add('open');
+  }
+  function closeRatingKey() {
+    document.getElementById('ratingKeyModal').classList.remove('open');
+  }
+
+  let currentSchoolId = null;
+
+  function buildYearTable(title, category, yearCols, rows) {
+    let html = `<div class="card"><div class="card-head">${title}</div><div class="card-body">`;
+    html += '<table class="grid-table"><thead><tr><th>Metric</th>';
+    yearCols.forEach(c => html += `<th>${c}</th>`);
+    html += '</tr></thead><tbody>';
+    rows.forEach(r => {
+      html += `<tr data-category="${category}" data-metric="${r}"><td class="label-cell">${r}</td>`;
+      yearCols.forEach(p => {
+        html += `<td><input type="text" data-period="${p}"></td>`;
+      });
+      html += '</tr>';
+    });
+    html += '</tbody></table></div></div>';
+    return html;
+  }
+
+  function buildForm() {
+    const form = document.getElementById('pdwForm');
+    let html = '';
+
+    // Stakeholder Voice
+    html += '<div class="card"><div class="card-head">Stakeholder Voice</div><div class="card-body">';
+    html += '<table class="grid-table"><thead><tr><th>Metric</th><th>Completed Status</th><th>Previous Positive Feedback</th><th>Current Positive Feedback</th>';
+    html += `<th><div class="rating-header-cell">Rating <button type="button" class="key-btn" title="View rating scale key" onclick="openRatingKey();">?</button></div></th></tr></thead><tbody>`;
+    STAKEHOLDER_ROWS.forEach(r => {
+      html += `<tr data-category="Stakeholder Voice" data-metric="${r}"><td class="label-cell">${r}</td>`;
+      html += `<td><input type="text" data-period="Completed Status" title="Percentage of people who completed the survey"></td>`;
+      html += `<td><input type="text" data-period="Previous Positive Feedback"></td>`;
+      html += `<td><input type="text" data-period="Current Positive Feedback"></td>`;
+      html += `<td><select class="rating-select" data-period="Rating"><option value="">—</option>${RATING_OPTIONS.map(o => `<option>${o}</option>`).join('')}</select></td>`;
+      html += '</tr>';
+    });
+    html += '</tbody></table></div></div>';
+
+    // Year 11 & Year 13 Destinations
+    html += buildYearTable('Year 11 Destinations', 'Year 11 Destinations', DEST_YEARS, DEST_ROWS);
+    html += buildYearTable('Year 13 Destinations', 'Year 13 Destinations', DEST_YEARS, DEST_ROWS_Y13);
+
+    // Enrichment & Clubs
+    html += buildYearTable('Enrichment & Clubs', 'Enrichment & Clubs', ENRICH_TERMS, ENRICH_ROWS);
+
+    // Gatsby Benchmarks
+    html += '<div class="card"><div class="card-head">Gatsby Benchmarks</div><div class="card-body">';
+    html += `<table class="grid-table"><thead><tr><th>Benchmark</th><th>Guidance Question</th><th><div class="rating-header-cell">Rating <button type="button" class="key-btn" title="View rating scale key" onclick="openRatingKey();">?</button></div></th></tr></thead><tbody>`;
+    GATSBY_ROWS.forEach(r => {
+      html += `<tr data-category="Gatsby Benchmarks" data-metric="${r.area}">`;
+      html += `<td class="label-cell">${r.area}</td>`;
+      html += `<td class="guidance-cell">${r.question}</td>`;
+      html += `<td><select class="rating-select" data-period="Rating"><option value="">—</option>${RATING_OPTIONS.map(o => `<option>${o}</option>`).join('')}</select></td>`;
+      html += '</tr>';
+    });
+    html += '</tbody></table></div></div>';
+
+    // Overall Rating
+    html += `<div class="card"><div class="card-head">Overall PDW SEF Rating</div><div class="card-body">
+      <div class="rating-field" data-category="Overall Rating" data-metric="Overall PDW SEF Rating">
+        <select data-period="Rating"><option value="">Select a rating…</option>${RATING_OPTIONS.map(o => `<option>${o}</option>`).join('')}</select>
+        <button type="button" class="key-btn" style="background:#0D7377;border-color:#0D7377;" title="View rating scale key" onclick="openRatingKey();">?</button>
+      </div>
+    </div></div>`;
+
+    form.innerHTML = html;
+  }
+
+  function showToast(msg, isError) {
+    const toast = document.getElementById('toast');
+    toast.textContent = msg;
+    toast.style.background = isError ? '#B3261E' : '#1A7A6E';
+    toast.classList.add('show');
+    setTimeout(() => toast.classList.remove('show'), 3400);
+  }
+
+  async function prefillForm(schoolId) {
+    const { data: existingRows } = await sb
+      .from('pdw_data').select('category, metric, period, value').eq('school_id', schoolId);
+    (existingRows || []).forEach(r => {
+      let el;
+      if (r.category === 'Overall Rating') {
+        el = document.querySelector('.rating-field select');
+      } else {
+        const row = Array.from(document.querySelectorAll('#pdwForm tr')).find(
+          tr => tr.dataset.category === r.category && tr.dataset.metric === r.metric
+        );
+        if (!row) return;
+        el = Array.from(row.querySelectorAll('input, select')).find(input => input.dataset.period === r.period);
+      }
+      if (el && r.value) el.value = r.value;
+    });
+  }
+
+  async function showResponsiblePerson(schoolId) {
+    const { data } = await sb
+      .from('completion_tracker').select('responsible_person').eq('school_id', schoolId).eq('section', 'PDW').maybeSingle();
+    if (data && data.responsible_person) {
+      document.getElementById('responsibleName').textContent = data.responsible_person;
+      document.getElementById('responsibleBox').style.display = '';
+    }
+  }
+
+  async function init() {
+    const statusMsg = document.getElementById('statusMsg');
+    const { data: { session } } = await sb.auth.getSession();
+
+    if (!session) {
+      statusMsg.innerHTML = 'Please <a href="login.html">log in</a> to access this form.';
+      return;
+    }
+
+    const { data: linkRow } = await sb
+      .from('school_users').select('school_id, role').eq('auth_user_id', session.user.id).maybeSingle();
+
+    if (!linkRow) {
+      statusMsg.innerHTML = 'Your login isn\'t linked to a school yet. Please complete <a href="school-setup-form.html">School Setup</a> first.';
+      return;
+    }
+
+    if (linkRow.role !== 'Headteacher' && linkRow.role !== 'PDW') {
+      statusMsg.innerHTML = `You're logged in, but this account is assigned to ${linkRow.role}, not PDW.`;
+      return;
+    }
+
+    currentSchoolId = linkRow.school_id;
+    await showResponsiblePerson(currentSchoolId);
+
+    buildForm();
+    await prefillForm(currentSchoolId);
+
+    statusMsg.style.display = 'none';
+    document.getElementById('pdwForm').style.display = '';
+    document.getElementById('submitBar').style.display = '';
+  }
+
+  async function saveForm() {
+    if (!currentSchoolId) return;
+    const btn = document.getElementById('saveBtn');
+    btn.disabled = true;
+    btn.textContent = 'Saving…';
+
+    const rows = [];
+    document.querySelectorAll('#pdwForm [data-category]').forEach(el => {
+      const category = el.dataset.category;
+      const metric = el.dataset.metric;
+      el.querySelectorAll('input, select').forEach(input => {
+        const val = input.value.trim();
+        if (val) rows.push({ school_id: currentSchoolId, category, metric, period: input.dataset.period, value: val });
+      });
+    });
+
+    const { error: delError } = await sb.from('pdw_data').delete().eq('school_id', currentSchoolId);
+    if (delError) {
+      showToast('⚠ Save failed — see browser console', true);
+      console.error(delError);
+      btn.disabled = false;
+      btn.textContent = 'Save PDW';
+      return;
+    }
+
+    if (rows.length) {
+      const { error } = await sb.from('pdw_data').insert(rows);
+      if (error) {
+        showToast('⚠ Save failed — see browser console', true);
+        console.error(error);
+        btn.disabled = false;
+        btn.textContent = 'Save PDW';
+        return;
+      }
+    }
+
+    showToast('✓ PDW saved');
+    btn.disabled = false;
+    btn.textContent = 'Save PDW';
+  }
+
+  init();
+</script>
+
+</body>
+</html>

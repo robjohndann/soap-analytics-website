@@ -1,0 +1,1859 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SOAP Analytics — Admin</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: Arial, Helvetica, sans-serif;
+    background: #F0F4F8;
+    min-height: 100vh;
+  }
+  header {
+    background: #1B2A4A;
+    color: #fff;
+    padding: 0 5%;
+    height: 68px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .brand { font-weight: 700; font-size: 15px; }
+  .brand span { color: #3DCFB8; }
+  .logout-link { color: rgba(255,255,255,0.7); text-decoration: none; font-size: 13px; }
+  .logout-link:hover { color: #fff; }
+
+  .wrap { max-width: 1100px; margin: 40px auto; padding: 0 20px; }
+  .page-title { font-size: 22px; color: #1B2A4A; margin-bottom: 6px; }
+  .page-sub { font-size: 13px; color: #5A6B80; margin-bottom: 24px; }
+
+  .status-msg { background: #fff; border-radius: 10px; padding: 30px; text-align: center; color: #5A6B80; }
+
+  .school-card {
+    background: #fff;
+    border-radius: 10px;
+    border: 1px solid #DCE3EA;
+    margin-bottom: 14px;
+    overflow: hidden;
+  }
+  .school-head {
+    padding: 16px 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    cursor: pointer;
+  }
+  .school-head:hover { background: #F8FAFB; }
+  .school-name { font-weight: 700; color: #1B2A4A; font-size: 15px; }
+  .school-meta { font-size: 12px; color: #5A6B80; margin-top: 2px; }
+  .chevron { font-size: 12px; color: #5A6B80; transition: transform 0.15s; }
+  .school-card.open .chevron { transform: rotate(90deg); }
+
+  .school-detail { display: none; padding: 0 20px 20px; border-top: 1px solid #DCE3EA; }
+  .school-card.open .school-detail { display: block; }
+
+  .detail-section { margin-top: 16px; }
+  .detail-section h4 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: #0D7377; margin-bottom: 8px; }
+
+  .tab-bar { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 16px; border-bottom: 1px solid #DCE3EA; padding-bottom: 0; }
+  .tab-btn { background: none; border: none; padding: 8px 14px; font-size: 12px; font-weight: 600; color: #5A6B80; cursor: pointer; border-bottom: 2px solid transparent; font-family: Arial, Helvetica, sans-serif; white-space: nowrap; }
+  .tab-btn:hover { color: #1A7A6E; }
+  .tab-btn.active { color: #1A7A6E; border-bottom-color: #1A7A6E; }
+  .tab-panel { display: none; padding-top: 14px; }
+  .tab-panel.active { display: block; }
+  table.mini-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  table.mini-table th { text-align: left; color: #5A6B80; font-weight: 600; padding: 6px 8px; border-bottom: 1px solid #DCE3EA; }
+  table.mini-table td { padding: 6px 8px; border-bottom: 1px solid #F0F4F8; color: #1B2A4A; }
+  .empty-note { font-size: 12px; color: #A0ADB8; font-style: italic; }
+
+  /* Amend Data (shadow forms) */
+  .amend-select { font-family: Arial, Helvetica, sans-serif; font-size: 13px; padding: 8px 10px; border: 1px solid #DCE3EA; border-radius: 6px; margin-bottom: 16px; }
+  .amend-note { font-size: 12px; color: #5A6B80; margin-bottom: 12px; }
+  .card { background: #fff; border: 1px solid #DCE3EA; border-radius: 10px; margin-bottom: 18px; overflow: hidden; }
+  .card-head { background: #1A7A6E; color: #fff; font-size: 13px; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; padding: 12px 20px; }
+  .card-body { padding: 16px; overflow-x: auto; }
+  table.grid-table { width: 100%; border-collapse: collapse; min-width: 620px; }
+  table.grid-table th { background: #1B2A4A; color: #fff; font-size: 11px; text-transform: uppercase; letter-spacing: 0.3px; text-align: left; padding: 8px 10px; white-space: nowrap; }
+  table.grid-table td { padding: 6px 8px; border-bottom: 1px solid #DCE3EA; font-size: 13px; vertical-align: middle; }
+  table.grid-table tbody tr:nth-child(even) { background: #F0F4F8; }
+  table.grid-table td.label-cell { font-weight: 700; color: #1B2A4A; white-space: nowrap; }
+  table.grid-table td.guidance-cell { color: #5A6B80; font-size: 12px; font-style: italic; max-width: 340px; white-space: normal; line-height: 1.4; }
+  table.grid-table input, table.grid-table select { width: 78px; font-family: Arial, Helvetica, sans-serif; font-size: 13px; padding: 6px 8px; border: 1px solid #DCE3EA; border-radius: 5px; }
+  table.grid-table input[type="date"] { width: auto; min-width: 150px; }
+  table.grid-table select[data-period="Status"] { width: auto; min-width: 170px; }
+  table.grid-table select.rating-select { width: 100%; min-width: 190px; }
+  table.grid-table input:focus, table.grid-table select:focus { outline: none; border-color: #0D7377; box-shadow: 0 0 0 3px rgba(13,115,119,0.12); }
+  table.grid-table input.calculated-cell { background: #E8F4F4; color: #1A7A6E; font-weight: 700; cursor: default; }
+
+  table.grid-table.year-table { min-width: 0; }
+  table.grid-table.year-table th { padding: 6px 5px; font-size: 10px; }
+  table.grid-table.year-table td { padding: 4px 4px; }
+  table.grid-table.year-table td.label-cell { white-space: normal; max-width: 130px; font-size: 12px; line-height: 1.2; }
+  table.grid-table.year-table input { width: 52px; padding: 5px 4px; font-size: 12px; }
+  table.grid-table.year-table select { width: 64px; padding: 4px 2px; font-size: 11px; }
+  table.grid-table.year-table .gcse-divider { border-left: 2px solid #0D7377; }
+  table.grid-table.year-table .gcse-year-label { font-size: 12px !important; font-weight: 700; }
+  table.grid-table.wide-table input, table.grid-table.wide-table select { width: 160px; }
+  table.grid-table.resources-table { min-width: 0; }
+  table.grid-table.resources-table input,
+  table.grid-table.resources-table select { width: 150px; }
+  table.grid-table.resources-table td.label-cell { min-width: 220px; }
+  .rating-field { display: flex; align-items: center; gap: 14px; }
+  .rating-field select { max-width: 260px; width: auto; }
+  .save-amend-btn { background: #0D7377; color: #fff; font-family: Arial, Helvetica, sans-serif; font-weight: 700; font-size: 13px; border: none; border-radius: 8px; padding: 10px 22px; cursor: pointer; }
+  .save-amend-btn:hover { background: #0a5c5f; }
+  .amend-field-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px 20px; }
+  .amend-field-grid .field { display: flex; flex-direction: column; gap: 5px; }
+  .amend-field-grid .field label { font-size: 12px; font-weight: 700; color: #1B2A4A; }
+  .amend-field-grid input[type="text"], .amend-field-grid input[type="number"], .amend-field-grid input[type="date"], .amend-field-grid select {
+    font-family: Arial, Helvetica, sans-serif; font-size: 13px; padding: 8px 10px; border: 1px solid #DCE3EA; border-radius: 6px; background: #fff; color: #1B2A4A;
+  }
+  .key-btn {
+    background: rgba(255,255,255,0.18); color: #fff; border: 1px solid rgba(255,255,255,0.5);
+    border-radius: 50%; width: 18px; height: 18px; font-size: 11px; font-weight: 700;
+    line-height: 1; cursor: pointer; display: inline-flex; align-items: center; justify-content: center;
+    font-family: Arial, Helvetica, sans-serif;
+  }
+  .key-modal-overlay {
+    display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(27,42,74,0.7); z-index: 1000; align-items: center; justify-content: center; padding: 24px;
+  }
+  .key-modal-overlay.open { display: flex; }
+  .key-modal-content { background: #fff; border-radius: 12px; max-width: 620px; width: 100%; max-height: 84vh; overflow-y: auto; }
+  .key-modal-head { background: #1B2A4A; color: #fff; padding: 16px 22px; display: flex; justify-content: space-between; align-items: center; border-radius: 12px 12px 0 0; }
+  .key-modal-head h3 { font-size: 15px; }
+  .key-modal-close { background: none; border: none; color: #fff; font-size: 20px; cursor: pointer; }
+  .key-modal-body { padding: 18px 22px 22px; }
+  .rating-key-row { border-radius: 8px; padding: 12px 16px; margin-bottom: 10px; }
+  .rating-key-row .rk-title { font-size: 13px; font-weight: 700; margin-bottom: 3px; }
+  .rating-key-row .rk-desc { font-size: 12.5px; line-height: 1.45; }
+  .rk-exceptional { background: #B7DDF2; color: #1B2A4A; }
+  .rk-strong { background: #C7E6C7; color: #1B2A4A; }
+  .rk-expected { background: #E6EEDD; color: #1B2A4A; }
+  .rk-attention { background: #FBE1C6; color: #1B2A4A; }
+  .rk-urgent { background: #F3B8B8; color: #1B2A4A; }
+  .amend-toast { position: fixed; top: 20px; left: 50%; transform: translateX(-50%) translateY(-20px); background: #1A7A6E; color: #fff; font-size: 13px; font-weight: 700; padding: 12px 22px; border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,0.2); opacity: 0; pointer-events: none; transition: opacity 0.25s, transform 0.25s; z-index: 1100; max-width: 80vw; text-align: center; }
+  .amend-toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+</style>
+</head>
+<body>
+
+<header>
+  <div style="display:flex;align-items:center;gap:14px;">
+    <a href="index.html"><img src="images/logo-navy.png" alt="SOAP Analytics" style="height:36px;width:auto;border-radius:6px;display:block;"></a>
+    <span style="font-weight:700;font-size:15px;">— Admin</span>
+  </div>
+  <a href="#" class="logout-link" onclick="logout(event);">Log out</a>
+</header>
+
+<div class="key-modal-overlay" id="amendRatingKeyModal" onclick="if(event.target===this) closeAmendRatingKey();">
+  <div class="key-modal-content">
+    <div class="key-modal-head">
+      <h3>Rating Scale — Key</h3>
+      <button type="button" class="key-modal-close" onclick="closeAmendRatingKey();">×</button>
+    </div>
+    <div class="key-modal-body" id="amendRatingKeyBody"></div>
+  </div>
+</div>
+
+<div class="amend-toast" id="amendToast">✓ Saved</div>
+
+<div class="wrap">
+  <div class="page-title">Interest Registrations</div>
+  <div class="page-sub">People who've registered interest via the website, most recent first.</div>
+  <div id="regContent" style="margin-bottom:40px;"></div>
+
+  <div class="page-title">SOAPs</div>
+  <div class="page-sub">View any school's live School on a Page.</div>
+  <div id="soapListContent" style="margin-bottom:40px;"></div>
+
+  <div class="page-title">National Averages</div>
+  <div class="page-sub">Admin-only reference statistics — not visible to schools. Fixed fields, matching exactly what the SOAP dashboard reads.</div>
+  <div class="school-card" id="card-resources" style="margin-bottom:40px;">
+    <div class="school-head" onclick="toggleCard('resources')">
+      <div>
+        <div class="school-name">National Averages</div>
+        <div class="school-meta">Click to expand</div>
+      </div>
+      <div class="chevron">▶</div>
+    </div>
+    <div class="school-detail" id="resourcesContent"></div>
+  </div>
+
+  <div class="page-title">All Schools</div>
+  <div class="page-sub">Every School Setup submission, most recent first. Click a school to see full details.</div>
+  <div id="content">
+    <div class="status-msg">Checking your access…</div>
+  </div>
+</div>
+
+<script>
+  const SUPABASE_URL = 'https://caopycszjzrmwhxxvtpx.supabase.co';
+  const SUPABASE_KEY = 'sb_publishable_2CTGR0PKyRPpSk59lcr3sA_hvvUDX97';
+  const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+  const CONTEXT_PERIODS = ['AUT1 26', 'AUT2 26', 'SPR1 27', 'SPR2 27', 'SUM1 27', 'SUM2 27'];
+  const PERIOD_TO_REPORTING_NAME = {
+    'AUT1 26': 'Autumn 1', 'AUT2 26': 'Autumn 2',
+    'SPR1 27': 'Spring 1', 'SPR2 27': 'Spring 2',
+    'SUM1 27': 'Summer 1', 'SUM2 27': 'Summer 2'
+  };
+  const ALL_YEAR_GROUPS = ['EYFS','Y1','Y2','Y3','Y4','Y5','Y6','Y7','Y8','Y9','Y10','Y11','Y12','Y13'];
+  const PHASE_YEAR_GROUPS = {
+    'Primary': ['EYFS','Y1','Y2','Y3','Y4','Y5','Y6'],
+    'Infant': ['EYFS','Y1','Y2'],
+    'Junior': ['Y3','Y4','Y5','Y6'],
+    'Secondary': ['Y7','Y8','Y9','Y10','Y11','Y12','Y13'],
+    'Sixth Form College': ['Y12','Y13']
+  };
+
+  function contextCompletion(school, schoolReportingPeriods, contextRows) {
+    const yearGroups = PHASE_YEAR_GROUPS[school.phase] || ALL_YEAR_GROUPS;
+    const sections = [
+      { rows: ['Number on Roll', 'PAN'], hasPan: false },
+      { rows: yearGroups, hasPan: true },
+      { rows: ['Boys %', 'FSM %', 'Pupil Premium %', 'Mobility %'], hasPan: false },
+      { rows: ['Number of Teachers', 'Number of Support Staff', 'Number of SLT', 'Number of ECTs', 'Number of UPS Teachers'], hasPan: false }
+    ];
+    const today = new Date();
+    const lockedPeriods = {};
+    CONTEXT_PERIODS.forEach(p => {
+      const reportingName = PERIOD_TO_REPORTING_NAME[p];
+      const match = (schoolReportingPeriods || []).find(r => r.period_name === reportingName);
+      lockedPeriods[p] = !(match && match.start_date) || (new Date(match.start_date) > today);
+    });
+    let total = 0;
+    sections.forEach(section => {
+      section.rows.forEach(() => {
+        CONTEXT_PERIODS.forEach(p => { if (!lockedPeriods[p]) total++; });
+        if (section.hasPan) total++;
+      });
+    });
+    const filled = (contextRows || []).length;
+    const pct = total ? Math.round((Math.min(filled, total) / total) * 100) : 0;
+    return { pct, filled, total };
+  }
+
+  // Simple completion calculator for flat, non-period-locked tabs — just compares
+  // how many rows actually got saved against how many are genuinely expected.
+  function rowCountCompletion(rows, totalExpected) {
+    const filled = Math.min((rows || []).length, totalExpected);
+    const pct = totalExpected ? Math.round((filled / totalExpected) * 100) : 0;
+    return { pct, filled, total: totalExpected };
+  }
+
+  // School Information isn't stored as rows — it's individual fields on the school itself
+  function schoolInfoCompletion(s) {
+    // Trust is excluded — many schools genuinely aren't part of a trust, so
+    // leaving it blank shouldn't ever cap completion below 100%.
+    const fields = [s.urn, s.school_type, s.number_on_roll, s.pan, s.person_responsible];
+    const filled = fields.filter(f => f !== null && f !== undefined && f !== '').length;
+    const total = fields.length;
+    const pct = total ? Math.round((filled / total) * 100) : 0;
+    return { pct, filled, total };
+  }
+
+  // Shared period-locking calculation, reused by Safeguarding and Inclusion completion below
+  function calcLockedPeriods(schoolReportingPeriods) {
+    const today = new Date();
+    const lockedPeriods = {};
+    CONTEXT_PERIODS.forEach(p => {
+      const reportingName = PERIOD_TO_REPORTING_NAME[p];
+      const match = (schoolReportingPeriods || []).find(r => r.period_name === reportingName);
+      lockedPeriods[p] = !(match && match.start_date) || (new Date(match.start_date) > today);
+    });
+    return lockedPeriods;
+  }
+
+  function safeguardingCompletion(schoolReportingPeriods, safeguardingRows) {
+    const lockedPeriods = calcLockedPeriods(schoolReportingPeriods);
+    let total = 0;
+    CONTEXT_PERIODS.forEach(p => { if (!lockedPeriods[p]) total += 5; }); // Vulnerability Numbers: 5 rows
+    total += 3 * 2; // Compliance: 3 rows x Status/Date
+    total += 1; // Overall Rating
+    const filled = (safeguardingRows || []).length;
+    const pct = total ? Math.round((Math.min(filled, total) / total) * 100) : 0;
+    return { pct, filled, total };
+  }
+
+  function inclusionCompletion(schoolReportingPeriods, inclusionRows) {
+    const lockedPeriods = calcLockedPeriods(schoolReportingPeriods);
+    let total = 0;
+    CONTEXT_PERIODS.forEach(p => { if (!lockedPeriods[p]) total += 5; }); // Inclusion Numbers: 5 rows
+    total += 6; // Inclusion Evaluation: 6 rows
+    total += 4; // Key Dates: 4 rows
+    total += 1; // Overall Rating
+    const filled = (inclusionRows || []).length;
+    const pct = total ? Math.round((Math.min(filled, total) / total) * 100) : 0;
+    return { pct, filled, total };
+  }
+
+  function curriculumCompletion(curriculumRows) {
+    let total = 12; // Intent, Implementation & Assurance: 12 rows
+    total += 1; // Overall Rating
+    const filled = (curriculumRows || []).length;
+    const pct = total ? Math.round((Math.min(filled, total) / total) * 100) : 0;
+    return { pct, filled, total };
+  }
+
+  function achievementCompletion(assessmentSetupRows, achievementRows) {
+    const planned = (name) => {
+      const row = (assessmentSetupRows || []).find(a => a.assessment_name === name);
+      return row ? row.planned === 'Yes' : false;
+    };
+    const gcseCols = 4 + (planned('Year 11 PPE 1') ? 1 : 0) + (planned('Year 11 PPE 2') ? 1 : 0) + 1; // base 4 years (no more National Average column) + PPE + Predicted
+    const post16Cols = 4 + (planned('Year 13 PPE 1') ? 1 : 0) + (planned('Year 13 PPE 2') ? 1 : 0) + 1;
+    let total = 4; // Foundational Knowledge: 4 rows
+    total += 10 * gcseCols; // GCSE Outcomes: 10 rows
+    total -= 4; // Progress 8 and Progress 8 - Disadvantaged each have 2 blanked cells (24/25, 25/26) — not recorded in school or nationally
+    total += 8 * post16Cols; // Post-16 Outcomes: 8 rows
+    total += 1; // Overall Rating
+    const filled = (achievementRows || []).length;
+    const pct = total ? Math.round((Math.min(filled, total) / total) * 100) : 0;
+    return { pct, filled, total };
+  }
+
+  function pdwCompletion(pdwRows) {
+    let total = 6 * 4; // Stakeholder Voice: 6 rows x 4 columns
+    total += 6 * 3; // Year 11 Destinations: 6 rows x 3 years
+    total += 7 * 3; // Year 13 Destinations: 7 rows x 3 years (includes Retention Y12 to Y13 %)
+    total += 6 * 3; // Enrichment & Clubs: 6 rows x 3 terms
+    total += 8; // Gatsby Benchmarks: 8 rows
+    total += 1; // Overall Rating
+    const filled = (pdwRows || []).length;
+    const pct = total ? Math.round((Math.min(filled, total) / total) * 100) : 0;
+    return { pct, filled, total };
+  }
+
+  function leadershipCompletion(lgRows) {
+    let total = 7; // Evaluation: 7 rows
+    total += 1; // Overall Rating
+    const filled = (lgRows || []).length;
+    const pct = total ? Math.round((Math.min(filled, total) / total) * 100) : 0;
+    return { pct, filled, total };
+  }
+
+  function financeCompletion(financeRows) {
+    let total = 5 * 3; // Financial Health: 5 rows x 3 years
+    total += 6 * 3; // Recruitment & Retention: 6 rows x 3 years
+    total += 3 * 6; // Staff Absence & Cover: 3 rows x 6 periods
+    total += 5; // Resource Effectiveness: 5 rows
+    total += 1; // Overall Rating
+    const filled = (financeRows || []).length;
+    const pct = total ? Math.round((Math.min(filled, total) / total) * 100) : 0;
+    return { pct, filled, total };
+  }
+
+  function attendanceCompletion(schoolReportingPeriods, attendanceRows) {
+    const lockedPeriods = calcLockedPeriods(schoolReportingPeriods);
+    let total = 0;
+    CONTEXT_PERIODS.forEach(p => { if (!lockedPeriods[p]) total += 14; }); // Attendance %: 14 rows per period (incl. National Attendance Percentage row)
+    CONTEXT_PERIODS.forEach(p => { if (!lockedPeriods[p]) total += 10; }); // Behaviour Numbers: 10 rows per period
+    total += 1; // Overall Rating
+    const filled = (attendanceRows || []).length;
+    const pct = total ? Math.round((Math.min(filled, total) / total) * 100) : 0;
+    return { pct, filled, total };
+  }
+
+  async function logout(e) {
+    if (e) e.preventDefault();
+    await sb.auth.signOut();
+    window.location.href = 'login.html';
+  }
+
+  function toggleCard(id) {
+    document.getElementById('card-' + id).classList.toggle('open');
+  }
+
+  function switchTab(e, schoolId, tabKey) {
+    const tabBar = document.getElementById('tabs-' + schoolId);
+    tabBar.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+    e.currentTarget.classList.add('active');
+
+    const card = document.getElementById('card-' + schoolId);
+    card.querySelectorAll('.tab-panel').forEach(panel => panel.classList.remove('active'));
+    document.getElementById('panel-' + schoolId + '-' + tabKey).classList.add('active');
+  }
+
+  function renderMiniTable(headers, rows) {
+    if (!rows.length) return '<p class="empty-note">Nothing entered yet.</p>';
+    let html = '<table class="mini-table"><thead><tr>' +
+      headers.map(h => `<th>${h}</th>`).join('') + '</tr></thead><tbody>';
+    rows.forEach(r => {
+      html += '<tr>' + r.map(c => `<td>${c ?? '—'}</td>`).join('') + '</tr>';
+    });
+    html += '</tbody></table>';
+    return html;
+  }
+
+  let NATAVG_DATA = [];
+  let natAvgSectionKey = 'attendance';
+  const NATAVG_A_LEVEL_GRADE_OPTIONS = ['A*+', 'A*', 'A*-', 'A+', 'A', 'A-', 'B+', 'B', 'B-', 'C+', 'C', 'C-', 'D+', 'D', 'D-', 'E+', 'E', 'E-', 'U'];
+  const NATAVG_APPLIED_GENERAL_GRADE_OPTIONS = ['Dist+', 'Dist', 'Dist-', 'Merit+', 'Merit', 'Merit-', 'Pass+', 'Pass', 'Pass-', 'U'];
+  const NATAVG_YEARS = ['2022/23', '2023/24', '2024/25', '2025/26'];
+  const NATAVG_SECTIONS = {
+    attendance: {
+      label: 'Attendance & Behaviour',
+      category: 'National Averages',
+      type: 'flat',
+      rows: ['Overall Attendance %', 'Persistent Absence %', 'PP Attendance %', 'PP Persistent Absence %', 'SEND Attendance %', 'SEND Persistent Absence %', 'Suspensions', 'PP Suspensions', 'SEND Suspensions', 'Permanent Exclusions']
+    },
+    gcseResults: {
+      label: 'GCSE',
+      category: 'GCSE Results',
+      type: 'years',
+      years: NATAVG_YEARS,
+      rows: ['Progress 8', 'Progress 8 - Disadvantaged', 'Attainment 8 Average Grade', 'Attainment 8 Average Grade - Disadvantaged', 'English & Maths Grade 4+ %', 'English & Maths Grade 4+ % - Disadvantaged', 'English & Maths Grade 5+ %', 'English & Maths Grade 5+ % - Disadvantaged', 'EBacc Entry %', 'EBacc APS']
+    },
+    aLevel: {
+      label: 'A Level',
+      category: 'A Level',
+      type: 'years',
+      years: NATAVG_YEARS,
+      rows: [
+        { name: 'Average A Level Grade', type: 'select', options: NATAVG_A_LEVEL_GRADE_OPTIONS },
+        { name: 'A Level APS (Per Entry)' },
+        { name: 'A*–A %' },
+        { name: 'A*–B %' },
+        { name: 'A*–C %' },
+        { name: 'A*–E %' },
+        { name: 'Average Applied General Grade', type: 'select', options: NATAVG_APPLIED_GENERAL_GRADE_OPTIONS },
+        { name: 'Applied General APS (Per Entry)' }
+      ]
+    }
+  };
+
+  async function loadResources() {
+    const container = document.getElementById('resourcesContent');
+    const { data, error } = await sb.from('resource_stats').select('*');
+    if (error) {
+      container.innerHTML = '<div class="status-msg">Couldn\'t load National Averages — see browser console.</div>';
+      console.error(error);
+      return;
+    }
+    NATAVG_DATA = data || [];
+    renderNatAvgSection(natAvgSectionKey);
+  }
+
+  function renderNatAvgSection(sectionKey) {
+    natAvgSectionKey = sectionKey;
+    const section = NATAVG_SECTIONS[sectionKey];
+    const container = document.getElementById('resourcesContent');
+    const val = (metric, period) => {
+      const r = NATAVG_DATA.find(x => x.category === section.category && x.metric === metric && x.period === period);
+      return r ? r.value : '';
+    };
+
+    let html = '<select class="amend-select" onchange="renderNatAvgSection(this.value)">';
+    Object.keys(NATAVG_SECTIONS).forEach(k => {
+      html += `<option value="${k}"${k === sectionKey ? ' selected' : ''}>${NATAVG_SECTIONS[k].label}</option>`;
+    });
+    html += '</select>';
+
+    if (section.type === 'flat') {
+      html += '<table class="grid-table resources-table"><thead><tr><th>Metric</th><th>Period</th><th>Value</th></tr></thead><tbody>';
+      section.rows.forEach(r => {
+        const existing = NATAVG_DATA.find(x => x.category === section.category && x.metric === r);
+        const isPercent = r !== 'Permanent Exclusions';
+        html += `<tr data-metric="${r}">
+          <td class="label-cell">${r}</td>
+          <td><input type="text" data-field="period" value="${existing ? existing.period : ''}" placeholder="e.g. 2022-2025"></td>
+          <td><div style="display:flex;align-items:center;gap:6px;"><input type="text" data-field="value" value="${existing ? existing.value : ''}">${isPercent ? '<span style="color:#5A6B80;font-weight:700;">%</span>' : ''}</div></td>
+        </tr>`;
+      });
+      html += '</tbody></table>';
+    } else {
+      html += '<table class="grid-table resources-table wide-table"><thead><tr><th>Metric</th>';
+      section.years.forEach(y => html += `<th>${y}</th>`);
+      html += '</tr></thead><tbody>';
+      section.rows.forEach(rowDef => {
+        const rowName = typeof rowDef === 'string' ? rowDef : rowDef.name;
+        const isSelect = typeof rowDef === 'object' && rowDef.type === 'select';
+        html += `<tr data-metric="${rowName}"><td class="label-cell">${rowName}</td>`;
+        section.years.forEach(y => {
+          const current = val(rowName, y);
+          if (isSelect) {
+            html += `<td><select data-field="year" data-year="${y}"><option value="">—</option>${rowDef.options.map(o => `<option${o === current ? ' selected' : ''}>${o}</option>`).join('')}</select></td>`;
+          } else {
+            html += `<td><input type="text" data-field="year" data-year="${y}" value="${current}"></td>`;
+          }
+        });
+        html += '</tr>';
+      });
+      html += '</tbody></table>';
+    }
+
+    html += `<div style="margin-top:14px;"><button type="button" class="save-amend-btn" onclick="saveNatAvgSection()">Save ${section.label}</button></div>`;
+    container.innerHTML = html;
+  }
+
+  async function saveNatAvgSection() {
+    const section = NATAVG_SECTIONS[natAvgSectionKey];
+    const container = document.getElementById('resourcesContent');
+    const rows = [];
+    container.querySelectorAll('tr[data-metric]').forEach(tr => {
+      const metric = tr.dataset.metric;
+      if (section.type === 'flat') {
+        const period = tr.querySelector('[data-field="period"]').value.trim();
+        const value = tr.querySelector('[data-field="value"]').value.trim();
+        if (period || value) rows.push({ category: section.category, metric, period, value });
+      } else {
+        tr.querySelectorAll('[data-field="year"]').forEach(el => {
+          const year = el.dataset.year;
+          const value = el.value.trim();
+          if (value) rows.push({ category: section.category, metric, period: year, value });
+        });
+      }
+    });
+
+    const { error: delErr } = await sb.from('resource_stats').delete().eq('category', section.category);
+    if (delErr) { showAmendToast('⚠ Save failed — see browser console', true); console.error(delErr); return; }
+    if (rows.length) {
+      const { error } = await sb.from('resource_stats').insert(rows);
+      if (error) { showAmendToast('⚠ Save failed — see browser console', true); console.error(error); return; }
+    }
+    showAmendToast(`✓ ${section.label} saved`);
+    await loadResources();
+  }
+
+  async function loadAdmin() {
+    const content = document.getElementById('content');
+    const { data: { session } } = await sb.auth.getSession();
+
+    if (!session) {
+      content.innerHTML = '<div class="status-msg">Please <a href="login.html">log in</a> to access this page.</div>';
+      return;
+    }
+
+    const { data: adminRow } = await sb
+      .from('admins').select('auth_user_id').eq('auth_user_id', session.user.id).maybeSingle();
+
+    if (!adminRow) {
+      content.innerHTML = '<div class="status-msg">You\'re logged in, but this account doesn\'t have admin access.</div>';
+      return;
+    }
+
+    const regContent = document.getElementById('regContent');
+
+    const [schoolsRes, contactsRes, ofstedRes, periodsRes, assessRes, trackerRes, regsRes, contextRes, safeguardingRes, inclusionRes, curriculumRes, achievementRes, attendanceRes, pdwRes, leadershipRes, financeRes] = await Promise.all([
+      sb.from('schools').select('*').order('created_at', { ascending: false }),
+      sb.from('key_contacts').select('*'),
+      sb.from('ofsted_judgements').select('*'),
+      sb.from('reporting_periods').select('*'),
+      sb.from('assessment_setup').select('*'),
+      sb.from('completion_tracker').select('*'),
+      sb.from('registrations').select('*').order('created_at', { ascending: false }),
+      sb.from('context_data').select('*'),
+      sb.from('safeguarding_data').select('*'),
+      sb.from('inclusion_data').select('*'),
+      sb.from('curriculum_data').select('*'),
+      sb.from('achievement_data').select('*'),
+      sb.from('attendance_data').select('*'),
+      sb.from('pdw_data').select('*'),
+      sb.from('leadership_governance_data').select('*'),
+      sb.from('finance_data').select('*')
+    ]);
+
+    const regs = regsRes.data || [];
+    if (!regs.length) {
+      regContent.innerHTML = '<div class="status-msg">No registrations yet.</div>';
+    } else {
+      const wanted = r => [
+        r.wants_idsr_summary === 'Yes' ? 'IDSR Intelligence Summary' : null,
+        r.wants_idsr_dashboard === 'Yes' ? 'IDSR Intelligence Dashboard' : null,
+        r.wants_soap_summary === 'Yes' ? 'SOAP Performance Summary' : null,
+        r.wants_soap_suite === 'Yes' ? 'SOAP Performance Suite' : null,
+        r.wants_survey === 'Yes' ? 'Survey Service' : null
+      ].filter(Boolean).join(', ') || '—';
+      regContent.innerHTML = renderMiniTable(
+        ['Name', 'School', 'Email', 'Phone', 'Interested in', 'Message', 'Submitted'],
+        regs.map(r => [
+          r.name, r.school_name, r.email, r.phone, wanted(r), r.message,
+          r.created_at ? new Date(r.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '—'
+        ])
+      );
+    }
+
+    const schools = schoolsRes.data || [];
+
+    const soapListContent = document.getElementById('soapListContent');
+    if (!schools.length) {
+      soapListContent.innerHTML = '<div class="status-msg">No schools yet.</div>';
+    } else {
+      soapListContent.innerHTML = `
+        <div class="school-card">
+          ${schools.map(s => `
+            <a href="soap-page.html?school_id=${s.id}" style="display:flex;justify-content:space-between;align-items:center;padding:14px 20px;text-decoration:none;color:inherit;border-bottom:1px solid #DCE3EA;">
+              <div>
+                <div class="school-name">${s.name}</div>
+                <div class="school-meta">${s.phase || '—'} · ${s.academic_year || '—'}</div>
+              </div>
+              <div style="color:#0D7377;font-weight:700;font-size:13px;">View SOAP →</div>
+            </a>
+          `).join('')}
+        </div>
+      `;
+    }
+
+    await loadResources();
+
+    if (!schools.length) {
+      content.innerHTML = '<div class="status-msg">No schools have submitted a School Setup yet.</div>';
+      return;
+    }
+
+    const bySchool = (rows, id) => (rows || []).filter(r => r.school_id === id);
+
+    let html = '';
+    schools.forEach(s => {
+      const contacts = bySchool(contactsRes.data, s.id);
+      const ofsted = bySchool(ofstedRes.data, s.id);
+      const periods = bySchool(periodsRes.data, s.id);
+      const assess = bySchool(assessRes.data, s.id);
+      const trackerRows = bySchool(trackerRes.data, s.id);
+      const contextRows = bySchool(contextRes.data, s.id);
+      const contextCompletionResult = contextCompletion(s, periods, contextRows);
+      const safeguardingRows = bySchool(safeguardingRes.data, s.id);
+      const inclusionRows2 = bySchool(inclusionRes.data, s.id);
+      const curriculumRows = bySchool(curriculumRes.data, s.id);
+      const achievementRows = bySchool(achievementRes.data, s.id);
+      const attendanceRows = bySchool(attendanceRes.data, s.id);
+      const pdwRows = bySchool(pdwRes.data, s.id);
+      const leadershipRows = bySchool(leadershipRes.data, s.id);
+      const financeRows = bySchool(financeRes.data, s.id);
+      const created = s.created_at ? new Date(s.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '—';
+
+      const infoC = schoolInfoCompletion(s);
+      const contactsC = rowCountCompletion(contacts, 10);
+      const ofstedC = rowCountCompletion(ofsted, 9);
+      const periodsC = rowCountCompletion(periods, 6);
+      const assessC = rowCountCompletion(assess, 4);
+      const trackerC = rowCountCompletion(trackerRows, 9);
+      const safeguardingC = safeguardingCompletion(periods, safeguardingRows);
+      const inclusionC = inclusionCompletion(periods, inclusionRows2);
+      const curriculumC = curriculumCompletion(curriculumRows);
+      const achievementC = achievementCompletion(assess, achievementRows);
+      const attendanceC = attendanceCompletion(periods, attendanceRows);
+      const pdwC = pdwCompletion(pdwRows);
+      const leadershipC = leadershipCompletion(leadershipRows);
+      const financeC = financeCompletion(financeRows);
+
+      html += `
+      <div class="school-card" id="card-${s.id}">
+        <div class="school-head" onclick="toggleCard('${s.id}')">
+          <div>
+            <div class="school-name">${s.name}</div>
+            <div class="school-meta">${s.phase || '—'} · ${s.academic_year || '—'} · Submitted ${created} · Context ${contextCompletionResult.pct}% complete</div>
+          </div>
+          <div class="chevron">▶</div>
+        </div>
+        <div class="school-detail">
+          <div class="tab-bar" id="tabs-${s.id}">
+            <button type="button" class="tab-btn active" onclick="switchTab(event,'${s.id}','info')">School Information (${infoC.pct}%)</button>
+            <button type="button" class="tab-btn" onclick="switchTab(event,'${s.id}','contacts')">Key Contacts (${contactsC.pct}%)</button>
+            <button type="button" class="tab-btn" onclick="switchTab(event,'${s.id}','ofsted')">Ofsted Judgements (${ofstedC.pct}%)</button>
+            <button type="button" class="tab-btn" onclick="switchTab(event,'${s.id}','periods')">Reporting Periods (${periodsC.pct}%)</button>
+            <button type="button" class="tab-btn" onclick="switchTab(event,'${s.id}','assess')">Assessment Setup (${assessC.pct}%)</button>
+            <button type="button" class="tab-btn" onclick="switchTab(event,'${s.id}','tracker')">Completion Tracker (${trackerC.pct}%)</button>
+            <button type="button" class="tab-btn" onclick="switchTab(event,'${s.id}','context')">Context (${contextCompletionResult.pct}%)</button>
+            <button type="button" class="tab-btn" onclick="switchTab(event,'${s.id}','safeguarding')">Safeguarding (${safeguardingC.pct}%)</button>
+            <button type="button" class="tab-btn" onclick="switchTab(event,'${s.id}','inclusion')">Inclusion (${inclusionC.pct}%)</button>
+            <button type="button" class="tab-btn" onclick="switchTab(event,'${s.id}','attendance')">Attendance & Behaviour (${attendanceC.pct}%)</button>
+            <button type="button" class="tab-btn" onclick="switchTab(event,'${s.id}','curriculum')">Curriculum & Teaching (${curriculumC.pct}%)</button>
+            <button type="button" class="tab-btn" onclick="switchTab(event,'${s.id}','achievement')">Achievement (${achievementC.pct}%)</button>
+            <button type="button" class="tab-btn" onclick="switchTab(event,'${s.id}','pdw')">PDW (${pdwC.pct}%)</button>
+            <button type="button" class="tab-btn" onclick="switchTab(event,'${s.id}','leadership')">Leadership & Governance (${leadershipC.pct}%)</button>
+            <button type="button" class="tab-btn" onclick="switchTab(event,'${s.id}','finance')">Finance & Resources (${financeC.pct}%)</button>
+            <button type="button" class="tab-btn" style="color:#0D7377;" onclick="switchTab(event,'${s.id}','amend')">✎ Amend Data</button>
+          </div>
+
+          <div class="tab-panel active" id="panel-${s.id}-info">
+            <div class="detail-section" style="margin-top:0;">
+              <h4>School Information — ${infoC.pct}% complete (${infoC.filled} of ${infoC.total} fields)</h4>
+              ${renderMiniTable(
+                ['URN', 'Trust', 'Type', 'Roll', 'PAN', 'Person Responsible'],
+                [[s.urn, s.trust, s.school_type, s.number_on_roll, s.pan, s.person_responsible]]
+              )}
+            </div>
+          </div>
+          <div class="tab-panel" id="panel-${s.id}-contacts">
+            <div class="detail-section" style="margin-top:0;">
+              <h4>Key Contacts — ${contactsC.pct}% complete (${contactsC.filled} of ${contactsC.total} roles)</h4>
+              ${renderMiniTable(['Role', 'Name', 'Email'], contacts.map(c => [c.role, c.name, c.email]))}
+            </div>
+          </div>
+          <div class="tab-panel" id="panel-${s.id}-ofsted">
+            <div class="detail-section" style="margin-top:0;">
+              <h4>Ofsted Judgements — ${ofstedC.pct}% complete (${ofstedC.filled} of ${ofstedC.total} areas)</h4>
+              ${renderMiniTable(['Area', 'Grading'], ofsted.map(o => [o.area, o.grading]))}
+            </div>
+          </div>
+          <div class="tab-panel" id="panel-${s.id}-periods">
+            <div class="detail-section" style="margin-top:0;">
+              <h4>Reporting Periods — ${periodsC.pct}% complete (${periodsC.filled} of ${periodsC.total} periods)</h4>
+              ${renderMiniTable(['Period', 'Start', 'End'], periods.map(p => [p.period_name, p.start_date, p.end_date]))}
+            </div>
+          </div>
+          <div class="tab-panel" id="panel-${s.id}-assess">
+            <div class="detail-section" style="margin-top:0;">
+              <h4>Assessment Setup — ${assessC.pct}% complete (${assessC.filled} of ${assessC.total} assessments)</h4>
+              ${renderMiniTable(['Assessment', 'Planned', 'Date'], assess.map(a => [a.assessment_name, a.planned, a.assessment_date]))}
+            </div>
+          </div>
+          <div class="tab-panel" id="panel-${s.id}-tracker">
+            <div class="detail-section" style="margin-top:0;">
+              <h4>Completion Tracker — ${trackerC.pct}% complete (${trackerC.filled} of ${trackerC.total} sections)</h4>
+              ${renderMiniTable(['Section', 'Responsible', 'Job Title', 'Email'], trackerRows.map(t => [t.section, t.responsible_person, t.job_title, t.email]))}
+            </div>
+          </div>
+          <div class="tab-panel" id="panel-${s.id}-context">
+            <div class="detail-section" style="margin-top:0;">
+              <h4>Context — ${contextCompletionResult.pct}% complete (${contextCompletionResult.filled} of ${contextCompletionResult.total} available fields)</h4>
+              ${renderMiniTable(['Category', 'Metric', 'Period', 'Value'], contextRows.map(c => [c.category, c.metric, c.period, c.value]))}
+            </div>
+          </div>
+          <div class="tab-panel" id="panel-${s.id}-safeguarding">
+            <div class="detail-section" style="margin-top:0;">
+              <h4>Safeguarding — ${safeguardingC.pct}% complete (${safeguardingC.filled} of ${safeguardingC.total} available fields)</h4>
+              ${renderMiniTable(['Category', 'Metric', 'Period', 'Value'], safeguardingRows.map(c => [c.category, c.metric, c.period, c.value]))}
+            </div>
+          </div>
+          <div class="tab-panel" id="panel-${s.id}-inclusion">
+            <div class="detail-section" style="margin-top:0;">
+              <h4>Inclusion — ${inclusionC.pct}% complete (${inclusionC.filled} of ${inclusionC.total} available fields)</h4>
+              ${renderMiniTable(['Category', 'Metric', 'Period', 'Value'], inclusionRows2.map(c => [c.category, c.metric, c.period, c.value]))}
+            </div>
+          </div>
+          <div class="tab-panel" id="panel-${s.id}-attendance">
+            <div class="detail-section" style="margin-top:0;">
+              <h4>Attendance & Behaviour — ${attendanceC.pct}% complete (${attendanceC.filled} of ${attendanceC.total} available fields)</h4>
+              ${renderMiniTable(['Category', 'Metric', 'Period', 'Value'], attendanceRows.map(c => [c.category, c.metric, c.period, c.value]))}
+            </div>
+          </div>
+          <div class="tab-panel" id="panel-${s.id}-curriculum">
+            <div class="detail-section" style="margin-top:0;">
+              <h4>Curriculum & Teaching — ${curriculumC.pct}% complete (${curriculumC.filled} of ${curriculumC.total} available fields)</h4>
+              ${renderMiniTable(['Category', 'Metric', 'Period', 'Value'], curriculumRows.map(c => [c.category, c.metric, c.period, c.value]))}
+            </div>
+          </div>
+          <div class="tab-panel" id="panel-${s.id}-achievement">
+            <div class="detail-section" style="margin-top:0;">
+              <h4>Achievement — ${achievementC.pct}% complete (${achievementC.filled} of ${achievementC.total} available fields)</h4>
+              ${renderMiniTable(['Category', 'Metric', 'Period', 'Value'], achievementRows.map(c => [c.category, c.metric, c.period, c.value]))}
+            </div>
+          </div>
+          <div class="tab-panel" id="panel-${s.id}-pdw">
+            <div class="detail-section" style="margin-top:0;">
+              <h4>PDW — ${pdwC.pct}% complete (${pdwC.filled} of ${pdwC.total} available fields)</h4>
+              ${renderMiniTable(['Category', 'Metric', 'Period', 'Value'], pdwRows.map(c => [c.category, c.metric, c.period, c.value]))}
+            </div>
+          </div>
+          <div class="tab-panel" id="panel-${s.id}-leadership">
+            <div class="detail-section" style="margin-top:0;">
+              <h4>Leadership & Governance — ${leadershipC.pct}% complete (${leadershipC.filled} of ${leadershipC.total} available fields)</h4>
+              ${renderMiniTable(['Category', 'Metric', 'Period', 'Value'], leadershipRows.map(c => [c.category, c.metric, c.period, c.value]))}
+            </div>
+          </div>
+          <div class="tab-panel" id="panel-${s.id}-finance">
+            <div class="detail-section" style="margin-top:0;">
+              <h4>Finance & Resources — ${financeC.pct}% complete (${financeC.filled} of ${financeC.total} available fields)</h4>
+              ${renderMiniTable(['Category', 'Metric', 'Period', 'Value'], financeRows.map(c => [c.category, c.metric, c.period, c.value]))}
+            </div>
+          </div>
+          <div class="tab-panel" id="panel-${s.id}-amend">
+            <div class="detail-section" style="margin-top:0;">
+              <h4>Amend Data</h4>
+              <p class="amend-note">Admin-only, no period locks. Choose a section below — it's pre-filled with whatever the school has already entered. Saving here writes directly to the same table the school's own form uses.</p>
+              <select class="amend-select" onchange="renderAmendForm('${s.id}', this.value)">
+                <option value="">— Select a section —</option>
+                <option value="info">School Information</option>
+                <option value="contacts">Key Contacts</option>
+                <option value="ofsted">Ofsted Judgements</option>
+                <option value="periods">Reporting Periods</option>
+                <option value="assess">Assessment Setup</option>
+                <option value="tracker">Completion Tracker</option>
+                <option value="context">Context</option>
+                <option value="safeguarding">Safeguarding</option>
+                <option value="inclusion">Inclusion</option>
+                <option value="attendance">Attendance & Behaviour</option>
+                <option value="curriculum">Curriculum & Teaching</option>
+                <option value="achievement">Achievement</option>
+                <option value="pdw">PDW</option>
+                <option value="leadership">Leadership & Governance</option>
+                <option value="finance">Finance & Resources</option>
+              </select>
+              <div id="amendBody-${s.id}"></div>
+            </div>
+          </div>
+        </div>
+      </div>`;
+    });
+
+    schools.forEach(s => {
+      SCHOOL_AMEND_DATA[s.id] = {
+        school: s,
+        contacts: bySchool(contactsRes.data, s.id),
+        ofsted: bySchool(ofstedRes.data, s.id),
+        periods: bySchool(periodsRes.data, s.id),
+        assess: bySchool(assessRes.data, s.id),
+        tracker: bySchool(trackerRes.data, s.id),
+        contextRows: bySchool(contextRes.data, s.id),
+        safeguardingRows: bySchool(safeguardingRes.data, s.id),
+        inclusionRows: bySchool(inclusionRes.data, s.id),
+        attendanceRows: bySchool(attendanceRes.data, s.id),
+        curriculumRows: bySchool(curriculumRes.data, s.id),
+        achievementRows: bySchool(achievementRes.data, s.id),
+        pdwRows: bySchool(pdwRes.data, s.id),
+        leadershipRows: bySchool(leadershipRes.data, s.id),
+        financeRows: bySchool(financeRes.data, s.id)
+      };
+    });
+
+    content.innerHTML = html;
+  }
+
+  // ============ AMEND DATA (shadow forms) ============
+  const SCHOOL_AMEND_DATA = {};
+
+  const RATING_OPTIONS_5 = ['Exceptional', 'Strong Standard', 'Expected Standard', 'Needs Attention', 'Urgent Improvement'];
+  const RATING_OPTIONS_MET = ['Met', 'Not Met'];
+  const RATING_KEY_5 = [
+    { label: 'Exceptional', cls: 'rk-exceptional', desc: 'Practice is exemplary, deeply embedded and consistently demonstrable. Impact is exceptionally strong and could reasonably be shared as best practice.' },
+    { label: 'Strong Standard', cls: 'rk-strong', desc: 'Practice is secure, embedded and consistently effective, with clear supporting evidence.' },
+    { label: 'Expected Standard', cls: 'rk-expected', desc: 'Appropriate practice is in place and broadly secure. Any weaknesses are minor and do not materially undermine implementation.' },
+    { label: 'Needs Attention', cls: 'rk-attention', desc: 'There are identifiable weaknesses or inconsistencies that require improvement, but these are not yet sufficiently serious to represent a major concern.' },
+    { label: 'Urgent Improvement', cls: 'rk-urgent', desc: 'There are significant or systemic weaknesses, insufficient evidence of effective implementation, or concerns requiring prompt leadership action.' }
+  ];
+  const RATING_KEY_MET = [
+    { label: 'Met', cls: 'rk-exceptional', desc: 'All required safeguarding practice, policy and statutory duties are fully in place and evidenced.' },
+    { label: 'Not Met', cls: 'rk-urgent', desc: 'One or more required safeguarding practices, policies or statutory duties are not yet fully in place or evidenced.' }
+  ];
+
+  function openAmendRatingKey(which) {
+    const key = which === 'met' ? RATING_KEY_MET : RATING_KEY_5;
+    document.getElementById('amendRatingKeyBody').innerHTML = key.map(k => `
+      <div class="rating-key-row ${k.cls}"><div class="rk-title">${k.label}</div><div class="rk-desc">${k.desc}</div></div>
+    `).join('');
+    document.getElementById('amendRatingKeyModal').classList.add('open');
+  }
+  function closeAmendRatingKey() {
+    document.getElementById('amendRatingKeyModal').classList.remove('open');
+  }
+
+  const AMEND_VULNERABILITY_ROWS = ['Child Protection (CP)', 'Child in Need (CIN)', 'Early Help', 'CLA', 'Young Carers'];
+  const AMEND_COMPLIANCE_ROWS = ['SCR Status', 'Safeguarding Audit', 'Governor Training'];
+  const AMEND_COMPLIANCE_STATUS_OPTIONS = ['Fully Compliant', 'Partially Compliant', 'Non-Compliant'];
+
+  const AMEND_INCLUSION_NUMBERS_ROWS = ['SEND', 'EHCP', 'Pupil Premium', 'EAL', 'AP Placements'];
+  const AMEND_INCLUSION_EVAL_ROWS = [
+    { area: 'Identification of Need', question: 'How effectively does the school identify pupils requiring additional support and ensure needs are understood at the earliest opportunity?' },
+    { area: 'Quality First Teaching', question: 'How effectively do teachers adapt classroom practice to meet the needs of all learners, including those with SEND?' },
+    { area: 'Graduated Approach', question: 'How effectively does the school assess, plan, deliver and review support to ensure interventions have measurable impact?' },
+    { area: 'External Agency Support', question: 'How effectively does the school utilise specialist external support to improve outcomes for pupils?' },
+    { area: 'Parental Engagement', question: 'How effectively are parents and carers involved in planning, reviewing and supporting provision?' },
+    { area: 'Inclusion Leadership', question: 'How effectively is inclusion strategically led, monitored and embedded across the school?' }
+  ];
+  const AMEND_INCLUSION_KEY_DATES_ROWS = ['SEND Review Completed', 'SEND Audit Completed', 'SEND Governor Visit', 'Inclusion Review'];
+
+  const AMEND_ATTENDANCE_ROWS = [
+    'Overall Attendance %', 'National Attendance %', 'Persistent Absence %', 'PP Attendance %', 'PP Persistent Absence %',
+    'SEND Attendance %', 'SEND Persistent Absence %',
+    'Year 7 Attendance %', 'Year 8 Attendance %', 'Year 9 Attendance %', 'Year 10 Attendance %',
+    'Year 11 Attendance %', 'Year 12 Attendance %', 'Year 13 Attendance %'
+  ];
+  const AMEND_BEHAVIOUR_ROWS = [
+    'Internal Removal Events — Total', 'Internal Removal Events — PP', 'Internal Removal Events — SEND',
+    'Suspensions — Total', 'Suspensions — PP', 'Suspensions — SEND',
+    'Permanent Exclusions — Total', 'Permanent Exclusions — PP', 'Permanent Exclusions — SEND',
+    'Late Arrivals / Punctuality Events'
+  ];
+
+  const AMEND_CURRICULUM_INTENT_ROWS = [
+    { area: 'Curriculum Design', question: "Is the curriculum coherently planned, appropriately broad and aligned with the school's intended outcomes?" },
+    { area: 'Structure', question: 'Are curriculum components organised clearly across years, subjects and units?' },
+    { area: 'Sequencing', question: 'Is knowledge deliberately ordered so that new learning builds securely on prior learning?' },
+    { area: 'Ambition', question: 'Is the curriculum sufficiently challenging and ambitious for all pupils, including SEND and disadvantaged pupils?' },
+    { area: 'Curriculum Delivery', question: 'Is the intended curriculum being implemented consistently in classrooms?' },
+    { area: 'Teaching', question: 'Does teaching enable pupils to understand, remember and apply the intended curriculum?' },
+    { area: 'Assessment', question: 'Is assessment used effectively to identify gaps, check understanding and inform future teaching?' },
+    { area: 'Adaptation', question: 'Is teaching adapted appropriately without lowering expectations or distorting the intended curriculum?' },
+    { area: 'Literacy & Oracy', question: 'Are reading, vocabulary, writing and spoken language developed effectively across the curriculum?' },
+    { area: 'Subject Review', question: 'Is there robust evaluation of curriculum quality and impact at subject level?' },
+    { area: 'Curriculum Monitoring', question: 'Do leaders have reliable evidence that the curriculum is being implemented as intended?' },
+    { area: 'Professional Development', question: "Does professional development strengthen teachers' subject, curriculum and pedagogical expertise?" }
+  ];
+
+  const AMEND_FOUNDATIONAL_ROWS = [
+    { area: 'Literacy', question: 'Are pupils developing the reading, writing, vocabulary and communication skills needed to access the curriculum successfully?' },
+    { area: 'Numeracy', question: 'Are pupils developing and applying the mathematical knowledge and skills needed across the curriculum?' },
+    { area: 'Knowledge Retention', question: 'Do pupils remember key knowledge over time and use it successfully in subsequent learning?' },
+    { area: 'Intervention & Support', question: 'Are gaps in foundational knowledge identified promptly and addressed through effective, targeted support?' }
+  ];
+  const AMEND_BASE_YEAR_COLS = ['2022/23', '2023/24', '2024/25', '2025/26'];
+  const AMEND_GCSE_ROWS = [
+    { name: 'Progress 8', format: 'decimal2', blankedPeriods: ['2024/25', '2025/26'] },
+    { name: 'Progress 8 - Disadvantaged', format: 'decimal2', blankedPeriods: ['2024/25', '2025/26'] },
+    { name: 'Attainment 8 Average Grade', format: 'singleDigit1dp' },
+    { name: 'Attainment 8 Average Grade - Disadvantaged', format: 'singleDigit1dp' },
+    { name: 'English & Maths Grade 4+ %', format: 'integer' },
+    { name: 'English & Maths Grade 4+ % - Disadvantaged', format: 'integer' },
+    { name: 'English & Maths Grade 5+ %', format: 'integer' },
+    { name: 'English & Maths Grade 5+ % - Disadvantaged', format: 'integer' },
+    { name: 'EBacc Entry %', format: 'integer' },
+    { name: 'EBacc APS', format: 'decimal2' }
+  ];
+  const AMEND_A_LEVEL_GRADE_OPTIONS = ['A*+', 'A*', 'A*-', 'A+', 'A', 'A-', 'B+', 'B', 'B-', 'C+', 'C', 'C-', 'D+', 'D', 'D-', 'E+', 'E', 'E-', 'U'];
+  const AMEND_APPLIED_GENERAL_GRADE_OPTIONS = ['Dist+', 'Dist', 'Dist-', 'Merit+', 'Merit', 'Merit-', 'Pass+', 'Pass', 'Pass-', 'U'];
+  const AMEND_POST16_ROWS = [
+    { name: 'Average A Level Grade', type: 'select', options: AMEND_A_LEVEL_GRADE_OPTIONS },
+    { name: 'A Level APS (Per Entry)', format: 'decimal2' },
+    { name: 'A*–A %', format: 'integer' },
+    { name: 'A*–B %', format: 'integer' },
+    { name: 'A*–C %', format: 'integer' },
+    { name: 'A*–E %', format: 'integer' },
+    { name: 'Average Applied General Grade', type: 'select', options: AMEND_APPLIED_GENERAL_GRADE_OPTIONS },
+    { name: 'Applied General APS (Per Entry)', format: 'decimal2' }
+  ];
+
+  function amendPeriodKeysFor(yearCols) {
+    let natCount = 0;
+    return yearCols.map(c => {
+      if (c === 'Nat') { natCount += 1; return `Nat${natCount}`; }
+      return c;
+    });
+  }
+
+  function sanitizeNumberInput(el, format) {
+    let v = el.value;
+    if (format === 'integer') {
+      v = v.replace(/[^0-9]/g, '');
+    } else if (format === 'decimal2') {
+      v = v.replace(/[^0-9.\-]/g, '');
+      v = v.charAt(0) === '-' ? '-' + v.slice(1).replace(/-/g, '') : v.replace(/-/g, '');
+      const parts = v.split('.');
+      if (parts.length > 2) v = parts[0] + '.' + parts.slice(1).join('');
+      const m = v.match(/^-?\d*\.?\d{0,2}/);
+      v = m ? m[0] : v;
+    } else if (format === 'singleDigit1dp') {
+      v = v.replace(/[^0-9.]/g, '');
+      const parts = v.split('.');
+      const intPart = parts[0].slice(0, 1);
+      v = parts.length > 1 ? intPart + '.' + parts[1].slice(0, 1) : intPart;
+    }
+    el.value = v;
+  }
+
+  function showAmendToast(msg, isError) {
+    const toast = document.getElementById('amendToast');
+    toast.textContent = msg;
+    toast.style.background = isError ? '#B3261E' : '#1A7A6E';
+    toast.classList.add('show');
+    setTimeout(() => toast.classList.remove('show'), 3400);
+  }
+
+  const AMEND_SCHOOL_TYPE_OPTIONS = ['Academy Converter', 'Academy Sponsor-Led', 'Free School', 'Maintained School', 'Voluntary Aided', 'Voluntary Controlled', 'Foundation School', 'Independent School', 'Special School', 'Alternative Provision'];
+  const AMEND_PHASE_OPTIONS = ['Primary', 'Secondary', 'All-Through', 'Infant', 'Junior', 'Middle School', 'Sixth Form College', 'Special', 'Alternative Provision'];
+  const AMEND_ACADEMIC_YEAR_OPTIONS = ['2024/25', '2025/26', '2026/27', '2027/28', '2028/29'];
+  const AMEND_INSPECTION_TYPE_OPTIONS = ['Section 5', 'Section 8', 'Monitoring Visit', 'No Inspection Under New Framework'];
+  const AMEND_CONTACT_ROLES = ['Headteacher', "Headteacher's PA", 'Data Lead', 'Data Manager', 'DSL', 'SENDCo', 'Business Manager', 'Office Manager', 'Chair of Governors', 'School Improvement Partner'];
+  const AMEND_OFSTED_AREAS = [
+    { label: 'Safeguarding', options: ['Met', 'Not Met'] },
+    { label: 'Inclusion', options: RATING_OPTIONS_5 },
+    { label: 'Curriculum & Teaching', options: RATING_OPTIONS_5 },
+    { label: 'Achievement', options: RATING_OPTIONS_5 },
+    { label: 'Attendance & Behaviour', options: RATING_OPTIONS_5 },
+    { label: 'PDW', options: RATING_OPTIONS_5 },
+    { label: 'Early Years (if applicable)', options: RATING_OPTIONS_5 },
+    { label: 'Post 16 (if applicable)', options: RATING_OPTIONS_5 },
+    { label: 'Leadership & Governance', options: RATING_OPTIONS_5 }
+  ];
+  const AMEND_REPORTING_PERIOD_ROWS = ['Autumn 1', 'Autumn 2', 'Spring 1', 'Spring 2', 'Summer 1', 'Summer 2'];
+  const AMEND_ASSESSMENT_ROWS = ['Year 11 PPE 1', 'Year 11 PPE 2', 'Year 13 PPE 1', 'Year 13 PPE 2'];
+  const AMEND_TRACKER_SECTIONS = ['Context', 'Safeguarding', 'Inclusion', 'Curriculum & Teaching', 'Achievement', 'Attendance & Behaviour', 'PDW', 'Leadership & Governance', 'Finance & Resources'];
+  const AMEND_ALL_YEAR_GROUPS = ['EYFS', 'Y1', 'Y2', 'Y3', 'Y4', 'Y5', 'Y6', 'Y7', 'Y8', 'Y9', 'Y10', 'Y11', 'Y12', 'Y13'];
+  const AMEND_PHASE_YEAR_GROUPS = {
+    'Primary': ['EYFS', 'Y1', 'Y2', 'Y3', 'Y4', 'Y5', 'Y6'],
+    'Infant': ['EYFS', 'Y1', 'Y2'],
+    'Junior': ['Y3', 'Y4', 'Y5', 'Y6'],
+    'Secondary': ['Y7', 'Y8', 'Y9', 'Y10', 'Y11', 'Y12', 'Y13'],
+    'Sixth Form College': ['Y12', 'Y13']
+  };
+  function amendYearGroupsForPhase(phase) { return AMEND_PHASE_YEAR_GROUPS[phase] || AMEND_ALL_YEAR_GROUPS; }
+  function amendContextSections(phase) {
+    return [
+      { category: 'Whole School', rows: ['Number on Roll', 'PAN'], extraCols: [] },
+      { category: 'Year Group Profile', rows: amendYearGroupsForPhase(phase), extraCols: ['PAN', 'PAL %', 'PAH %'] },
+      { category: 'Pupil Profile', rows: ['Boys %', 'Girls %', 'FSM %', 'Pupil Premium %', 'SEND %', 'EHCP %', 'EAL %', 'Mobility %'], extraCols: [] },
+      { category: 'Workforce', rows: ['Number of Teachers', 'Number of Support Staff', 'Number of SLT', 'Number of ECTs', 'Number of UPS Teachers'], extraCols: [] }
+    ];
+  }
+
+  function buildAmendInfo(schoolId) {
+    const s = SCHOOL_AMEND_DATA[schoolId].school;
+    const field = (label, id, value, type) => `<div class="field"><label>${label}</label><input type="${type || 'text'}" id="${id}" value="${value ?? ''}"></div>`;
+    const selectField = (label, id, options, current) => `<div class="field"><label>${label}</label><select id="${id}"><option value="">Select…</option>${options.map(o => `<option${o === current ? ' selected' : ''}>${o}</option>`).join('')}</select></div>`;
+
+    let html = '<div class="card"><div class="card-head">School Information</div><div class="card-body"><div class="amend-field-grid">';
+    html += field('Person Responsible', `amendPersonResponsible-${schoolId}`, s.person_responsible);
+    html += field('School Name', `amendSchoolName-${schoolId}`, s.name);
+    html += field('URN', `amendUrn-${schoolId}`, s.urn);
+    html += field('Trust / MAT', `amendTrust-${schoolId}`, s.trust);
+    html += selectField('School Type', `amendSchoolType-${schoolId}`, AMEND_SCHOOL_TYPE_OPTIONS, s.school_type);
+    html += selectField('Phase', `amendPhase-${schoolId}`, AMEND_PHASE_OPTIONS, s.phase);
+    html += field('Number on Roll', `amendNumberOnRoll-${schoolId}`, s.number_on_roll, 'number');
+    html += field('PAN', `amendPan-${schoolId}`, s.pan, 'number');
+    html += selectField('Academic Year', `amendAcademicYear-${schoolId}`, AMEND_ACADEMIC_YEAR_OPTIONS, s.academic_year);
+    html += '</div></div></div>';
+    html += `<div><button type="button" class="save-amend-btn" onclick="saveAmendInfo('${schoolId}')">Save School Information Changes</button></div>`;
+    return html;
+  }
+
+  async function saveAmendInfo(schoolId) {
+    const val = id => { const el = document.getElementById(id); return el && el.value ? el.value : null; };
+    const num = id => { const el = document.getElementById(id); return el && el.value ? parseInt(el.value, 10) : null; };
+    const payload = {
+      person_responsible: val(`amendPersonResponsible-${schoolId}`),
+      name: val(`amendSchoolName-${schoolId}`),
+      urn: val(`amendUrn-${schoolId}`),
+      trust: val(`amendTrust-${schoolId}`),
+      school_type: val(`amendSchoolType-${schoolId}`),
+      phase: val(`amendPhase-${schoolId}`),
+      number_on_roll: num(`amendNumberOnRoll-${schoolId}`),
+      pan: num(`amendPan-${schoolId}`),
+      academic_year: val(`amendAcademicYear-${schoolId}`)
+    };
+    const { error } = await sb.from('schools').update(payload).eq('id', schoolId);
+    if (error) { showAmendToast('⚠ Save failed — see browser console', true); console.error(error); return; }
+    if (SCHOOL_AMEND_DATA[schoolId]) Object.assign(SCHOOL_AMEND_DATA[schoolId].school, payload);
+    showAmendToast('✓ School Information saved');
+  }
+
+  function buildAmendContacts(schoolId) {
+    const contacts = SCHOOL_AMEND_DATA[schoolId].contacts;
+    const find = role => (contacts || []).find(c => c.role === role) || {};
+    let html = '<div class="card"><div class="card-head">Key Contacts</div><div class="card-body"><table class="grid-table"><thead><tr><th>Role</th><th>Name / Surname</th><th>Email Address</th></tr></thead><tbody>';
+    AMEND_CONTACT_ROLES.forEach(role => {
+      const c = find(role);
+      html += `<tr data-role="${role}"><td class="label-cell">${role}</td>`;
+      html += `<td><input type="text" value="${c.name || ''}"></td>`;
+      html += `<td><input type="email" value="${c.email || ''}"></td></tr>`;
+    });
+    html += '</tbody></table></div></div>';
+    html += `<div><button type="button" class="save-amend-btn" onclick="saveAmendContacts('${schoolId}')">Save Key Contacts Changes</button></div>`;
+    return html;
+  }
+
+  async function saveAmendContacts(schoolId) {
+    const container = document.getElementById('amendBody-' + schoolId);
+    const contacts = Array.from(container.querySelectorAll('tr[data-role]')).map(tr => ({
+      school_id: schoolId,
+      role: tr.dataset.role,
+      name: tr.querySelector('input[type="text"]').value || null,
+      email: tr.querySelector('input[type="email"]').value || null
+    })).filter(c => c.name || c.email);
+    const { error: delErr } = await sb.from('key_contacts').delete().eq('school_id', schoolId);
+    if (delErr) { showAmendToast('⚠ Save failed — see browser console', true); console.error(delErr); return; }
+    if (contacts.length) {
+      const { error } = await sb.from('key_contacts').insert(contacts);
+      if (error) { showAmendToast('⚠ Save failed — see browser console', true); console.error(error); return; }
+    }
+    if (SCHOOL_AMEND_DATA[schoolId]) SCHOOL_AMEND_DATA[schoolId].contacts = contacts;
+    showAmendToast('✓ Key Contacts saved');
+  }
+
+  function buildAmendOfsted(schoolId) {
+    const school = SCHOOL_AMEND_DATA[schoolId].school;
+    const ofsted = SCHOOL_AMEND_DATA[schoolId].ofsted;
+    const find = area => (ofsted || []).find(o => o.area === area);
+
+    let html = '<div class="card"><div class="card-head">Ofsted Judgements</div><div class="card-body">';
+    html += '<div class="amend-field-grid" style="margin-bottom:16px;">';
+    html += `<div class="field"><label>Inspection Type</label><select id="amendInspectionType-${schoolId}"><option value="">Select…</option>${AMEND_INSPECTION_TYPE_OPTIONS.map(o => `<option${o === school.inspection_type ? ' selected' : ''}>${o}</option>`).join('')}</select></div>`;
+    html += `<div class="field"><label>Last Inspection Date</label><input type="date" id="amendLastInspectionDate-${schoolId}" value="${school.last_inspection_date || ''}"></div>`;
+    html += '</div>';
+    html += '<table class="grid-table"><thead><tr><th>Area</th><th>Grading</th></tr></thead><tbody>';
+    AMEND_OFSTED_AREAS.forEach(area => {
+      const row = find(area.label);
+      const current = row ? row.grading : '';
+      html += `<tr data-area="${area.label}"><td class="label-cell">${area.label}</td>`;
+      html += `<td><select><option value="">—</option>${area.options.map(o => `<option${o === current ? ' selected' : ''}>${o}</option>`).join('')}</select></td></tr>`;
+    });
+    html += '</tbody></table></div></div>';
+    html += `<div><button type="button" class="save-amend-btn" onclick="saveAmendOfsted('${schoolId}')">Save Ofsted Judgements Changes</button></div>`;
+    return html;
+  }
+
+  async function saveAmendOfsted(schoolId) {
+    const container = document.getElementById('amendBody-' + schoolId);
+    const inspectionType = document.getElementById(`amendInspectionType-${schoolId}`).value || null;
+    const lastInspectionDate = document.getElementById(`amendLastInspectionDate-${schoolId}`).value || null;
+
+    const { error: schoolErr } = await sb.from('schools').update({ inspection_type: inspectionType, last_inspection_date: lastInspectionDate }).eq('id', schoolId);
+    if (schoolErr) { showAmendToast('⚠ Save failed — see browser console', true); console.error(schoolErr); return; }
+
+    const judgements = Array.from(container.querySelectorAll('tr[data-area]')).map(tr => ({
+      school_id: schoolId,
+      area: tr.dataset.area,
+      grading: tr.querySelector('select').value || null
+    })).filter(j => j.grading);
+
+    const { error: delErr } = await sb.from('ofsted_judgements').delete().eq('school_id', schoolId);
+    if (delErr) { showAmendToast('⚠ Save failed — see browser console', true); console.error(delErr); return; }
+    if (judgements.length) {
+      const { error } = await sb.from('ofsted_judgements').insert(judgements);
+      if (error) { showAmendToast('⚠ Save failed — see browser console', true); console.error(error); return; }
+    }
+    if (SCHOOL_AMEND_DATA[schoolId]) {
+      Object.assign(SCHOOL_AMEND_DATA[schoolId].school, { inspection_type: inspectionType, last_inspection_date: lastInspectionDate });
+      SCHOOL_AMEND_DATA[schoolId].ofsted = judgements;
+    }
+    showAmendToast('✓ Ofsted Judgements saved');
+  }
+
+  function buildAmendPeriods(schoolId) {
+    const periods = SCHOOL_AMEND_DATA[schoolId].periods;
+    const find = name => (periods || []).find(p => p.period_name === name) || {};
+    let html = '<div class="card"><div class="card-head">Reporting Periods</div><div class="card-body"><table class="grid-table"><thead><tr><th>Period</th><th>Start Date</th><th>End Date</th></tr></thead><tbody>';
+    AMEND_REPORTING_PERIOD_ROWS.forEach(name => {
+      const p = find(name);
+      html += `<tr data-period="${name}"><td class="label-cell">${name}</td>`;
+      html += `<td><input type="date" value="${p.start_date || ''}"></td>`;
+      html += `<td><input type="date" value="${p.end_date || ''}"></td></tr>`;
+    });
+    html += '</tbody></table></div></div>';
+    html += `<div><button type="button" class="save-amend-btn" onclick="saveAmendPeriods('${schoolId}')">Save Reporting Periods Changes</button></div>`;
+    return html;
+  }
+
+  async function saveAmendPeriods(schoolId) {
+    const container = document.getElementById('amendBody-' + schoolId);
+    const rows = Array.from(container.querySelectorAll('tr[data-period]')).map(tr => {
+      const dates = tr.querySelectorAll('input[type="date"]');
+      return { school_id: schoolId, period_name: tr.dataset.period, start_date: dates[0].value || null, end_date: dates[1].value || null };
+    }).filter(p => p.start_date || p.end_date);
+    const { error: delErr } = await sb.from('reporting_periods').delete().eq('school_id', schoolId);
+    if (delErr) { showAmendToast('⚠ Save failed — see browser console', true); console.error(delErr); return; }
+    if (rows.length) {
+      const { error } = await sb.from('reporting_periods').insert(rows);
+      if (error) { showAmendToast('⚠ Save failed — see browser console', true); console.error(error); return; }
+    }
+    if (SCHOOL_AMEND_DATA[schoolId]) SCHOOL_AMEND_DATA[schoolId].periods = rows;
+    showAmendToast('✓ Reporting Periods saved');
+  }
+
+  function buildAmendAssess(schoolId) {
+    const assess = SCHOOL_AMEND_DATA[schoolId].assess;
+    const find = name => (assess || []).find(a => a.assessment_name === name) || {};
+    let html = '<div class="card"><div class="card-head">Assessment Setup</div><div class="card-body"><table class="grid-table"><thead><tr><th>Assessment</th><th>Planned</th><th>Date</th></tr></thead><tbody>';
+    AMEND_ASSESSMENT_ROWS.forEach(name => {
+      const a = find(name);
+      html += `<tr data-assessment="${name}"><td class="label-cell">${name}</td>`;
+      html += `<td><select><option value="">—</option><option${a.planned === 'Yes' ? ' selected' : ''}>Yes</option><option${a.planned === 'No' ? ' selected' : ''}>No</option></select></td>`;
+      html += `<td><input type="date" value="${a.assessment_date || ''}"></td></tr>`;
+    });
+    html += '</tbody></table></div></div>';
+    html += `<div><button type="button" class="save-amend-btn" onclick="saveAmendAssess('${schoolId}')">Save Assessment Setup Changes</button></div>`;
+    return html;
+  }
+
+  async function saveAmendAssess(schoolId) {
+    const container = document.getElementById('amendBody-' + schoolId);
+    const rows = Array.from(container.querySelectorAll('tr[data-assessment]')).map(tr => ({
+      school_id: schoolId,
+      assessment_name: tr.dataset.assessment,
+      planned: tr.querySelector('select').value || null,
+      assessment_date: tr.querySelector('input[type="date"]').value || null
+    })).filter(a => a.planned || a.assessment_date);
+    const { error: delErr } = await sb.from('assessment_setup').delete().eq('school_id', schoolId);
+    if (delErr) { showAmendToast('⚠ Save failed — see browser console', true); console.error(delErr); return; }
+    if (rows.length) {
+      const { error } = await sb.from('assessment_setup').insert(rows);
+      if (error) { showAmendToast('⚠ Save failed — see browser console', true); console.error(error); return; }
+    }
+    if (SCHOOL_AMEND_DATA[schoolId]) SCHOOL_AMEND_DATA[schoolId].assess = rows;
+    showAmendToast('✓ Assessment Setup saved');
+  }
+
+  function buildAmendTracker(schoolId) {
+    const tracker = SCHOOL_AMEND_DATA[schoolId].tracker;
+    const find = section => (tracker || []).find(t => t.section === section) || {};
+    let html = '<div class="card"><div class="card-head">Completion Tracker</div><div class="card-body"><table class="grid-table"><thead><tr><th>Section</th><th>Responsible Person</th><th>Job Title</th><th>Email Address</th></tr></thead><tbody>';
+    AMEND_TRACKER_SECTIONS.forEach(section => {
+      const t = find(section);
+      html += `<tr data-section="${section}"><td class="label-cell">${section}</td>`;
+      html += `<td><input type="text" value="${t.responsible_person || ''}"></td>`;
+      html += `<td><input type="text" value="${t.job_title || ''}"></td>`;
+      html += `<td><input type="email" value="${t.email || ''}"></td></tr>`;
+    });
+    html += '</tbody></table></div></div>';
+    html += `<div><button type="button" class="save-amend-btn" onclick="saveAmendTracker('${schoolId}')">Save Completion Tracker Changes</button></div>`;
+    return html;
+  }
+
+  async function saveAmendTracker(schoolId) {
+    const container = document.getElementById('amendBody-' + schoolId);
+    const rows = Array.from(container.querySelectorAll('tr[data-section]')).map(tr => {
+      const texts = tr.querySelectorAll('input[type="text"]');
+      const email = tr.querySelector('input[type="email"]');
+      return { school_id: schoolId, section: tr.dataset.section, responsible_person: texts[0].value || null, job_title: texts[1].value || null, email: email.value || null };
+    }).filter(t => t.responsible_person || t.job_title || t.email);
+    const { error: delErr } = await sb.from('completion_tracker').delete().eq('school_id', schoolId);
+    if (delErr) { showAmendToast('⚠ Save failed — see browser console', true); console.error(delErr); return; }
+    if (rows.length) {
+      const { error } = await sb.from('completion_tracker').insert(rows);
+      if (error) { showAmendToast('⚠ Save failed — see browser console', true); console.error(error); return; }
+    }
+    if (SCHOOL_AMEND_DATA[schoolId]) SCHOOL_AMEND_DATA[schoolId].tracker = rows;
+    showAmendToast('✓ Completion Tracker saved');
+  }
+
+  function buildAmendContext(schoolId) {
+    const school = SCHOOL_AMEND_DATA[schoolId].school;
+    const rows = SCHOOL_AMEND_DATA[schoolId].contextRows;
+    const val = (cat, metric, period) => { const r = rows.find(x => x.category === cat && x.metric === metric && x.period === period); return r ? r.value : ''; };
+    const sections = amendContextSections(school.phase);
+
+    let html = '';
+    sections.forEach(section => {
+      html += `<div class="card"><div class="card-head">${section.category}</div><div class="card-body"><table class="grid-table"><thead><tr><th>${section.category === 'Year Group Profile' ? 'Year Group' : 'Metric'}</th>`;
+      CONTEXT_PERIODS.forEach(p => html += `<th>${p}</th>`);
+      section.extraCols.forEach(c => html += `<th>${c}</th>`);
+      html += '</tr></thead><tbody>';
+      section.rows.forEach(rowName => {
+        html += `<tr data-category="${section.category}" data-metric="${rowName}"><td class="label-cell">${rowName}</td>`;
+        CONTEXT_PERIODS.forEach(p => {
+          html += `<td><input type="text" data-period="${p}" value="${val(section.category, rowName, p)}" oninput="recalcAmendContext('${schoolId}')"></td>`;
+        });
+        section.extraCols.forEach(c => {
+          html += `<td><input type="text" data-period="${c}" value="${val(section.category, rowName, c)}" oninput="recalcAmendContext('${schoolId}')"></td>`;
+        });
+        html += '</tr>';
+      });
+      html += '</tbody></table></div></div>';
+    });
+
+    html += '<p class="amend-note">Whole School, Girls %, and the Inclusion-derived percentages (Pupil Premium %, SEND %, EHCP %, EAL %) all recalculate automatically here, same as the school\'s own form.</p>';
+    html += `<div><button type="button" class="save-amend-btn" onclick="saveAmendContext('${schoolId}')">Save Context Changes</button></div>`;
+    return html;
+  }
+
+  function recalcAmendContext(schoolId) {
+    const container = document.getElementById('amendBody-' + schoolId);
+    const yearGroupRows = Array.from(container.querySelectorAll('tr[data-category="Year Group Profile"]'));
+
+    const norRow = Array.from(container.querySelectorAll('tr')).find(tr => tr.dataset.category === 'Whole School' && tr.dataset.metric === 'Number on Roll');
+    if (norRow && yearGroupRows.length) {
+      CONTEXT_PERIODS.forEach(p => {
+        const input = norRow.querySelector(`input[data-period="${p}"]`);
+        if (!input) return;
+        let sum = 0, any = false;
+        yearGroupRows.forEach(yr => {
+          const v = parseFloat(yr.querySelector(`input[data-period="${p}"]`)?.value);
+          if (!isNaN(v)) { sum += v; any = true; }
+        });
+        input.value = any ? sum : '';
+      });
+    }
+
+    const panRow = Array.from(container.querySelectorAll('tr')).find(tr => tr.dataset.category === 'Whole School' && tr.dataset.metric === 'PAN');
+    if (panRow && yearGroupRows.length) {
+      let sum = 0, any = false;
+      yearGroupRows.forEach(yr => {
+        const v = parseFloat(yr.querySelector('input[data-period="PAN"]')?.value);
+        if (!isNaN(v)) { sum += v; any = true; }
+      });
+      CONTEXT_PERIODS.forEach(p => {
+        const input = panRow.querySelector(`input[data-period="${p}"]`);
+        if (input) input.value = any ? sum : '';
+      });
+    }
+
+    const boysRow = Array.from(container.querySelectorAll('tr')).find(tr => tr.dataset.category === 'Pupil Profile' && tr.dataset.metric === 'Boys %');
+    const girlsRow = Array.from(container.querySelectorAll('tr')).find(tr => tr.dataset.category === 'Pupil Profile' && tr.dataset.metric === 'Girls %');
+    if (boysRow && girlsRow) {
+      CONTEXT_PERIODS.forEach(p => {
+        const boysInput = boysRow.querySelector(`input[data-period="${p}"]`);
+        const girlsInput = girlsRow.querySelector(`input[data-period="${p}"]`);
+        if (!boysInput || !girlsInput) return;
+        const boys = parseFloat(boysInput.value);
+        girlsInput.value = isNaN(boys) ? '' : (Math.round((100 - boys) * 10) / 10).toFixed(1);
+      });
+    }
+
+    // Pupil Premium % / SEND % / EHCP % / EAL % = Inclusion Numbers count ÷ Whole School Number on Roll × 100
+    const inclusionRows = (SCHOOL_AMEND_DATA[schoolId].inclusionRows || []).filter(r => r.category === 'Inclusion Numbers');
+    const mapping = { 'Pupil Premium %': 'Pupil Premium', 'SEND %': 'SEND', 'EHCP %': 'EHCP', 'EAL %': 'EAL' };
+    Object.entries(mapping).forEach(([field, inclusionMetric]) => {
+      const row = Array.from(container.querySelectorAll('tr')).find(tr => tr.dataset.category === 'Pupil Profile' && tr.dataset.metric === field);
+      if (!row) return;
+      CONTEXT_PERIODS.forEach(p => {
+        const input = row.querySelector(`input[data-period="${p}"]`);
+        if (!input) return;
+        const rollInput = norRow ? norRow.querySelector(`input[data-period="${p}"]`) : null;
+        const roll = rollInput ? parseFloat(rollInput.value) : NaN;
+        const inclusionRow = inclusionRows.find(r => r.metric === inclusionMetric && r.period === p);
+        const count = inclusionRow ? parseFloat(inclusionRow.value) : NaN;
+        input.value = (!isNaN(roll) && roll > 0 && !isNaN(count)) ? (Math.round((count / roll) * 1000) / 10).toFixed(1) : '';
+      });
+    });
+  }
+
+  async function saveAmendContext(schoolId) {
+    const rows = collectAmendRows(schoolId);
+    const { error: delErr } = await sb.from('context_data').delete().eq('school_id', schoolId);
+    if (delErr) { showAmendToast('⚠ Save failed — see browser console', true); console.error(delErr); return; }
+    if (rows.length) {
+      const { error } = await sb.from('context_data').insert(rows);
+      if (error) { showAmendToast('⚠ Save failed — see browser console', true); console.error(error); return; }
+    }
+    if (SCHOOL_AMEND_DATA[schoolId]) SCHOOL_AMEND_DATA[schoolId].contextRows = rows;
+    showAmendToast('✓ Context saved');
+  }
+
+  function buildAmendSafeguarding(schoolId) {
+    const data = SCHOOL_AMEND_DATA[schoolId].safeguardingRows;
+    const val = (cat, metric, period) => { const r = data.find(x => x.category === cat && x.metric === metric && x.period === period); return r ? r.value : ''; };
+
+    let html = '<div class="card"><div class="card-head">Vulnerability Numbers</div><div class="card-body"><table class="grid-table"><thead><tr><th>Metric</th>';
+    CONTEXT_PERIODS.forEach(p => html += `<th>${p}</th>`);
+    html += '</tr></thead><tbody>';
+    AMEND_VULNERABILITY_ROWS.forEach(r => {
+      html += `<tr data-category="Vulnerability Numbers" data-metric="${r}"><td class="label-cell">${r}</td>`;
+      CONTEXT_PERIODS.forEach(p => html += `<td><input type="text" data-period="${p}" value="${val('Vulnerability Numbers', r, p)}"></td>`);
+      html += '</tr>';
+    });
+    html += '</tbody></table></div></div>';
+
+    html += '<div class="card"><div class="card-head">Compliance</div><div class="card-body"><table class="grid-table"><thead><tr><th>Area</th><th>Status</th><th>Date</th></tr></thead><tbody>';
+    AMEND_COMPLIANCE_ROWS.forEach(r => {
+      const statusVal = val('Compliance', r, 'Status');
+      html += `<tr data-category="Compliance" data-metric="${r}"><td class="label-cell">${r}</td>`;
+      html += `<td><select data-period="Status"><option value="">—</option>${AMEND_COMPLIANCE_STATUS_OPTIONS.map(o => `<option${o === statusVal ? ' selected' : ''}>${o}</option>`).join('')}</select></td>`;
+      html += `<td><input type="date" data-period="Date" value="${val('Compliance', r, 'Date')}"></td></tr>`;
+    });
+    html += '</tbody></table></div></div>';
+
+    const overallVal = val('Overall Rating', 'Overall Safeguarding SEF Rating', 'Rating');
+    html += `<div class="card"><div class="card-head">Overall Safeguarding SEF Rating</div><div class="card-body">
+      <div class="rating-field" data-category="Overall Rating" data-metric="Overall Safeguarding SEF Rating">
+        <select data-period="Rating"><option value="">Select a rating…</option>${RATING_OPTIONS_MET.map(o => `<option${o === overallVal ? ' selected' : ''}>${o}</option>`).join('')}</select>
+        <button type="button" class="key-btn" style="background:#0D7377;border-color:#0D7377;" onclick="openAmendRatingKey('met');">?</button>
+      </div>
+    </div></div>`;
+
+    html += `<div><button type="button" class="save-amend-btn" onclick="saveAmendSafeguarding('${schoolId}')">Save Safeguarding Changes</button></div>`;
+    return html;
+  }
+
+  function buildAmendInclusion(schoolId) {
+    const data = SCHOOL_AMEND_DATA[schoolId].inclusionRows;
+    const val = (cat, metric, period) => { const r = data.find(x => x.category === cat && x.metric === metric && x.period === period); return r ? r.value : ''; };
+
+    let html = '<div class="card"><div class="card-head">Inclusion Numbers</div><div class="card-body"><table class="grid-table"><thead><tr><th>Metric</th>';
+    CONTEXT_PERIODS.forEach(p => html += `<th>${p}</th>`);
+    html += '</tr></thead><tbody>';
+    AMEND_INCLUSION_NUMBERS_ROWS.forEach(r => {
+      html += `<tr data-category="Inclusion Numbers" data-metric="${r}"><td class="label-cell">${r}</td>`;
+      CONTEXT_PERIODS.forEach(p => html += `<td><input type="text" data-period="${p}" value="${val('Inclusion Numbers', r, p)}"></td>`);
+      html += '</tr>';
+    });
+    html += '</tbody></table></div></div>';
+
+    html += '<div class="card"><div class="card-head">Inclusion Evaluation</div><div class="card-body"><table class="grid-table"><thead><tr><th>Area</th><th>Guidance Question</th><th>Rating</th></tr></thead><tbody>';
+    AMEND_INCLUSION_EVAL_ROWS.forEach(r => {
+      const v = val('Inclusion Evaluation', r.area, 'Rating');
+      html += `<tr data-category="Inclusion Evaluation" data-metric="${r.area}"><td class="label-cell">${r.area}</td><td class="guidance-cell">${r.question}</td>`;
+      html += `<td><select class="rating-select" data-period="Rating"><option value="">—</option>${RATING_OPTIONS_5.map(o => `<option${o === v ? ' selected' : ''}>${o}</option>`).join('')}</select></td></tr>`;
+    });
+    html += '</tbody></table></div></div>';
+
+    html += '<div class="card"><div class="card-head">Key Dates</div><div class="card-body"><table class="grid-table"><thead><tr><th>Activity</th><th>Date</th></tr></thead><tbody>';
+    AMEND_INCLUSION_KEY_DATES_ROWS.forEach(r => {
+      html += `<tr data-category="Key Dates" data-metric="${r}"><td class="label-cell">${r}</td><td><input type="date" data-period="Date" value="${val('Key Dates', r, 'Date')}"></td></tr>`;
+    });
+    html += '</tbody></table></div></div>';
+
+    const overallVal = val('Overall Rating', 'Overall Inclusion SEF Rating', 'Rating');
+    html += `<div class="card"><div class="card-head">Overall Inclusion SEF Rating</div><div class="card-body">
+      <div class="rating-field" data-category="Overall Rating" data-metric="Overall Inclusion SEF Rating">
+        <select data-period="Rating"><option value="">Select a rating…</option>${RATING_OPTIONS_5.map(o => `<option${o === overallVal ? ' selected' : ''}>${o}</option>`).join('')}</select>
+        <button type="button" class="key-btn" style="background:#0D7377;border-color:#0D7377;" onclick="openAmendRatingKey('5');">?</button>
+      </div>
+    </div></div>`;
+
+    html += `<div><button type="button" class="save-amend-btn" onclick="saveAmendInclusion('${schoolId}')">Save Inclusion Changes</button></div>`;
+    return html;
+  }
+
+  function recalcAmendAttendanceYTD(schoolId) {
+    const container = document.getElementById('amendBody-' + schoolId);
+    container.querySelectorAll('tr[data-category="Attendance Percentages"]').forEach(tr => {
+      const ytdInput = tr.querySelector('input[data-period="YTD"]');
+      if (!ytdInput) return;
+      let sum = 0, count = 0;
+      CONTEXT_PERIODS.forEach(p => {
+        const input = tr.querySelector(`input[data-period="${p}"]`);
+        const v = input ? parseFloat(input.value) : NaN;
+        if (!isNaN(v)) { sum += v; count++; }
+      });
+      ytdInput.value = count ? (Math.round((sum / count) * 10) / 10).toFixed(1) : '';
+    });
+    container.querySelectorAll('tr[data-category="Behaviour Numbers"]').forEach(tr => {
+      const ytdInput = tr.querySelector('input[data-period="YTD"]');
+      if (!ytdInput) return;
+      let sum = 0, anyValue = false;
+      CONTEXT_PERIODS.forEach(p => {
+        const input = tr.querySelector(`input[data-period="${p}"]`);
+        const v = input ? parseFloat(input.value) : NaN;
+        if (!isNaN(v)) { sum += v; anyValue = true; }
+      });
+      ytdInput.value = anyValue ? sum : '';
+    });
+  }
+
+  function buildAmendAttendance(schoolId) {
+    const data = SCHOOL_AMEND_DATA[schoolId].attendanceRows;
+    const val = (cat, metric, period) => { const r = data.find(x => x.category === cat && x.metric === metric && x.period === period); return r ? r.value : ''; };
+
+    let html = '<div class="card"><div class="card-head">Attendance — Percentages by Half Term</div><div class="card-body"><table class="grid-table"><thead><tr><th>Metric</th>';
+    CONTEXT_PERIODS.forEach(p => html += `<th>${p}</th>`);
+    html += '<th>YTD</th></tr></thead><tbody>';
+    AMEND_ATTENDANCE_ROWS.forEach(r => {
+      html += `<tr data-category="Attendance Percentages" data-metric="${r}"><td class="label-cell">${r}</td>`;
+      CONTEXT_PERIODS.forEach(p => html += `<td><input type="text" data-period="${p}" value="${val('Attendance Percentages', r, p)}" oninput="recalcAmendAttendanceYTD('${schoolId}')"></td>`);
+      html += `<td><input type="text" data-period="YTD" readonly class="calculated-cell" value="${val('Attendance Percentages', r, 'YTD')}"></td></tr>`;
+    });
+    html += '</tbody></table></div></div>';
+
+    html += '<div class="card"><div class="card-head">Behaviour — Numbers by Half Term</div><div class="card-body"><table class="grid-table"><thead><tr><th>Metric</th>';
+    CONTEXT_PERIODS.forEach(p => html += `<th>${p}</th>`);
+    html += '<th>YTD</th></tr></thead><tbody>';
+    AMEND_BEHAVIOUR_ROWS.forEach(r => {
+      html += `<tr data-category="Behaviour Numbers" data-metric="${r}"><td class="label-cell">${r}</td>`;
+      CONTEXT_PERIODS.forEach(p => html += `<td><input type="text" data-period="${p}" value="${val('Behaviour Numbers', r, p)}" oninput="recalcAmendAttendanceYTD('${schoolId}')"></td>`);
+      html += `<td><input type="text" data-period="YTD" readonly class="calculated-cell" value="${val('Behaviour Numbers', r, 'YTD')}"></td></tr>`;
+    });
+    html += '</tbody></table></div></div>';
+
+    const overallVal = val('Overall Rating', 'Overall Attendance & Behaviour SEF Rating', 'Rating');
+    html += `<div class="card"><div class="card-head">Overall Attendance &amp; Behaviour SEF Rating</div><div class="card-body">
+      <div class="rating-field" data-category="Overall Rating" data-metric="Overall Attendance &amp; Behaviour SEF Rating">
+        <select data-period="Rating"><option value="">Select a rating…</option>${RATING_OPTIONS_5.map(o => `<option${o === overallVal ? ' selected' : ''}>${o}</option>`).join('')}</select>
+        <button type="button" class="key-btn" style="background:#0D7377;border-color:#0D7377;" onclick="openAmendRatingKey('5');">?</button>
+      </div>
+    </div></div>`;
+
+    html += `<div><button type="button" class="save-amend-btn" onclick="saveAmendAttendance('${schoolId}')">Save Attendance &amp; Behaviour Changes</button></div>`;
+    return html;
+  }
+
+  function buildAmendCurriculum(schoolId) {
+    const data = SCHOOL_AMEND_DATA[schoolId].curriculumRows;
+    const val = (cat, metric, period) => { const r = data.find(x => x.category === cat && x.metric === metric && x.period === period); return r ? r.value : ''; };
+
+    let html = '<div class="card"><div class="card-head">Intent, Implementation &amp; Assurance</div><div class="card-body"><table class="grid-table"><thead><tr><th>Area</th><th>Guidance Question</th><th>Rating</th></tr></thead><tbody>';
+    AMEND_CURRICULUM_INTENT_ROWS.forEach(r => {
+      const v = val('Intent, Implementation & Assurance', r.area, 'Rating');
+      html += `<tr data-category="Intent, Implementation & Assurance" data-metric="${r.area}"><td class="label-cell">${r.area}</td><td class="guidance-cell">${r.question}</td>`;
+      html += `<td><select class="rating-select" data-period="Rating"><option value="">—</option>${RATING_OPTIONS_5.map(o => `<option${o === v ? ' selected' : ''}>${o}</option>`).join('')}</select></td></tr>`;
+    });
+    html += '</tbody></table></div></div>';
+
+    const overallVal = val('Overall Rating', 'Overall Curriculum & Teaching SEF Rating', 'Rating');
+    html += `<div class="card"><div class="card-head">Overall Curriculum &amp; Teaching SEF Rating</div><div class="card-body">
+      <div class="rating-field" data-category="Overall Rating" data-metric="Overall Curriculum &amp; Teaching SEF Rating">
+        <select data-period="Rating"><option value="">Select a rating…</option>${RATING_OPTIONS_5.map(o => `<option${o === overallVal ? ' selected' : ''}>${o}</option>`).join('')}</select>
+        <button type="button" class="key-btn" style="background:#0D7377;border-color:#0D7377;" onclick="openAmendRatingKey('5');">?</button>
+      </div>
+    </div></div>`;
+
+    html += `<div><button type="button" class="save-amend-btn" onclick="saveAmendCurriculum('${schoolId}')">Save Curriculum &amp; Teaching Changes</button></div>`;
+    return html;
+  }
+
+  // Formats a currency field as "£12,345" or, for negative amounts, "(£3,000)" —
+  // standard accountancy convention. Runs on blur, not while typing.
+  function formatAccountancyNumber(el) {
+    const trimmed = el.value.trim();
+    if (!trimmed) return;
+    let negative = trimmed.startsWith('(') || trimmed.startsWith('-');
+    const raw = trimmed.replace(/[£,()\s]/g, '').replace(/^-/, '');
+    const num = parseFloat(raw);
+    if (isNaN(num)) return;
+    const formatted = Math.abs(num).toLocaleString('en-GB', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+    el.value = negative ? `(£${formatted})` : `£${formatted}`;
+  }
+
+  function buildAmendYearTable(title, category, yearCols, rows, val, widthMode) {
+    const periodKeys = amendPeriodKeysFor(yearCols);
+    const tableClass = widthMode === 'narrow' ? ' year-table' : widthMode === 'wide' ? ' wide-table' : '';
+    let html = `<div class="card"><div class="card-head">${title}</div><div class="card-body"><table class="grid-table${tableClass}"><thead><tr><th>Metric</th>`;
+    yearCols.forEach(c => html += `<th>${c}</th>`);
+    html += '</tr></thead><tbody>';
+    rows.forEach(rowDef => {
+      const r = typeof rowDef === 'string' ? rowDef : rowDef.name;
+      const format = typeof rowDef === 'string' ? null : rowDef.format;
+      const isSelect = typeof rowDef === 'object' && rowDef.type === 'select';
+      const blankedPeriods = (typeof rowDef === 'object' && rowDef.blankedPeriods) || [];
+      html += `<tr data-category="${category}" data-metric="${r}"><td class="label-cell">${r}</td>`;
+      periodKeys.forEach(p => {
+        if (blankedPeriods.includes(p)) {
+          html += `<td><input type="text" data-period="${p}" disabled style="background:#EDEFF2;color:#A0ADB8;" placeholder="—" title="Not recorded for this year, in school or nationally"></td>`;
+        } else if (isSelect) {
+          const current = val(category, r, p);
+          html += `<td><select data-period="${p}"><option value="">—</option>${rowDef.options.map(o => `<option${o === current ? ' selected' : ''}>${o}</option>`).join('')}</select></td>`;
+        } else if (format === 'accountancy') {
+          html += `<td><input type="text" data-period="${p}" value="${val(category, r, p)}" placeholder="£0" onblur="formatAccountancyNumber(this)"></td>`;
+        } else {
+          const oninput = format ? ` oninput="sanitizeNumberInput(this, '${format}')"` : '';
+          html += `<td><input type="text" data-period="${p}" value="${val(category, r, p)}"${oninput}></td>`;
+        }
+      });
+      html += '</tr>';
+    });
+    html += '</tbody></table></div></div>';
+    return html;
+  }
+
+  // Like buildAmendYearTable, but for GCSE/Post-16 Outcomes specifically — each
+  // year has a paired "Nat" column, so the header becomes two rows: the year
+  // merged across both, then "School" / "National Average" underneath.
+  function gcseTrailingStart(cols) {
+    let i = 0;
+    while (i < cols.length && cols[i + 1] === 'Nat') i += 2;
+    return i;
+  }
+
+  function buildAmendGCSEYearTable(title, category, yearCols, rows, val) {
+    const periodKeys = amendPeriodKeysFor(yearCols);
+    const trailingStart = gcseTrailingStart(yearCols);
+    let html = `<div class="card"><div class="card-head">${title}</div><div class="card-body"><table class="grid-table year-table"><thead>`;
+
+    html += '<tr><th rowspan="2">Metric</th>';
+    let i = 0;
+    while (i < yearCols.length) {
+      if (yearCols[i + 1] === 'Nat') {
+        html += `<th colspan="2" class="gcse-divider gcse-year-label">${yearCols[i]}</th>`;
+        i += 2;
+      } else {
+        const remaining = yearCols.length - trailingStart;
+        html += `<th colspan="${remaining}" class="gcse-divider gcse-year-label">2026/27</th>`;
+        i = yearCols.length;
+      }
+    }
+    html += '</tr><tr>';
+    i = 0;
+    while (i < yearCols.length) {
+      if (yearCols[i + 1] === 'Nat') {
+        html += '<th class="gcse-divider">School</th><th>National Average</th>';
+        i += 2;
+      } else {
+        html += `<th${i === trailingStart ? ' class="gcse-divider"' : ''}>${yearCols[i]}</th>`;
+        i += 1;
+      }
+    }
+    html += '</tr></thead><tbody>';
+
+    rows.forEach(rowDef => {
+      const r = typeof rowDef === 'string' ? rowDef : rowDef.name;
+      const format = typeof rowDef === 'string' ? null : rowDef.format;
+      const isSelect = typeof rowDef === 'object' && rowDef.type === 'select';
+      const blankedPeriods = (typeof rowDef === 'object' && rowDef.blankedPeriods) || [];
+      html += `<tr data-category="${category}" data-metric="${r}"><td class="label-cell">${r}</td>`;
+      yearCols.forEach((yc, idx) => {
+        const p = periodKeys[idx];
+        const divider = (idx === trailingStart || (yc !== 'Nat' && yearCols[idx + 1] === 'Nat')) ? ' class="gcse-divider"' : '';
+        if (blankedPeriods.includes(p)) {
+          html += `<td${divider}><input type="text" data-period="${p}" disabled style="background:#EDEFF2;color:#A0ADB8;" placeholder="—" title="Not recorded for this year, in school or nationally"></td>`;
+        } else if (isSelect) {
+          const current = val(category, r, p);
+          html += `<td${divider}><select data-period="${p}"><option value="">—</option>${rowDef.options.map(o => `<option${o === current ? ' selected' : ''}>${o}</option>`).join('')}</select></td>`;
+        } else if (format === 'accountancy') {
+          html += `<td${divider}><input type="text" data-period="${p}" value="${val(category, r, p)}" placeholder="£0" onblur="formatAccountancyNumber(this)"></td>`;
+        } else {
+          const oninput = format ? ` oninput="sanitizeNumberInput(this, '${format}')"` : '';
+          html += `<td${divider}><input type="text" data-period="${p}" value="${val(category, r, p)}"${oninput}></td>`;
+        }
+      });
+      html += '</tr>';
+    });
+    html += '</tbody></table></div></div>';
+    return html;
+  }
+
+  function buildAmendAchievement(schoolId) {
+    const school = SCHOOL_AMEND_DATA[schoolId];
+    const data = school.achievementRows;
+    const val = (cat, metric, period) => { const r = data.find(x => x.category === cat && x.metric === metric && x.period === period); return r ? r.value : ''; };
+    const planned = (name) => { const row = (school.assess || []).find(a => a.assessment_name === name); return row ? row.planned === 'Yes' : false; };
+
+    const gcseYearCols = [...AMEND_BASE_YEAR_COLS];
+    if (planned('Year 11 PPE 1')) gcseYearCols.push('PPE1');
+    if (planned('Year 11 PPE 2')) gcseYearCols.push('PPE2');
+    gcseYearCols.push('Predicted');
+
+    const post16YearCols = [...AMEND_BASE_YEAR_COLS];
+    if (planned('Year 13 PPE 1')) post16YearCols.push('PPE1');
+    if (planned('Year 13 PPE 2')) post16YearCols.push('PPE2');
+    post16YearCols.push('Predicted');
+
+    let html = '<div class="card"><div class="card-head">Foundational Knowledge</div><div class="card-body"><table class="grid-table"><thead><tr><th>Area</th><th>Guidance Question</th><th>Rating</th></tr></thead><tbody>';
+    AMEND_FOUNDATIONAL_ROWS.forEach(r => {
+      const v = val('Foundational Knowledge', r.area, 'Rating');
+      html += `<tr data-category="Foundational Knowledge" data-metric="${r.area}"><td class="label-cell">${r.area}</td><td class="guidance-cell">${r.question}</td>`;
+      html += `<td><select class="rating-select" data-period="Rating"><option value="">—</option>${RATING_OPTIONS_5.map(o => `<option${o === v ? ' selected' : ''}>${o}</option>`).join('')}</select></td></tr>`;
+    });
+    html += '</tbody></table></div></div>';
+
+    html += buildAmendYearTable('GCSE Outcomes', 'GCSE Outcomes', gcseYearCols, AMEND_GCSE_ROWS, val, 'narrow');
+    html += buildAmendYearTable('Post-16 Outcomes', 'Post-16 Outcomes', post16YearCols, AMEND_POST16_ROWS, val, 'narrow');
+
+    const overallVal = val('Overall Rating', 'Overall Achievement SEF Rating', 'Rating');
+    html += `<div class="card"><div class="card-head">Overall Achievement SEF Rating</div><div class="card-body">
+      <div class="rating-field" data-category="Overall Rating" data-metric="Overall Achievement SEF Rating">
+        <select data-period="Rating"><option value="">Select a rating…</option>${RATING_OPTIONS_5.map(o => `<option${o === overallVal ? ' selected' : ''}>${o}</option>`).join('')}</select>
+        <button type="button" class="key-btn" style="background:#0D7377;border-color:#0D7377;" onclick="openAmendRatingKey('5');">?</button>
+      </div>
+    </div></div>`;
+
+    html += `<div><button type="button" class="save-amend-btn" onclick="saveAmendAchievement('${schoolId}')">Save Achievement Changes</button></div>`;
+    return html;
+  }
+
+  const AMEND_STAKEHOLDER_ROWS = [
+    'Pupil - Quality of Education %', 'Pupil - Behaviour & Attitudes %', 'Pupil - Personal Development %',
+    'Parent - Quality of Education %', 'Parent - Personal Development %', 'Staff — Overall %'
+  ];
+  const AMEND_DEST_YEARS = ['23/24', '24/25', '25/26'];
+  const AMEND_DEST_ROWS = ['Continue to Y12 %', 'Other Further Education %', 'Apprenticeships %', 'Employment %', 'NEET %', 'Unknown %'];
+  const AMEND_DEST_ROWS_Y13 = ['University %', 'Other Further Education %', 'Apprenticeships %', 'Employment %', 'NEET %', 'Unknown %', 'Retention Y12 to Y13 %'];
+  const AMEND_ENRICH_TERMS = ['AUT', 'SPR', 'SUM'];
+  const AMEND_ENRICH_ROWS = ['No. of Clubs Offered', 'Club Participation %', 'No. of Educational Visits', 'No. of Residentials', 'Duke of Edinburgh Candidates', 'Duke of Edinburgh Completion %'];
+  const AMEND_GATSBY_ROWS = [
+    { area: 'BM1: Stable Careers Programme', question: 'Does the school have a stable, well-structured careers programme known to pupils, parents, staff and employers?' },
+    { area: 'BM2: Labour Market Info', question: 'Are pupils and parents given accurate, up-to-date information on labour market trends and the value of different qualification routes?' },
+    { area: 'BM3: Needs of Each Pupil', question: 'Are opportunities tailored to the needs of each pupil, with accurate destination and progression data used to inform careers provision?' },
+    { area: 'BM4: Curriculum to Careers', question: 'Do all subject areas link curriculum learning to careers, helping pupils see the relevance of what they study?' },
+    { area: 'BM5: Employer Encounters', question: 'Does every pupil have multiple opportunities to learn from employers about work, employment and the skills valued in the workplace?' },
+    { area: 'BM6: Workplace Experience', question: 'Does every pupil have first-hand experiences of the workplace through visits, work shadowing or work experience?' },
+    { area: 'BM7: FE/HE Encounters', question: 'Does every pupil understand the full range of learning opportunities available to them, including academic and vocational routes?' },
+    { area: 'BM8: Personal Guidance', question: 'Does every pupil have at least one meaningful careers guidance conversation with a trained adviser during their time at the school?' }
+  ];
+
+  function buildAmendPDW(schoolId) {
+    const data = SCHOOL_AMEND_DATA[schoolId].pdwRows;
+    const val = (cat, metric, period) => { const r = data.find(x => x.category === cat && x.metric === metric && x.period === period); return r ? r.value : ''; };
+
+    let html = '<div class="card"><div class="card-head">Stakeholder Voice</div><div class="card-body"><table class="grid-table"><thead><tr><th>Metric</th><th>Completed Status</th><th>Previous Positive Feedback</th><th>Current Positive Feedback</th><th>Rating</th></tr></thead><tbody>';
+    AMEND_STAKEHOLDER_ROWS.forEach(r => {
+      const ratingVal = val('Stakeholder Voice', r, 'Rating');
+      html += `<tr data-category="Stakeholder Voice" data-metric="${r}"><td class="label-cell">${r}</td>`;
+      html += `<td><input type="text" data-period="Completed Status" value="${val('Stakeholder Voice', r, 'Completed Status')}" title="Percentage of people who completed the survey"></td>`;
+      html += `<td><input type="text" data-period="Previous Positive Feedback" value="${val('Stakeholder Voice', r, 'Previous Positive Feedback')}"></td>`;
+      html += `<td><input type="text" data-period="Current Positive Feedback" value="${val('Stakeholder Voice', r, 'Current Positive Feedback')}"></td>`;
+      html += `<td><select class="rating-select" data-period="Rating"><option value="">—</option>${RATING_OPTIONS_5.map(o => `<option${o === ratingVal ? ' selected' : ''}>${o}</option>`).join('')}</select></td></tr>`;
+    });
+    html += '</tbody></table></div></div>';
+
+    html += buildAmendYearTable('Year 11 Destinations', 'Year 11 Destinations', AMEND_DEST_YEARS, AMEND_DEST_ROWS, val);
+    html += buildAmendYearTable('Year 13 Destinations', 'Year 13 Destinations', AMEND_DEST_YEARS, AMEND_DEST_ROWS_Y13, val);
+    html += buildAmendYearTable('Enrichment & Clubs', 'Enrichment & Clubs', AMEND_ENRICH_TERMS, AMEND_ENRICH_ROWS, val);
+
+    html += '<div class="card"><div class="card-head">Gatsby Benchmarks</div><div class="card-body"><table class="grid-table"><thead><tr><th>Benchmark</th><th>Guidance Question</th><th>Rating</th></tr></thead><tbody>';
+    AMEND_GATSBY_ROWS.forEach(r => {
+      const v = val('Gatsby Benchmarks', r.area, 'Rating');
+      html += `<tr data-category="Gatsby Benchmarks" data-metric="${r.area}"><td class="label-cell">${r.area}</td><td class="guidance-cell">${r.question}</td>`;
+      html += `<td><select class="rating-select" data-period="Rating"><option value="">—</option>${RATING_OPTIONS_5.map(o => `<option${o === v ? ' selected' : ''}>${o}</option>`).join('')}</select></td></tr>`;
+    });
+    html += '</tbody></table></div></div>';
+
+    const overallVal = val('Overall Rating', 'Overall PDW SEF Rating', 'Rating');
+    html += `<div class="card"><div class="card-head">Overall PDW SEF Rating</div><div class="card-body">
+      <div class="rating-field" data-category="Overall Rating" data-metric="Overall PDW SEF Rating">
+        <select data-period="Rating"><option value="">Select a rating…</option>${RATING_OPTIONS_5.map(o => `<option${o === overallVal ? ' selected' : ''}>${o}</option>`).join('')}</select>
+        <button type="button" class="key-btn" style="background:#0D7377;border-color:#0D7377;" onclick="openAmendRatingKey('5');">?</button>
+      </div>
+    </div></div>`;
+
+    html += `<div><button type="button" class="save-amend-btn" onclick="saveAmendPDW('${schoolId}')">Save PDW Changes</button></div>`;
+    return html;
+  }
+
+  const AMEND_LG_EVAL_ROWS = [
+    { area: 'Leadership Capacity', question: 'Does the school have sufficient leadership capacity and succession planning to sustain improvement?' },
+    { area: 'School Improvement', question: 'Is there a clear, well-evidenced school improvement plan with focused, achievable priorities?' },
+    { area: 'Quality Assurance', question: 'Are quality assurance processes robust, and do they generate an accurate view of the school\'s strengths and areas for development?' },
+    { area: 'Self-Evaluation', question: 'Is self-evaluation accurate, evidence-based and used effectively to inform priorities?' },
+    { area: 'Governance', question: 'Do governors provide effective challenge and support, and hold leaders to account?' },
+    { area: 'Governor Visits', question: 'Are governor visits well-planned and purposeful, and used to inform governance decisions?' },
+    { area: 'Governor Skills Audit', question: 'Is there a current, accurate skills audit that informs the recruitment and training of governors?' }
+  ];
+
+  function buildAmendLeadership(schoolId) {
+    const data = SCHOOL_AMEND_DATA[schoolId].leadershipRows;
+    const val = (cat, metric, period) => { const r = data.find(x => x.category === cat && x.metric === metric && x.period === period); return r ? r.value : ''; };
+
+    let html = '<div class="card"><div class="card-head">Evaluation</div><div class="card-body"><table class="grid-table"><thead><tr><th>Area</th><th>Guidance Question</th><th>Rating</th></tr></thead><tbody>';
+    AMEND_LG_EVAL_ROWS.forEach(r => {
+      const v = val('Evaluation', r.area, 'Rating');
+      html += `<tr data-category="Evaluation" data-metric="${r.area}"><td class="label-cell">${r.area}</td><td class="guidance-cell">${r.question}</td>`;
+      html += `<td><select class="rating-select" data-period="Rating"><option value="">—</option>${RATING_OPTIONS_5.map(o => `<option${o === v ? ' selected' : ''}>${o}</option>`).join('')}</select></td></tr>`;
+    });
+    html += '</tbody></table></div></div>';
+
+    const overallVal = val('Overall Rating', 'Overall Leadership & Governance SEF Rating', 'Rating');
+    html += `<div class="card"><div class="card-head">Overall Leadership &amp; Governance SEF Rating</div><div class="card-body">
+      <div class="rating-field" data-category="Overall Rating" data-metric="Overall Leadership &amp; Governance SEF Rating">
+        <select data-period="Rating"><option value="">Select a rating…</option>${RATING_OPTIONS_5.map(o => `<option${o === overallVal ? ' selected' : ''}>${o}</option>`).join('')}</select>
+        <button type="button" class="key-btn" style="background:#0D7377;border-color:#0D7377;" onclick="openAmendRatingKey('5');">?</button>
+      </div>
+    </div></div>`;
+
+    html += `<div><button type="button" class="save-amend-btn" onclick="saveAmendLeadership('${schoolId}')">Save Leadership &amp; Governance Changes</button></div>`;
+    return html;
+  }
+
+  const AMEND_FIN_YEARS = ['2024/25', '2025/26', '2026/27'];
+  const AMEND_FIN_ROWS = [
+    { name: 'Staffing Costs % of Income' },
+    { name: 'Budget (Surplus/Deficit)', format: 'accountancy' },
+    { name: 'PP Funding (£)', format: 'accountancy' },
+    { name: 'PP Funding Deployed Y/N', type: 'select', options: ['Yes', 'No'] },
+    { name: '3 Year Forecast Position', type: 'select', options: ['Secure', 'Some Pressure', 'Significant Pressure', 'Unsustainable'] }
+  ];
+  const AMEND_RECRUIT_ROWS = [
+    { name: 'Teaching Vacancies' },
+    { name: 'Support Staff Vacancies' },
+    { name: 'Teacher Turnover %' },
+    { name: 'Support Staff Turnover %' },
+    { name: 'Recruitment Difficulty', type: 'select', options: ['High', 'Moderate', 'Low'] },
+    { name: 'CPD Spend per Teacher', format: 'accountancy' }
+  ];
+  const AMEND_ABSENCE_ROWS = ['Teacher Absence %', 'Cover Lessons / Day', 'Support Staff Absence %'];
+  const AMEND_RESOURCE_ROWS = [
+    { area: 'Staffing Resources', question: 'Are staffing levels and deployment sufficient and well-matched to pupil need across the school?' },
+    { area: 'SEND Resources', question: 'Are resources for SEND provision sufficient, well-targeted and delivering impact?' },
+    { area: 'Estates', question: 'Is the school estate safe, well-maintained and fit for purpose?' },
+    { area: 'Technology', question: 'Is technology provision sufficient, reliable and well-used to support teaching and administration?' },
+    { area: 'Curriculum Resources', question: 'Are curriculum resources sufficient, current and well-matched to the intended curriculum?' }
+  ];
+
+  function recalcAmendFinanceYTD(schoolId) {
+    const container = document.getElementById('amendBody-' + schoolId);
+    container.querySelectorAll('tr[data-category="Staff Absence & Cover"]').forEach(tr => {
+      const ytdInput = tr.querySelector('input[data-period="YTD"]');
+      if (!ytdInput) return;
+      let sum = 0, count = 0;
+      CONTEXT_PERIODS.forEach(p => {
+        const input = tr.querySelector(`input[data-period="${p}"]`);
+        const v = input ? parseFloat(input.value) : NaN;
+        if (!isNaN(v)) { sum += v; count++; }
+      });
+      ytdInput.value = count ? (Math.round((sum / count) * 10) / 10).toFixed(1) : '';
+    });
+  }
+
+  function buildAmendFinance(schoolId) {
+    const data = SCHOOL_AMEND_DATA[schoolId].financeRows;
+    const val = (cat, metric, period) => { const r = data.find(x => x.category === cat && x.metric === metric && x.period === period); return r ? r.value : ''; };
+
+    let html = buildAmendYearTable('Financial Health', 'Financial Health', AMEND_FIN_YEARS, AMEND_FIN_ROWS, val, 'wide');
+    html += buildAmendYearTable('Recruitment & Retention', 'Recruitment & Retention', AMEND_FIN_YEARS, AMEND_RECRUIT_ROWS, val, 'wide');
+
+    html += '<div class="card"><div class="card-head">Staff Absence &amp; Cover</div><div class="card-body"><table class="grid-table"><thead><tr><th>Metric</th>';
+    CONTEXT_PERIODS.forEach(p => html += `<th>${p}</th>`);
+    html += '<th>YTD</th></tr></thead><tbody>';
+    AMEND_ABSENCE_ROWS.forEach(r => {
+      html += `<tr data-category="Staff Absence & Cover" data-metric="${r}"><td class="label-cell">${r}</td>`;
+      CONTEXT_PERIODS.forEach(p => html += `<td><input type="text" data-period="${p}" value="${val('Staff Absence & Cover', r, p)}" oninput="recalcAmendFinanceYTD('${schoolId}')"></td>`);
+      html += `<td><input type="text" data-period="YTD" readonly class="calculated-cell" value="${val('Staff Absence & Cover', r, 'YTD')}"></td></tr>`;
+    });
+    html += '</tbody></table></div></div>';
+
+    html += '<div class="card"><div class="card-head">Resource Effectiveness</div><div class="card-body"><table class="grid-table"><thead><tr><th>Area</th><th>Guidance Question</th><th>Rating</th></tr></thead><tbody>';
+    AMEND_RESOURCE_ROWS.forEach(r => {
+      const v = val('Resource Effectiveness', r.area, 'Rating');
+      html += `<tr data-category="Resource Effectiveness" data-metric="${r.area}"><td class="label-cell">${r.area}</td><td class="guidance-cell">${r.question}</td>`;
+      html += `<td><select class="rating-select" data-period="Rating"><option value="">—</option>${RATING_OPTIONS_5.map(o => `<option${o === v ? ' selected' : ''}>${o}</option>`).join('')}</select></td></tr>`;
+    });
+    html += '</tbody></table></div></div>';
+
+    const overallVal = val('Overall Rating', 'Overall Finance & Resources SEF Rating', 'Rating');
+    html += `<div class="card"><div class="card-head">Overall Finance &amp; Resources SEF Rating</div><div class="card-body">
+      <div class="rating-field" data-category="Overall Rating" data-metric="Overall Finance &amp; Resources SEF Rating">
+        <select data-period="Rating"><option value="">Select a rating…</option>${RATING_OPTIONS_5.map(o => `<option${o === overallVal ? ' selected' : ''}>${o}</option>`).join('')}</select>
+        <button type="button" class="key-btn" style="background:#0D7377;border-color:#0D7377;" onclick="openAmendRatingKey('5');">?</button>
+      </div>
+    </div></div>`;
+
+    html += `<div><button type="button" class="save-amend-btn" onclick="saveAmendFinance('${schoolId}')">Save Finance &amp; Resources Changes</button></div>`;
+    return html;
+  }
+
+  function renderAmendForm(schoolId, section) {
+    const container = document.getElementById('amendBody-' + schoolId);
+    if (!section) { container.innerHTML = ''; return; }
+    const builders = {
+      info: buildAmendInfo,
+      contacts: buildAmendContacts,
+      ofsted: buildAmendOfsted,
+      periods: buildAmendPeriods,
+      assess: buildAmendAssess,
+      tracker: buildAmendTracker,
+      context: buildAmendContext,
+      safeguarding: buildAmendSafeguarding,
+      inclusion: buildAmendInclusion,
+      attendance: buildAmendAttendance,
+      curriculum: buildAmendCurriculum,
+      achievement: buildAmendAchievement,
+      pdw: buildAmendPDW,
+      leadership: buildAmendLeadership,
+      finance: buildAmendFinance
+    };
+    container.innerHTML = builders[section](schoolId);
+    if (section === 'context') recalcAmendContext(schoolId);
+  }
+
+  function collectAmendRows(schoolId) {
+    const container = document.getElementById('amendBody-' + schoolId);
+    const rows = [];
+    container.querySelectorAll('[data-category]').forEach(el => {
+      const category = el.dataset.category;
+      const metric = el.dataset.metric;
+      el.querySelectorAll('input, select').forEach(input => {
+        const v = input.value.trim();
+        if (v) rows.push({ school_id: schoolId, category, metric, period: input.dataset.period, value: v });
+      });
+    });
+    return rows;
+  }
+
+  async function saveAmendGeneric(schoolId, table, label) {
+    const rows = collectAmendRows(schoolId);
+    const { error: delErr } = await sb.from(table).delete().eq('school_id', schoolId);
+    if (delErr) { showAmendToast('⚠ Save failed — see browser console', true); console.error(delErr); return; }
+    if (rows.length) {
+      const { error } = await sb.from(table).insert(rows);
+      if (error) { showAmendToast('⚠ Save failed — see browser console', true); console.error(error); return; }
+    }
+    showAmendToast(`✓ ${label} saved`);
+  }
+
+  async function saveAmendSafeguarding(schoolId) { await saveAmendGeneric(schoolId, 'safeguarding_data', 'Safeguarding'); }
+  async function saveAmendInclusion(schoolId) { await saveAmendGeneric(schoolId, 'inclusion_data', 'Inclusion'); }
+  async function saveAmendAttendance(schoolId) { await saveAmendGeneric(schoolId, 'attendance_data', 'Attendance & Behaviour'); }
+  async function saveAmendCurriculum(schoolId) { await saveAmendGeneric(schoolId, 'curriculum_data', 'Curriculum & Teaching'); }
+  async function saveAmendAchievement(schoolId) { await saveAmendGeneric(schoolId, 'achievement_data', 'Achievement'); }
+  async function saveAmendPDW(schoolId) { await saveAmendGeneric(schoolId, 'pdw_data', 'PDW'); }
+  async function saveAmendLeadership(schoolId) { await saveAmendGeneric(schoolId, 'leadership_governance_data', 'Leadership & Governance'); }
+  async function saveAmendFinance(schoolId) { await saveAmendGeneric(schoolId, 'finance_data', 'Finance & Resources'); }
+  // ============ END AMEND DATA ============
+
+  loadAdmin();
+</script>
+
+</body>
+</html>

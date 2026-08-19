@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SOAP Analytics — School Portal</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: Arial, Helvetica, sans-serif;
+    background: #F0F4F8;
+    min-height: 100vh;
+  }
+
+  /* RIBBON */
+  header {
+    background: #1B2A4A;
+    color: #fff;
+    padding: 0 5%;
+    height: 68px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .ribbon-left { display: flex; align-items: center; gap: 24px; }
+  .brand { font-weight: 700; font-size: 15px; white-space: nowrap; }
+  .brand span { color: #3DCFB8; }
+
+  .school-id { font-size: 13px; color: rgba(255,255,255,0.85); border-left: 1px solid rgba(255,255,255,0.2); padding-left: 24px; }
+  .school-id .name { font-weight: 700; color: #fff; }
+  .school-id .role { color: #3DCFB8; }
+
+  .nav-dropdown { position: relative; }
+  .nav-dropdown > a {
+    color: #fff; text-decoration: none; font-size: 13px; font-weight: 600;
+    cursor: pointer; display: flex; align-items: center; gap: 4px;
+  }
+  .dropdown-menu {
+    display: none;
+    position: absolute;
+    top: 32px;
+    left: 0;
+    background: #fff;
+    border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.15);
+    min-width: 180px;
+    padding: 6px 0;
+    list-style: none;
+    z-index: 50;
+  }
+  .dropdown-menu.open { display: block; }
+  .dropdown-menu li a {
+    display: block;
+    padding: 10px 16px;
+    color: #1B2A4A;
+    text-decoration: none;
+    font-size: 13px;
+  }
+  .dropdown-menu li a:hover { background: #F0F4F8; color: #0D7377; }
+
+  .logout-link { color: rgba(255,255,255,0.7); text-decoration: none; font-size: 13px; }
+  .logout-link:hover { color: #fff; }
+
+  .wrap { max-width: 700px; margin: 60px auto; padding: 0 20px; text-align: center; }
+  .status-card {
+    background: #fff;
+    border-radius: 12px;
+    padding: 40px 30px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.06);
+  }
+  .status-card h1 { color: #1B2A4A; font-size: 22px; margin-bottom: 12px; }
+  .status-card p { color: #5A6B80; font-size: 14px; line-height: 1.6; }
+  .loading { color: #5A6B80; font-size: 14px; }
+
+  @media (max-width: 700px) {
+    .school-id { display: none; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="ribbon-left">
+    <a href="index.html"><img src="images/logo-navy.png" alt="SOAP Analytics" style="height:36px;width:auto;border-radius:6px;display:block;"></a>
+    <span class="school-id" id="schoolIdBadge" style="display:none;">
+      <span class="name" id="schoolNameLabel"></span> — <span class="role" id="roleLabel"></span>
+    </span>
+    <div class="nav-dropdown" id="formsDropdown" style="display:none;">
+      <a onclick="toggleMenu(event);">Data Entry Forms ▾</a>
+    <ul class="dropdown-menu" id="formsMenu"></ul>
+    </div>
+    <a href="admin.html" id="adminLink" style="display:none;color:#3DCFB8;text-decoration:none;font-size:13px;font-weight:600;">Admin Dashboard →</a>
+  </div>
+  <a href="#" class="logout-link" onclick="logout(event);">Log out</a>
+</header>
+
+<div class="wrap">
+  <div class="status-card" id="statusCard">
+    <p class="loading">Checking your login…</p>
+  </div>
+</div>
+
+<script>
+  const SUPABASE_URL = 'https://caopycszjzrmwhxxvtpx.supabase.co';
+  const SUPABASE_KEY = 'sb_publishable_2CTGR0PKyRPpSk59lcr3sA_hvvUDX97';
+  const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+  function toggleMenu(e) {
+    e.preventDefault();
+    document.getElementById('formsMenu').classList.toggle('open');
+  }
+  document.addEventListener('click', function(e) {
+    if (!e.target.closest('.nav-dropdown')) {
+      document.getElementById('formsMenu').classList.remove('open');
+    }
+  });
+
+  async function logout(e) {
+    if (e) e.preventDefault();
+    await sb.auth.signOut();
+    window.location.href = 'login.html';
+  }
+
+  async function checkLogin() {
+    const card = document.getElementById('statusCard');
+    const { data: { session } } = await sb.auth.getSession();
+
+    if (!session) {
+      card.innerHTML = '<h1>Not logged in</h1><p>Please <a href="login.html">log in</a> to access the portal.</p>';
+      return;
+    }
+
+    const email = session.user.email;
+
+    const { data: adminRow } = await sb
+      .from('admins').select('auth_user_id').eq('auth_user_id', session.user.id).maybeSingle();
+    if (adminRow) {
+      document.getElementById('adminLink').style.display = '';
+    }
+
+    const { data: linkRow, error: linkError } = await sb
+      .from('school_users')
+      .select('school_id, role')
+      .eq('auth_user_id', session.user.id)
+      .maybeSingle();
+
+    if (linkError || !linkRow) {
+      if (adminRow) {
+        card.innerHTML = `
+          <h1>Welcome back, Admin</h1>
+          <p>You're logged in as <strong>${email}</strong> with admin access.</p>
+          <p style="margin-top:16px;">Use <strong>Admin Dashboard</strong> in the top bar to see every school's submitted data.</p>`;
+      } else {
+        card.innerHTML = `
+          <h1>You're logged in as ${email}</h1>
+          <p>Your login is working correctly, but it isn't linked to a school yet.
+          Use Data Entry Forms → School Setup above to get started.</p>`;
+      }
+      return;
+    }
+
+    const { data: school } = await sb
+      .from('schools')
+      .select('name')
+      .eq('id', linkRow.school_id)
+      .maybeSingle();
+
+    const schoolName = school ? school.name : 'Your school';
+
+    document.getElementById('schoolNameLabel').textContent = schoolName;
+    document.getElementById('roleLabel').textContent = linkRow.role || 'User';
+    document.getElementById('schoolIdBadge').style.display = '';
+
+    // Which forms this role is allowed to see, matching the database rules
+    const FORM_ACCESS = {
+      'Headteacher': [
+        { label: 'School Setup', href: 'school-setup-form.html' },
+        { label: 'Context', href: 'context-form.html' },
+        { label: 'Safeguarding', href: 'safeguarding-form.html' },
+        { label: 'Inclusion', href: 'inclusion-form.html' },
+        { label: 'Attendance & Behaviour', href: 'attendance-form.html' },
+        { label: 'Curriculum & Teaching', href: 'curriculum-form.html' },
+        { label: 'Achievement', href: 'achievement-form.html' },
+        { label: 'PDW', href: 'pdw-form.html' },
+        { label: 'Leadership & Governance', href: 'leadership-form.html' },
+        { label: 'Finance & Resources', href: 'finance-form.html' }
+      ],
+      'Context': [
+        { label: 'Context', href: 'context-form.html' }
+      ],
+      'Safeguarding': [
+        { label: 'Safeguarding', href: 'safeguarding-form.html' }
+      ],
+      'Inclusion': [
+        { label: 'Inclusion', href: 'inclusion-form.html' }
+      ],
+      'Curriculum & Teaching': [
+        { label: 'Curriculum & Teaching', href: 'curriculum-form.html' }
+      ],
+      'Attendance & Behaviour': [
+        { label: 'Attendance & Behaviour', href: 'attendance-form.html' }
+      ],
+      'Achievement': [
+        { label: 'Achievement', href: 'achievement-form.html' }
+      ],
+      'PDW': [
+        { label: 'PDW', href: 'pdw-form.html' }
+      ],
+      'Leadership & Governance': [
+        { label: 'Leadership & Governance', href: 'leadership-form.html' }
+      ],
+      'Finance & Resources': [
+        { label: 'Finance & Resources', href: 'finance-form.html' }
+      ]
+    };
+    const availableForms = FORM_ACCESS[linkRow.role] || [];
+    const menu = document.getElementById('formsMenu');
+    menu.innerHTML = availableForms.length
+      ? availableForms.map(f => `<li><a href="${f.href}">${f.label}</a></li>`).join('')
+      : '<li style="padding:10px 16px;color:#5A6B80;font-size:13px;">No forms assigned</li>';
+    document.getElementById('formsDropdown').style.display = '';
+
+    card.innerHTML = `
+      <h1>Welcome back</h1>
+      <p>You're logged in as <strong>${email}</strong>.</p>
+      <p style="margin-top:16px;">Use <strong>Data Entry Forms</strong> in the top bar to update your school's information.</p>`;
+  }
+
+  checkLogin();
+</script>
+
+</body>
+</html>
