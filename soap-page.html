@@ -160,6 +160,43 @@
     margin: 10mm;
   }
 
+  /* MOBILE — stack panels instead of squeezing them, let dense tables scroll
+     within their own box rather than crushing text unreadable. Only applies
+     below 768px, so laptop/PC viewing is completely unaffected. */
+  @media screen and (max-width: 768px) {
+    html, body { overflow-x: hidden; }
+    .soap-sheet { padding: 0 2%; max-width: 100%; }
+    .band { flex-direction: column !important; }
+    .subpanel-row { flex-direction: column !important; }
+    .panel { min-width: 0; flex: none !important; width: 100% !important; }
+    table.mini, table.grid-table {
+      display: block;
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+      white-space: nowrap;
+      max-width: 100%;
+    }
+    /* Cell-level width caps exist to keep desktop panels compact — on mobile
+       the table already scrolls, so let cells show their natural width
+       instead of truncating with "…" */
+    table.mini.narrow-periods td:not(.rowlabel),
+    table.mini.narrow-periods th:not(:first-child),
+    table.mini.narrow-labels th:not(:first-child),
+    table.mini.narrow-labels td:not(.rowlabel),
+    table.mini.narrow-summary-cols th:nth-child(n+8),
+    table.mini.narrow-summary-cols td:nth-child(n+8),
+    table.mini.wrap-headers th {
+      max-width: none !important;
+      white-space: nowrap !important;
+      overflow: visible !important;
+      text-overflow: clip !important;
+    }
+    table.mini.narrow-labels td.rowlabel {
+      max-width: none !important;
+      white-space: nowrap !important;
+    }
+  }
+
   @media print {
     * {
       -webkit-print-color-adjust: exact !important;
