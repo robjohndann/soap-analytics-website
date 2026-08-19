@@ -175,6 +175,7 @@
       -webkit-overflow-scrolling: touch;
       white-space: nowrap;
       max-width: 100%;
+      width: 100%;
     }
     /* Cell-level width caps exist to keep desktop panels compact — on mobile
        the table already scrolls, so let cells show their natural width
@@ -195,6 +196,11 @@
       max-width: none !important;
       white-space: nowrap !important;
     }
+    .masthead { grid-template-columns: 1fr !important; }
+    .sub-header { flex-direction: column !important; gap: 6px; }
+    .rating-scale { flex-wrap: wrap !important; }
+    .rating-scale .rs-label { flex: 1 1 100% !important; }
+    .rating-scale div:not(.rs-label) { flex: 1 1 45% !important; min-width: 0; }
   }
 
   @media print {
