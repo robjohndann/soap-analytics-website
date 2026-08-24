@@ -9,7 +9,7 @@
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
     font-family: Arial, Helvetica, sans-serif;
-    background: #F0F4F8;
+    background: #1B2A4A;
     min-height: 100vh;
   }
   header {
@@ -27,8 +27,8 @@
   .logout-link:hover { color: #fff; }
 
   .wrap { max-width: 1100px; margin: 40px auto; padding: 0 20px; }
-  .page-title { font-size: 22px; color: #1B2A4A; margin-bottom: 6px; }
-  .page-sub { font-size: 13px; color: #5A6B80; margin-bottom: 24px; }
+  .page-title { font-size: 22px; color: #fff; margin-bottom: 6px; }
+  .page-sub { font-size: 13px; color: rgba(255,255,255,0.6); margin-bottom: 24px; }
 
   .status-msg { background: #fff; border-radius: 10px; padding: 30px; text-align: center; color: #5A6B80; }
 
@@ -182,6 +182,10 @@
     </div>
     <div class="school-detail" id="resourcesContent"></div>
   </div>
+
+  <div class="page-title">Package Selection</div>
+  <div class="page-sub">Choose each school's package — this determines what unlocks on their Headteacher portal.</div>
+  <div id="packageListContent" style="margin-bottom:40px;"></div>
 
   <div class="page-title">All Schools</div>
   <div class="page-sub">Every School Setup submission, most recent first. Click a school to see full details.</div>
@@ -578,21 +582,83 @@
     }
 
     const schools = schoolsRes.data || [];
+    const bySchool = (rows, id) => (rows || []).filter(r => r.school_id === id);
 
     const soapListContent = document.getElementById('soapListContent');
     if (!schools.length) {
       soapListContent.innerHTML = '<div class="status-msg">No schools yet.</div>';
     } else {
+      const PERIOD_TO_REPORTING_NAME_SOAP = {
+        'AUT1 26': 'Autumn 1', 'AUT2 26': 'Autumn 2',
+        'SPR1 27': 'Spring 1', 'SPR2 27': 'Spring 2',
+        'SUM1 27': 'Summer 1', 'SUM2 27': 'Summer 2'
+      };
+      const PERIOD_DISPLAY_SOAP = {
+        'AUT1 26': 'Autumn 1 2026', 'AUT2 26': 'Autumn 2 2026',
+        'SPR1 27': 'Spring 1 2027', 'SPR2 27': 'Spring 2 2027',
+        'SUM1 27': 'Summer 1 2027', 'SUM2 27': 'Summer 2 2027'
+      };
+      function guessCurrentPeriod(schoolPeriods) {
+        const today = new Date();
+        let current = null;
+        Object.keys(PERIOD_TO_REPORTING_NAME_SOAP).forEach(p => {
+          const match = (schoolPeriods || []).find(r => r.period_name === PERIOD_TO_REPORTING_NAME_SOAP[p]);
+          if (match && match.start_date && new Date(match.start_date) <= today) current = p;
+        });
+        return current ? PERIOD_DISPLAY_SOAP[current] : Object.values(PERIOD_DISPLAY_SOAP)[0];
+      }
+
       soapListContent.innerHTML = `
+        <div class="school-card" style="display:flex;flex-direction:column;gap:2px;">
+          ${schools.map(s => {
+            const guessed = guessCurrentPeriod(bySchool(periodsRes.data, s.id));
+            return `
+            <div style="padding:16px 20px;border-bottom:1px solid #DCE3EA;">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+                <div>
+                  <div class="school-name">${s.name}</div>
+                  <div class="school-meta">${s.phase || '—'} · ${s.academic_year || '—'}</div>
+                </div>
+                <a href="soap-page.html?school_id=${s.id}" target="_blank" style="color:#0D7377;font-weight:700;font-size:13px;text-decoration:none;">View live SOAP →</a>
+              </div>
+              <div style="background:#F0F4F8;border:1px solid #DCE3EA;border-radius:8px;padding:12px 14px;">
+                <div style="font-size:12px;color:#5A6B80;margin-bottom:8px;">Publish period — auto-guessed <strong>${guessed}</strong> from today's date, change if you're finishing off a previous term's data</div>
+                <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+                  <select id="adminPublishPeriod-${s.id}" style="flex:1;min-width:160px;padding:8px;border:1px solid #DCE3EA;border-radius:6px;font-size:13px;">
+                    ${Object.values(PERIOD_DISPLAY_SOAP).map(label => `<option${label === guessed ? ' selected' : ''}>${label}</option>`).join('')}
+                  </select>
+                  <button type="button" class="save-amend-btn" style="padding:8px 16px;" onclick="adminPublishSoap('${s.id}', '${s.name.replace(/'/g, "\\'")}')" id="adminPublishBtn-${s.id}">Publish SOAP</button>
+                </div>
+                <div id="adminPublishNote-${s.id}" style="font-size:12px;font-weight:700;margin-top:8px;"></div>
+              </div>
+            </div>
+          `;
+          }).join('')}
+        </div>
+        <iframe id="adminPublishFrame" style="display:none;width:1px;height:1px;"></iframe>
+      `;
+    }
+
+    const AMEND_PACKAGE_OPTIONS_LIST = ['IDSR Intelligence Summary', 'IDSR Intelligence Summary + Dashboard', 'SOAP Performance Summary', 'SOAP Performance Suite'];
+    const packageListContent = document.getElementById('packageListContent');
+    if (!schools.length) {
+      packageListContent.innerHTML = '<div class="status-msg">No schools yet.</div>';
+    } else {
+      packageListContent.innerHTML = `
         <div class="school-card">
           ${schools.map(s => `
-            <a href="soap-page.html?school_id=${s.id}" style="display:flex;justify-content:space-between;align-items:center;padding:14px 20px;text-decoration:none;color:inherit;border-bottom:1px solid #DCE3EA;">
+            <div style="display:flex;justify-content:space-between;align-items:center;padding:14px 20px;border-bottom:1px solid #DCE3EA;gap:16px;">
               <div>
                 <div class="school-name">${s.name}</div>
                 <div class="school-meta">${s.phase || '—'} · ${s.academic_year || '—'}</div>
               </div>
-              <div style="color:#0D7377;font-weight:700;font-size:13px;">View SOAP →</div>
-            </a>
+              <div style="display:flex;align-items:center;gap:10px;">
+                <select id="packageSelect-${s.id}" style="font-family:Arial,Helvetica,sans-serif;font-size:13px;padding:8px 10px;border:1px solid #DCE3EA;border-radius:6px;min-width:260px;">
+                  ${AMEND_PACKAGE_OPTIONS_LIST.map(o => `<option${o === s.package_tier ? ' selected' : ''}>${o}</option>`).join('')}
+                </select>
+                <button type="button" class="save-amend-btn" onclick="savePackageTier('${s.id}')" id="packageSaveBtn-${s.id}">Save</button>
+              </div>
+            </div>
           `).join('')}
         </div>
       `;
@@ -604,8 +670,6 @@
       content.innerHTML = '<div class="status-msg">No schools have submitted a School Setup yet.</div>';
       return;
     }
-
-    const bySchool = (rows, id) => (rows || []).filter(r => r.school_id === id);
 
     let html = '';
     schools.forEach(s => {
@@ -957,6 +1021,7 @@
   const AMEND_SCHOOL_TYPE_OPTIONS = ['Academy Converter', 'Academy Sponsor-Led', 'Free School', 'Maintained School', 'Voluntary Aided', 'Voluntary Controlled', 'Foundation School', 'Independent School', 'Special School', 'Alternative Provision'];
   const AMEND_PHASE_OPTIONS = ['Primary', 'Secondary', 'All-Through', 'Infant', 'Junior', 'Middle School', 'Sixth Form College', 'Special', 'Alternative Provision'];
   const AMEND_ACADEMIC_YEAR_OPTIONS = ['2024/25', '2025/26', '2026/27', '2027/28', '2028/29'];
+  const AMEND_PACKAGE_OPTIONS = ['IDSR Intelligence Summary', 'IDSR Intelligence Summary + Dashboard', 'SOAP Performance Summary', 'SOAP Performance Suite'];
   const AMEND_INSPECTION_TYPE_OPTIONS = ['Section 5', 'Section 8', 'Monitoring Visit', 'No Inspection Under New Framework'];
   const AMEND_CONTACT_ROLES = ['Headteacher', "Headteacher's PA", 'Data Lead', 'Data Manager', 'DSL', 'SENDCo', 'Business Manager', 'Office Manager', 'Chair of Governors', 'School Improvement Partner'];
   const AMEND_OFSTED_AREAS = [
@@ -1006,9 +1071,79 @@
     html += field('Number on Roll', `amendNumberOnRoll-${schoolId}`, s.number_on_roll, 'number');
     html += field('PAN', `amendPan-${schoolId}`, s.pan, 'number');
     html += selectField('Academic Year', `amendAcademicYear-${schoolId}`, AMEND_ACADEMIC_YEAR_OPTIONS, s.academic_year);
+    html += selectField('Package', `amendPackage-${schoolId}`, AMEND_PACKAGE_OPTIONS, s.package_tier);
     html += '</div></div></div>';
     html += `<div><button type="button" class="save-amend-btn" onclick="saveAmendInfo('${schoolId}')">Save School Information Changes</button></div>`;
     return html;
+  }
+
+  // Publishes a school's SOAP directly from the Admin SOAPs list, without
+  // needing to click through to the live page first. Loads that school's real
+  // soap-page.html in a hidden iframe (reusing all its actual snapshot logic),
+  // waits for it to signal it's ready, sets the chosen period to match what
+  // was picked here, then calls its own publishSoap() function directly —
+  // same-origin, so this is a normal function call, not a message-passing dance.
+  async function adminPublishSoap(schoolId, schoolName) {
+    const period = document.getElementById(`adminPublishPeriod-${schoolId}`).value;
+    const btn = document.getElementById(`adminPublishBtn-${schoolId}`);
+    const note = document.getElementById(`adminPublishNote-${schoolId}`);
+    btn.disabled = true;
+    btn.textContent = 'Publishing…';
+    note.style.color = '#5A6B80';
+    note.textContent = 'Loading the live SOAP…';
+
+    const frame = document.getElementById('adminPublishFrame');
+    frame.src = `soap-page.html?school_id=${schoolId}`;
+
+    const TIMEOUT_MS = 20000;
+    const start = Date.now();
+    try {
+      await new Promise((resolve, reject) => {
+        const check = () => {
+          let ready = false;
+          try { ready = frame.contentWindow && frame.contentWindow.soapPageReady; } catch (e) { /* not loaded yet */ }
+          if (ready) { resolve(); return; }
+          if (Date.now() - start > TIMEOUT_MS) { reject(new Error('Timed out waiting for the SOAP page to load.')); return; }
+          setTimeout(check, 200);
+        };
+        check();
+      });
+
+      const win = frame.contentWindow;
+      const doc = frame.contentDocument;
+      if (!win.publishSoap || !doc.getElementById('publishPeriodSelect')) {
+        throw new Error('This school\'s SOAP page did not offer a Publish control — check you\'re logged in as admin.');
+      }
+      doc.getElementById('publishPeriodSelect').value = period;
+      await win.publishSoap();
+
+      note.style.color = '#0D7377';
+      note.textContent = `Published "${period}" for ${schoolName} — now visible in their Headteacher's View My SOAP list.`;
+    } catch (err) {
+      note.style.color = '#B3261E';
+      note.textContent = 'Publish failed: ' + err.message;
+      console.error(err);
+    } finally {
+      frame.src = 'about:blank';
+      btn.disabled = false;
+      btn.textContent = 'Publish SOAP';
+    }
+  }
+
+  async function savePackageTier(schoolId) {
+    const select = document.getElementById(`packageSelect-${schoolId}`);
+    const btn = document.getElementById(`packageSaveBtn-${schoolId}`);
+    btn.disabled = true;
+    btn.textContent = 'Saving…';
+    const { error } = await sb.from('schools').update({ package_tier: select.value }).eq('id', schoolId);
+    if (error) {
+      showAmendToast('⚠ Save failed — see browser console', true);
+      console.error(error);
+    } else {
+      showAmendToast('✓ Package saved');
+    }
+    btn.disabled = false;
+    btn.textContent = 'Save';
   }
 
   async function saveAmendInfo(schoolId) {
@@ -1023,7 +1158,8 @@
       phase: val(`amendPhase-${schoolId}`),
       number_on_roll: num(`amendNumberOnRoll-${schoolId}`),
       pan: num(`amendPan-${schoolId}`),
-      academic_year: val(`amendAcademicYear-${schoolId}`)
+      academic_year: val(`amendAcademicYear-${schoolId}`),
+      package_tier: val(`amendPackage-${schoolId}`)
     };
     const { error } = await sb.from('schools').update(payload).eq('id', schoolId);
     if (error) { showAmendToast('⚠ Save failed — see browser console', true); console.error(error); return; }

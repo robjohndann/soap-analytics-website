@@ -18,6 +18,7 @@
   .nav-social-link:hover { background: rgba(13,43,78,0.2); }
   .nav-logo span { font-weight: 400; font-size: 20px; }
   .nav-links { display: flex; gap: 14px; list-style: none; align-items: center; flex-shrink: 0; }
+  .nav-social-mobile { display: none; }
   .nav-links > li { flex-shrink: 0; }
   .nav-links > li > a { color: #0D2B4E; text-decoration: none; font-size: 14px; font-weight: 500; transition: color 0.2s; white-space: nowrap; }
   .nav-links > li > a:hover { color: #fff; }
@@ -189,6 +190,9 @@
     .nav-links.mobile-open > li > a { display: block; padding: 14px 24px; color: #fff; font-size: 15px; }
     .nav-links.mobile-open > li > a:hover { color: #3DCFB8; }
     .nav-links.mobile-open .nav-cta { margin: 8px 24px; text-align: center; }
+    .nav-social-mobile { display: flex !important; gap: 14px; padding: 14px 24px; }
+    .nav-social-mobile .nav-social-link { background: rgba(255,255,255,0.12); color: #fff; }
+    .nav-social-mobile .nav-social-link:hover { background: rgba(255,255,255,0.25); }
     .nav-links.mobile-open .nav-login-btn { margin: 8px 24px; text-align: center; }
     .nav-links.mobile-open .nav-register-btn { margin: 8px 24px; text-align: center; }
     .nav-links.mobile-open .nav-dropdown { position: static; }
@@ -213,6 +217,14 @@
     <span></span><span></span><span></span>
   </button>
   <ul class="nav-links" id="navLinks">
+    <li class="nav-social-mobile">
+      <a href="https://www.linkedin.com/in/robjohndann" target="_blank" rel="noopener" aria-label="Connect on LinkedIn" class="nav-social-link">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M20.45 20.45h-3.56v-5.57c0-1.33-.02-3.03-1.85-3.03-1.85 0-2.14 1.45-2.14 2.94v5.66H9.34V9h3.42v1.56h.05c.48-.9 1.64-1.85 3.38-1.85 3.6 0 4.27 2.37 4.27 5.46v6.28zM5.34 7.43a2.07 2.07 0 1 1 0-4.13 2.07 2.07 0 0 1 0 4.13zM7.12 20.45H3.56V9h3.56v11.45z"/></svg>
+      </a>
+      <a href="https://wa.me/447800634215" target="_blank" rel="noopener" aria-label="Message on WhatsApp" class="nav-social-link">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M12.04 2C6.58 2 2.13 6.45 2.13 11.91c0 1.75.46 3.45 1.32 4.95L2.05 22l5.25-1.38a9.9 9.9 0 0 0 4.74 1.2h.01c5.46 0 9.9-4.45 9.9-9.91 0-2.65-1.03-5.13-2.9-7C17.18 3.03 14.69 2 12.04 2zm5.8 14.15c-.24.68-1.4 1.3-1.94 1.38-.5.08-1.12.11-1.8-.11-.42-.13-.95-.31-1.64-.6-2.88-1.24-4.76-4.13-4.9-4.32-.14-.19-1.17-1.55-1.17-2.96s.73-2.1 1-2.39c.26-.28.56-.35.75-.35s.38 0 .54.01c.18.01.4-.07.63.48.24.58.8 2 .87 2.14.07.14.12.31.02.5-.09.19-.14.31-.28.48-.14.16-.29.36-.42.48-.14.13-.28.28-.12.55.16.27.71 1.17 1.52 1.9 1.05.94 1.93 1.23 2.2 1.37.26.14.42.11.58-.07.16-.19.68-.79.86-1.06.18-.27.35-.22.6-.13.24.09 1.53.72 1.79.85.26.13.44.19.5.3.06.11.06.63-.18 1.3z"/></svg>
+      </a>
+    </li>
     <li class="nav-dropdown">
       <a href="#" id="platformBtn" onclick="toggleDropdown(event, 'platformMenu');">Platform Demonstration ▾</a>
       <ul class="dropdown-menu" id="platformMenu">

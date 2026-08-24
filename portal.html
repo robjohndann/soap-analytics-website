@@ -9,11 +9,10 @@
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
     font-family: Arial, Helvetica, sans-serif;
-    background: #F0F4F8;
+    background: #1B2A4A;
     min-height: 100vh;
   }
 
-  /* RIBBON */
   header {
     background: #1B2A4A;
     color: #fff;
@@ -22,59 +21,66 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
   }
-  .ribbon-left { display: flex; align-items: center; gap: 24px; }
-  .brand { font-weight: 700; font-size: 15px; white-space: nowrap; }
-  .brand span { color: #3DCFB8; }
-
-  .school-id { font-size: 13px; color: rgba(255,255,255,0.85); border-left: 1px solid rgba(255,255,255,0.2); padding-left: 24px; }
-  .school-id .name { font-weight: 700; color: #fff; }
-  .school-id .role { color: #3DCFB8; }
-
-  .nav-dropdown { position: relative; }
-  .nav-dropdown > a {
-    color: #fff; text-decoration: none; font-size: 13px; font-weight: 600;
-    cursor: pointer; display: flex; align-items: center; gap: 4px;
-  }
-  .dropdown-menu {
-    display: none;
-    position: absolute;
-    top: 32px;
-    left: 0;
-    background: #fff;
-    border-radius: 8px;
-    box-shadow: 0 8px 24px rgba(0,0,0,0.15);
-    min-width: 180px;
-    padding: 6px 0;
-    list-style: none;
-    z-index: 50;
-  }
-  .dropdown-menu.open { display: block; }
-  .dropdown-menu li a {
-    display: block;
-    padding: 10px 16px;
-    color: #1B2A4A;
-    text-decoration: none;
-    font-size: 13px;
-  }
-  .dropdown-menu li a:hover { background: #F0F4F8; color: #0D7377; }
-
+  .ribbon-left { display: flex; align-items: center; gap: 20px; }
   .logout-link { color: rgba(255,255,255,0.7); text-decoration: none; font-size: 13px; }
   .logout-link:hover { color: #fff; }
+  .admin-link { color: #3DCFB8; text-decoration: none; font-size: 13px; font-weight: 600; }
 
-  .wrap { max-width: 700px; margin: 60px auto; padding: 0 20px; text-align: center; }
-  .status-card {
-    background: #fff;
-    border-radius: 12px;
-    padding: 40px 30px;
-    box-shadow: 0 4px 20px rgba(0,0,0,0.06);
-  }
-  .status-card h1 { color: #1B2A4A; font-size: 22px; margin-bottom: 12px; }
+  .wrap { max-width: 560px; margin: 0 auto; padding: 40px 20px 60px; }
+  .eyebrow { color: #3DCFB8; font-size: 11px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; text-align: center; margin-bottom: 6px; }
+  .greeting { color: #fff; font-size: 18px; text-align: center; margin-bottom: 28px; }
+  .greeting strong { color: #3DCFB8; }
+
+  .status-card { background: #fff; border-radius: 12px; padding: 32px 24px; text-align: center; }
+  .status-card h1 { color: #1B2A4A; font-size: 20px; margin-bottom: 10px; }
   .status-card p { color: #5A6B80; font-size: 14px; line-height: 1.6; }
-  .loading { color: #5A6B80; font-size: 14px; }
+  .loading { color: #5A6B80; font-size: 14px; text-align: center; }
+
+  .accordion { display: flex; flex-direction: column; gap: 10px; }
+  .bar {
+    width: 100%; background: #0D7377; color: #fff; border: none; border-radius: 8px;
+    padding: 16px 20px; display: flex; align-items: center; justify-content: space-between;
+    cursor: pointer; font-family: inherit; text-align: left;
+  }
+  .bar.locked { background: #5A6B80; opacity: 0.85; cursor: not-allowed; }
+  .bar-label { font-size: 15px; font-weight: 700; }
+  .bar-right { display: flex; align-items: center; gap: 10px; }
+  .badge { font-size: 11px; font-weight: 700; padding: 3px 10px; border-radius: 10px; background: rgba(255,255,255,0.18); }
+  .badge.live { background: #3DCFB8; color: #0D2B4E; }
+  .chev { transition: transform 0.2s; }
+  .chev.open { transform: rotate(180deg); }
+  .panel {
+    background: rgba(255,255,255,0.04); border: 1px solid rgba(61,207,184,0.3); border-top: none;
+    border-radius: 0 0 8px 8px; padding: 14px 20px; display: none;
+  }
+  .panel.open { display: block; }
+  .form-row {
+    background: #0D2B4E; border-radius: 6px; padding: 10px 14px; margin-bottom: 6px;
+    display: flex; align-items: center; justify-content: space-between; text-decoration: none;
+  }
+  .form-row:last-child { margin-bottom: 0; }
+  .form-row span.name { color: #fff; font-size: 14px; }
+  .pct-badge { color: #fff; font-size: 11px; font-weight: 700; padding: 2px 9px; border-radius: 9px; }
+  .soap-row { cursor: pointer; }
+  .soap-name { color: #fff; font-size: 14px; font-weight: 700; display: block; }
+  .soap-date { color: rgba(255,255,255,0.5); font-size: 12px; }
+  .locked-note { text-align: center; font-size: 12px; color: rgba(255,255,255,0.6); margin-top: 6px; }
+  .empty-note { color: rgba(255,255,255,0.6); font-size: 13px; text-align: center; padding: 8px 0; }
+
+  .modal-overlay {
+    display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.6); z-index: 1000; align-items: center; justify-content: center; padding: 20px;
+  }
+  .modal-overlay.open { display: flex; }
+  .modal-box { background: #fff; border-radius: 12px; width: 100%; max-width: 1300px; height: 90vh; display: flex; flex-direction: column; overflow: hidden; }
+  .modal-header { background: #1B2A4A; color: #fff; padding: 12px 20px; display: flex; justify-content: space-between; align-items: center; }
+  .modal-close { background: none; border: none; color: #fff; font-size: 20px; cursor: pointer; }
+  .modal-box iframe { flex: 1; border: none; width: 100%; }
 
   @media (max-width: 700px) {
-    .school-id { display: none; }
+    .wrap { padding: 24px 16px 40px; }
   }
 </style>
 </head>
@@ -83,21 +89,24 @@
 <header>
   <div class="ribbon-left">
     <a href="index.html"><img src="images/logo-navy.png" alt="SOAP Analytics" style="height:36px;width:auto;border-radius:6px;display:block;"></a>
-    <span class="school-id" id="schoolIdBadge" style="display:none;">
-      <span class="name" id="schoolNameLabel"></span> — <span class="role" id="roleLabel"></span>
-    </span>
-    <div class="nav-dropdown" id="formsDropdown" style="display:none;">
-      <a onclick="toggleMenu(event);">Data Entry Forms ▾</a>
-    <ul class="dropdown-menu" id="formsMenu"></ul>
-    </div>
-    <a href="admin.html" id="adminLink" style="display:none;color:#3DCFB8;text-decoration:none;font-size:13px;font-weight:600;">Admin Dashboard →</a>
+    <a href="admin.html" id="adminLink" class="admin-link" style="display:none;">Admin Dashboard →</a>
   </div>
   <a href="#" class="logout-link" onclick="logout(event);">Log out</a>
 </header>
 
 <div class="wrap">
-  <div class="status-card" id="statusCard">
+  <div id="statusArea">
     <p class="loading">Checking your login…</p>
+  </div>
+</div>
+
+<div class="modal-overlay" id="soapModal">
+  <div class="modal-box">
+    <div class="modal-header">
+      <span id="soapModalTitle">SOAP</span>
+      <button type="button" class="modal-close" onclick="closeSoapModal();">×</button>
+    </div>
+    <iframe id="soapModalFrame"></iframe>
   </div>
 </div>
 
@@ -106,15 +115,162 @@
   const SUPABASE_KEY = 'sb_publishable_2CTGR0PKyRPpSk59lcr3sA_hvvUDX97';
   const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
-  function toggleMenu(e) {
-    e.preventDefault();
-    document.getElementById('formsMenu').classList.toggle('open');
+  const CONTEXT_PERIODS = ['AUT1 26', 'AUT2 26', 'SPR1 27', 'SPR2 27', 'SUM1 27', 'SUM2 27'];
+  const PERIOD_TO_REPORTING_NAME = {
+    'AUT1 26': 'Autumn 1', 'AUT2 26': 'Autumn 2',
+    'SPR1 27': 'Spring 1', 'SPR2 27': 'Spring 2',
+    'SUM1 27': 'Summer 1', 'SUM2 27': 'Summer 2'
+  };
+  const ALL_YEAR_GROUPS = ['EYFS','Y1','Y2','Y3','Y4','Y5','Y6','Y7','Y8','Y9','Y10','Y11','Y12','Y13'];
+  const PHASE_YEAR_GROUPS = {
+    'Primary': ['EYFS','Y1','Y2','Y3','Y4','Y5','Y6'],
+    'Infant': ['EYFS','Y1','Y2'],
+    'Junior': ['Y3','Y4','Y5','Y6'],
+    'Secondary': ['Y7','Y8','Y9','Y10','Y11','Y12','Y13'],
+    'Sixth Form College': ['Y12','Y13']
+  };
+
+  // Package tier -> which sections are unlocked. Anything not matching one of
+  // these four exact names (e.g. old test data, or a school never assigned a
+  // package yet) falls through to everything locked, which is the safe default.
+  const PACKAGE_FEATURES = {
+    'IDSR Intelligence Summary': { soap: false, soapDashboard: false, idsrSoap: true, idsrDashboard: false },
+    'IDSR Intelligence Summary + Dashboard': { soap: false, soapDashboard: false, idsrSoap: true, idsrDashboard: true },
+    'SOAP Performance Summary': { soap: true, soapDashboard: false, idsrSoap: true, idsrDashboard: true },
+    'SOAP Performance Suite': { soap: true, soapDashboard: true, idsrSoap: true, idsrDashboard: true }
+  };
+  function featuresFor(packageTier) {
+    return PACKAGE_FEATURES[packageTier] || { soap: false, soapDashboard: false, idsrSoap: false, idsrDashboard: false };
   }
-  document.addEventListener('click', function(e) {
-    if (!e.target.closest('.nav-dropdown')) {
-      document.getElementById('formsMenu').classList.remove('open');
-    }
-  });
+
+  function calcLockedPeriods(schoolReportingPeriods) {
+    const today = new Date();
+    const lockedPeriods = {};
+    CONTEXT_PERIODS.forEach(p => {
+      const reportingName = PERIOD_TO_REPORTING_NAME[p];
+      const match = (schoolReportingPeriods || []).find(r => r.period_name === reportingName);
+      lockedPeriods[p] = !(match && match.start_date) || (new Date(match.start_date) > today);
+    });
+    return lockedPeriods;
+  }
+
+  function contextCompletion(school, schoolReportingPeriods, contextRows) {
+    const yearGroups = PHASE_YEAR_GROUPS[school.phase] || ALL_YEAR_GROUPS;
+    const sections = [
+      { rows: ['Number on Roll', 'PAN'], hasPan: false },
+      { rows: yearGroups, hasPan: true },
+      { rows: ['Boys %', 'FSM %', 'Pupil Premium %', 'Mobility %'], hasPan: false },
+      { rows: ['Number of Teachers', 'Number of Support Staff', 'Number of SLT', 'Number of ECTs', 'Number of UPS Teachers'], hasPan: false }
+    ];
+    const lockedPeriods = calcLockedPeriods(schoolReportingPeriods);
+    let total = 0;
+    sections.forEach(section => {
+      section.rows.forEach(() => {
+        CONTEXT_PERIODS.forEach(p => { if (!lockedPeriods[p]) total++; });
+        if (section.hasPan) total++;
+      });
+    });
+    const filled = (contextRows || []).length;
+    const pct = total ? Math.round((Math.min(filled, total) / total) * 100) : 0;
+    return pct;
+  }
+
+  function schoolInfoCompletion(s) {
+    const fields = [s.urn, s.school_type, s.number_on_roll, s.pan, s.person_responsible];
+    const filled = fields.filter(f => f !== null && f !== undefined && f !== '').length;
+    return Math.round((filled / fields.length) * 100);
+  }
+
+  function safeguardingCompletion(schoolReportingPeriods, rows) {
+    const lockedPeriods = calcLockedPeriods(schoolReportingPeriods);
+    let total = 0;
+    CONTEXT_PERIODS.forEach(p => { if (!lockedPeriods[p]) total += 5; });
+    total += 3 * 2;
+    total += 1;
+    const filled = (rows || []).length;
+    return total ? Math.round((Math.min(filled, total) / total) * 100) : 0;
+  }
+
+  function inclusionCompletion(schoolReportingPeriods, rows) {
+    const lockedPeriods = calcLockedPeriods(schoolReportingPeriods);
+    let total = 0;
+    CONTEXT_PERIODS.forEach(p => { if (!lockedPeriods[p]) total += 5; });
+    total += 6; total += 4; total += 1;
+    const filled = (rows || []).length;
+    return total ? Math.round((Math.min(filled, total) / total) * 100) : 0;
+  }
+
+  function curriculumCompletion(rows) {
+    const total = 12 + 1;
+    const filled = (rows || []).length;
+    return Math.round((Math.min(filled, total) / total) * 100);
+  }
+
+  function achievementCompletion(assessmentSetupRows, rows) {
+    const planned = (name) => {
+      const row = (assessmentSetupRows || []).find(a => a.assessment_name === name);
+      return row ? row.planned === 'Yes' : false;
+    };
+    const gcseCols = 4 + (planned('Year 11 PPE 1') ? 1 : 0) + (planned('Year 11 PPE 2') ? 1 : 0) + 1;
+    const post16Cols = 4 + (planned('Year 13 PPE 1') ? 1 : 0) + (planned('Year 13 PPE 2') ? 1 : 0) + 1;
+    let total = 4;
+    total += 10 * gcseCols;
+    total -= 4;
+    total += 8 * post16Cols;
+    total += 1;
+    const filled = (rows || []).length;
+    return total ? Math.round((Math.min(filled, total) / total) * 100) : 0;
+  }
+
+  function pdwCompletion(rows) {
+    let total = 6*4 + 6*3 + 7*3 + 6*3 + 8 + 1;
+    const filled = (rows || []).length;
+    return Math.round((Math.min(filled, total) / total) * 100);
+  }
+
+  function leadershipCompletion(rows) {
+    const total = 7 + 1;
+    const filled = (rows || []).length;
+    return Math.round((Math.min(filled, total) / total) * 100);
+  }
+
+  function financeCompletion(rows) {
+    const total = 5*3 + 6*3 + 3*6 + 5 + 1;
+    const filled = (rows || []).length;
+    return Math.round((Math.min(filled, total) / total) * 100);
+  }
+
+  function attendanceCompletion(schoolReportingPeriods, rows) {
+    const lockedPeriods = calcLockedPeriods(schoolReportingPeriods);
+    let total = 0;
+    CONTEXT_PERIODS.forEach(p => { if (!lockedPeriods[p]) total += 24; });
+    total += 1;
+    const filled = (rows || []).length;
+    return total ? Math.round((Math.min(filled, total) / total) * 100) : 0;
+  }
+
+  function pctColor(pct) {
+    if (pct >= 90) return '#1D9E75';
+    if (pct >= 50) return '#EF9F27';
+    return '#D85A30';
+  }
+
+  function toggleAccordion(id) {
+    const bar = document.getElementById('bar-' + id);
+    if (bar.classList.contains('locked')) return;
+    document.getElementById('panel-' + id).classList.toggle('open');
+    document.getElementById('chev-' + id).classList.toggle('open');
+  }
+
+  function openSoapModal(title, htmlContent) {
+    document.getElementById('soapModalTitle').textContent = title;
+    document.getElementById('soapModalFrame').srcdoc = htmlContent;
+    document.getElementById('soapModal').classList.add('open');
+  }
+  function closeSoapModal() {
+    document.getElementById('soapModal').classList.remove('open');
+    document.getElementById('soapModalFrame').srcdoc = '';
+  }
 
   async function logout(e) {
     if (e) e.preventDefault();
@@ -122,109 +278,211 @@
     window.location.href = 'login.html';
   }
 
+  const FORM_ACCESS = {
+    'Headteacher': [
+      { label: 'School Setup', href: 'school-setup-form.html', key: 'schoolSetup' },
+      { label: 'Context', href: 'context-form.html', key: 'context' },
+      { label: 'Safeguarding', href: 'safeguarding-form.html', key: 'safeguarding' },
+      { label: 'Inclusion', href: 'inclusion-form.html', key: 'inclusion' },
+      { label: 'Attendance & Behaviour', href: 'attendance-form.html', key: 'attendance' },
+      { label: 'Curriculum & Teaching', href: 'curriculum-form.html', key: 'curriculum' },
+      { label: 'Achievement', href: 'achievement-form.html', key: 'achievement' },
+      { label: 'PDW', href: 'pdw-form.html', key: 'pdw' },
+      { label: 'Leadership & Governance', href: 'leadership-form.html', key: 'leadership' },
+      { label: 'Finance & Resources', href: 'finance-form.html', key: 'finance' }
+    ],
+    'Context': [{ label: 'Context', href: 'context-form.html', key: 'context' }],
+    'Safeguarding': [{ label: 'Safeguarding', href: 'safeguarding-form.html', key: 'safeguarding' }],
+    'Inclusion': [{ label: 'Inclusion', href: 'inclusion-form.html', key: 'inclusion' }],
+    'Curriculum & Teaching': [{ label: 'Curriculum & Teaching', href: 'curriculum-form.html', key: 'curriculum' }],
+    'Attendance & Behaviour': [{ label: 'Attendance & Behaviour', href: 'attendance-form.html', key: 'attendance' }],
+    'Achievement': [{ label: 'Achievement', href: 'achievement-form.html', key: 'achievement' }],
+    'PDW': [{ label: 'PDW', href: 'pdw-form.html', key: 'pdw' }],
+    'Leadership & Governance': [{ label: 'Leadership & Governance', href: 'leadership-form.html', key: 'leadership' }],
+    'Finance & Resources': [{ label: 'Finance & Resources', href: 'finance-form.html', key: 'finance' }]
+  };
+
+  function lockedBar(id, label) {
+    return `
+      <div>
+        <button type="button" class="bar locked" id="bar-${id}">
+          <span class="bar-label">${label}</span>
+          <span class="bar-right"><span class="badge">🔒 Locked</span></span>
+        </button>
+        <div class="locked-note">Not included in your current package — contact us to upgrade.</div>
+      </div>`;
+  }
+
   async function checkLogin() {
-    const card = document.getElementById('statusCard');
+    const statusArea = document.getElementById('statusArea');
     const { data: { session } } = await sb.auth.getSession();
 
     if (!session) {
-      card.innerHTML = '<h1>Not logged in</h1><p>Please <a href="login.html">log in</a> to access the portal.</p>';
+      statusArea.innerHTML = '<div class="status-card"><h1>Not logged in</h1><p>Please <a href="login.html">log in</a> to access the portal.</p></div>';
       return;
     }
 
     const email = session.user.email;
 
-    const { data: adminRow } = await sb
-      .from('admins').select('auth_user_id').eq('auth_user_id', session.user.id).maybeSingle();
-    if (adminRow) {
-      document.getElementById('adminLink').style.display = '';
-    }
+    const { data: adminRow } = await sb.from('admins').select('auth_user_id').eq('auth_user_id', session.user.id).maybeSingle();
+    if (adminRow) document.getElementById('adminLink').style.display = '';
 
-    const { data: linkRow, error: linkError } = await sb
-      .from('school_users')
-      .select('school_id, role')
-      .eq('auth_user_id', session.user.id)
-      .maybeSingle();
+    const { data: linkRow } = await sb.from('school_users').select('school_id, role').eq('auth_user_id', session.user.id).maybeSingle();
 
-    if (linkError || !linkRow) {
+    if (!linkRow) {
       if (adminRow) {
-        card.innerHTML = `
-          <h1>Welcome back, Admin</h1>
-          <p>You're logged in as <strong>${email}</strong> with admin access.</p>
-          <p style="margin-top:16px;">Use <strong>Admin Dashboard</strong> in the top bar to see every school's submitted data.</p>`;
+        statusArea.innerHTML = `<div class="status-card"><h1>Welcome back, Admin</h1><p>You're logged in as <strong>${email}</strong> with admin access.</p><p style="margin-top:16px;">Use <strong>Admin Dashboard</strong> in the top bar to see every school's submitted data.</p></div>`;
       } else {
-        card.innerHTML = `
-          <h1>You're logged in as ${email}</h1>
-          <p>Your login is working correctly, but it isn't linked to a school yet.
-          Use Data Entry Forms → School Setup above to get started.</p>`;
+        statusArea.innerHTML = `<div class="status-card"><h1>You're logged in as ${email}</h1><p>Your login is working correctly, but it isn't linked to a school yet. Contact your admin to get set up.</p></div>`;
       }
       return;
     }
 
-    const { data: school } = await sb
-      .from('schools')
-      .select('name')
-      .eq('id', linkRow.school_id)
-      .maybeSingle();
-
-    const schoolName = school ? school.name : 'Your school';
-
-    document.getElementById('schoolNameLabel').textContent = schoolName;
-    document.getElementById('roleLabel').textContent = linkRow.role || 'User';
-    document.getElementById('schoolIdBadge').style.display = '';
-
-    // Which forms this role is allowed to see, matching the database rules
-    const FORM_ACCESS = {
-      'Headteacher': [
-        { label: 'School Setup', href: 'school-setup-form.html' },
-        { label: 'Context', href: 'context-form.html' },
-        { label: 'Safeguarding', href: 'safeguarding-form.html' },
-        { label: 'Inclusion', href: 'inclusion-form.html' },
-        { label: 'Attendance & Behaviour', href: 'attendance-form.html' },
-        { label: 'Curriculum & Teaching', href: 'curriculum-form.html' },
-        { label: 'Achievement', href: 'achievement-form.html' },
-        { label: 'PDW', href: 'pdw-form.html' },
-        { label: 'Leadership & Governance', href: 'leadership-form.html' },
-        { label: 'Finance & Resources', href: 'finance-form.html' }
-      ],
-      'Context': [
-        { label: 'Context', href: 'context-form.html' }
-      ],
-      'Safeguarding': [
-        { label: 'Safeguarding', href: 'safeguarding-form.html' }
-      ],
-      'Inclusion': [
-        { label: 'Inclusion', href: 'inclusion-form.html' }
-      ],
-      'Curriculum & Teaching': [
-        { label: 'Curriculum & Teaching', href: 'curriculum-form.html' }
-      ],
-      'Attendance & Behaviour': [
-        { label: 'Attendance & Behaviour', href: 'attendance-form.html' }
-      ],
-      'Achievement': [
-        { label: 'Achievement', href: 'achievement-form.html' }
-      ],
-      'PDW': [
-        { label: 'PDW', href: 'pdw-form.html' }
-      ],
-      'Leadership & Governance': [
-        { label: 'Leadership & Governance', href: 'leadership-form.html' }
-      ],
-      'Finance & Resources': [
-        { label: 'Finance & Resources', href: 'finance-form.html' }
-      ]
-    };
     const availableForms = FORM_ACCESS[linkRow.role] || [];
-    const menu = document.getElementById('formsMenu');
-    menu.innerHTML = availableForms.length
-      ? availableForms.map(f => `<li><a href="${f.href}">${f.label}</a></li>`).join('')
-      : '<li style="padding:10px 16px;color:#5A6B80;font-size:13px;">No forms assigned</li>';
-    document.getElementById('formsDropdown').style.display = '';
 
-    card.innerHTML = `
-      <h1>Welcome back</h1>
-      <p>You're logged in as <strong>${email}</strong>.</p>
-      <p style="margin-top:16px;">Use <strong>Data Entry Forms</strong> in the top bar to update your school's information.</p>`;
+    const [
+      schoolRes, periodsRes, contextRes, safeguardingRes, inclusionRes, curriculumRes,
+      achievementRes, assessRes, attendanceRes, pdwRes, leadershipRes, financeRes, publishedRes
+    ] = await Promise.all([
+      sb.from('schools').select('*').eq('id', linkRow.school_id).maybeSingle(),
+      sb.from('reporting_periods').select('*').eq('school_id', linkRow.school_id),
+      sb.from('context_data').select('*').eq('school_id', linkRow.school_id),
+      sb.from('safeguarding_data').select('*').eq('school_id', linkRow.school_id),
+      sb.from('inclusion_data').select('*').eq('school_id', linkRow.school_id),
+      sb.from('curriculum_data').select('*').eq('school_id', linkRow.school_id),
+      sb.from('achievement_data').select('*').eq('school_id', linkRow.school_id),
+      sb.from('assessment_setup').select('*').eq('school_id', linkRow.school_id),
+      sb.from('attendance_data').select('*').eq('school_id', linkRow.school_id),
+      sb.from('pdw_data').select('*').eq('school_id', linkRow.school_id),
+      sb.from('leadership_governance_data').select('*').eq('school_id', linkRow.school_id),
+      sb.from('finance_data').select('*').eq('school_id', linkRow.school_id),
+      sb.from('published_soaps').select('*').eq('school_id', linkRow.school_id).order('published_at', { ascending: false })
+    ]);
+
+    const school = schoolRes.data || {};
+    const periods = periodsRes.data || [];
+    const features = featuresFor(school.package_tier);
+
+    const PCT = {
+      schoolSetup: schoolInfoCompletion(school),
+      context: contextCompletion(school, periods, contextRes.data),
+      safeguarding: safeguardingCompletion(periods, safeguardingRes.data),
+      inclusion: inclusionCompletion(periods, inclusionRes.data),
+      attendance: attendanceCompletion(periods, attendanceRes.data),
+      curriculum: curriculumCompletion(curriculumRes.data),
+      achievement: achievementCompletion(assessRes.data, achievementRes.data),
+      pdw: pdwCompletion(pdwRes.data),
+      leadership: leadershipCompletion(leadershipRes.data),
+      finance: financeCompletion(financeRes.data)
+    };
+
+    const isHeadteacher = linkRow.role === 'Headteacher';
+    const publishedSoaps = publishedRes.data || [];
+
+    let accordionHtml = `
+      <div>
+        <button type="button" class="bar" id="bar-forms" onclick="toggleAccordion('forms');">
+          <span class="bar-label">Data Entry Forms</span>
+          <span class="bar-right">
+            <i class="chev" id="chev-forms">▾</i>
+          </span>
+        </button>
+        <div class="panel open" id="panel-forms">
+          ${availableForms.map(f => `
+            <a class="form-row" href="${f.href}">
+              <span class="name">${f.label}</span>
+              <span class="pct-badge" style="background:${pctColor(PCT[f.key] || 0)};">${PCT[f.key] || 0}%</span>
+            </a>
+          `).join('')}
+        </div>
+      </div>`;
+
+    if (isHeadteacher) {
+      // View My SOAP
+      if (features.soap) {
+        accordionHtml += `
+        <div>
+          <button type="button" class="bar" id="bar-soap" onclick="toggleAccordion('soap');">
+            <span class="bar-label">View My SOAP</span>
+            <span class="bar-right">
+              <span class="badge live">${publishedSoaps.length} published</span>
+              <i class="chev" id="chev-soap">▾</i>
+            </span>
+          </button>
+          <div class="panel" id="panel-soap">
+            ${publishedSoaps.length
+              ? publishedSoaps.map((p, idx) => `
+                <div class="form-row soap-row" onclick='openSoapModal(${JSON.stringify(p.period_label)}, document.getElementById("soap-html-${p.id}").textContent)'>
+                  <span>
+                    <span class="soap-name">${p.period_label}</span>
+                    <span class="soap-date">Published ${new Date(p.published_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</span>
+                  </span>
+                  ${idx === 0 ? '<span class="badge live">Latest</span>' : ''}
+                </div>
+                <script type="text/plain" id="soap-html-${p.id}">${p.html_content.replace(/<\/script>/g, '<\\/script>')}<\/script>
+              `).join('')
+              : '<div class="empty-note">No SOAPs have been published for your school yet.</div>'
+            }
+          </div>
+        </div>`;
+      } else {
+        accordionHtml += lockedBar('soap', 'View My SOAP');
+      }
+
+      // SOAP Dashboard
+      if (features.soapDashboard) {
+        accordionHtml += `
+        <div>
+          <button type="button" class="bar" id="bar-soapdash" onclick="toggleAccordion('soapdash');">
+            <span class="bar-label">SOAP Dashboard</span>
+            <span class="bar-right"><span class="badge live">Live</span><i class="chev" id="chev-soapdash">▾</i></span>
+          </button>
+          <div class="panel" id="panel-soapdash">
+            <div class="empty-note">SOAP Dashboard content — to be built.</div>
+          </div>
+        </div>`;
+      } else {
+        accordionHtml += lockedBar('soapdash', 'SOAP Dashboard');
+      }
+
+      // IDSR SOAP
+      if (features.idsrSoap) {
+        accordionHtml += `
+        <div>
+          <button type="button" class="bar" id="bar-idsrsoap" onclick="toggleAccordion('idsrsoap');">
+            <span class="bar-label">IDSR SOAP</span>
+            <span class="bar-right"><span class="badge live">Live</span><i class="chev" id="chev-idsrsoap">▾</i></span>
+          </button>
+          <div class="panel" id="panel-idsrsoap">
+            <div class="empty-note">IDSR SOAP content — to be built.</div>
+          </div>
+        </div>`;
+      } else {
+        accordionHtml += lockedBar('idsrsoap', 'IDSR SOAP');
+      }
+
+      // IDSR Dashboard
+      if (features.idsrDashboard) {
+        accordionHtml += `
+        <div>
+          <button type="button" class="bar" id="bar-idsrdash" onclick="toggleAccordion('idsrdash');">
+            <span class="bar-label">IDSR Dashboard</span>
+            <span class="bar-right"><span class="badge live">Live</span><i class="chev" id="chev-idsrdash">▾</i></span>
+          </button>
+          <div class="panel" id="panel-idsrdash">
+            <div class="empty-note">IDSR Dashboard content — to be built.</div>
+          </div>
+        </div>`;
+      } else {
+        accordionHtml += lockedBar('idsrdash', 'IDSR Dashboard');
+      }
+    }
+
+    document.getElementById('statusArea').innerHTML = `
+      <div class="eyebrow">SOAP Analytics</div>
+      <div class="greeting">${school.name || 'Your school'} — <strong>${linkRow.role}</strong></div>
+      <div class="accordion">${accordionHtml}</div>
+    `;
   }
 
   checkLogin();

@@ -121,10 +121,17 @@
   const SUPABASE_KEY = 'sb_publishable_2CTGR0PKyRPpSk59lcr3sA_hvvUDX97';
   const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
+  // Admins land straight on the Admin Dashboard, skipping the portal —
+  // everyone else goes to the portal as normal
+  async function redirectAfterLogin(userId) {
+    const { data: adminRow } = await sb.from('admins').select('auth_user_id').eq('auth_user_id', userId).maybeSingle();
+    window.location.href = adminRow ? 'admin.html' : 'portal.html';
+  }
+
   (async function checkAlreadyLoggedIn() {
     const { data: { session } } = await sb.auth.getSession();
     if (session) {
-      window.location.href = 'portal.html';
+      redirectAfterLogin(session.user.id);
     }
   })();
 
@@ -145,14 +152,14 @@
     btn.disabled = true;
     btn.textContent = 'Logging in…';
 
-    const { error } = await sb.auth.signInWithPassword({ email, password });
+    const { data, error } = await sb.auth.signInWithPassword({ email, password });
 
     if (error) {
       showMsg('Login failed: ' + error.message, true);
       btn.disabled = false;
       btn.textContent = 'Log in';
     } else {
-      window.location.href = 'portal.html';
+      redirectAfterLogin(data.user.id);
     }
   }
 
