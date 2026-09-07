@@ -26,7 +26,7 @@
   .logout-link { color: rgba(255,255,255,0.7); text-decoration: none; font-size: 13px; }
   .logout-link:hover { color: #fff; }
 
-  .wrap { max-width: 1100px; margin: 40px auto; padding: 0 20px; }
+  .wrap { max-width: 1400px; margin: 40px auto; padding: 0 20px; }
   .page-title { font-size: 22px; color: #fff; margin-bottom: 6px; }
   .page-sub { font-size: 13px; color: rgba(255,255,255,0.6); margin-bottom: 24px; }
 
@@ -100,6 +100,7 @@
   table.grid-table.resources-table { min-width: 0; }
   table.grid-table.resources-table input,
   table.grid-table.resources-table select { width: 150px; }
+  table.grid-table.resources-table input[data-field="metric"] { width: 280px; }
   table.grid-table.resources-table td.label-cell { min-width: 220px; }
   .rating-field { display: flex; align-items: center; gap: 14px; }
   .rating-field select { max-width: 260px; width: auto; }
@@ -170,6 +171,24 @@
   <div class="page-sub">View any school's live School on a Page.</div>
   <div id="soapListContent" style="margin-bottom:40px;"></div>
 
+  <div class="page-title">SOAP Dashboard</div>
+  <div class="page-sub">View any school's live SOAP Dashboard (Attendance currently, more sections coming).</div>
+  <div id="dashboardListContent" style="margin-bottom:40px;"></div>
+
+  <div class="page-title">Support Messages</div>
+  <div class="page-sub">Issues raised by schools via their portal, most recent first.</div>
+  <div id="supportContent" style="margin-bottom:40px;"></div>
+
+  <div class="page-title">Package Selection</div>
+  <div class="page-sub">Choose each school's package — this determines what unlocks on their Headteacher portal.</div>
+  <div id="packageListContent" style="margin-bottom:40px;"></div>
+
+  <div class="page-title">All Schools</div>
+  <div class="page-sub">Every School Setup submission, most recent first. Click a school to see full details.</div>
+  <div id="content">
+    <div class="status-msg">Checking your access…</div>
+  </div>
+
   <div class="page-title">National Averages</div>
   <div class="page-sub">Admin-only reference statistics — not visible to schools. Fixed fields, matching exactly what the SOAP dashboard reads.</div>
   <div class="school-card" id="card-resources" style="margin-bottom:40px;">
@@ -181,16 +200,6 @@
       <div class="chevron">▶</div>
     </div>
     <div class="school-detail" id="resourcesContent"></div>
-  </div>
-
-  <div class="page-title">Package Selection</div>
-  <div class="page-sub">Choose each school's package — this determines what unlocks on their Headteacher portal.</div>
-  <div id="packageListContent" style="margin-bottom:40px;"></div>
-
-  <div class="page-title">All Schools</div>
-  <div class="page-sub">Every School Setup submission, most recent first. Click a school to see full details.</div>
-  <div id="content">
-    <div class="status-msg">Checking your access…</div>
   </div>
 </div>
 
@@ -354,7 +363,7 @@
   function attendanceCompletion(schoolReportingPeriods, attendanceRows) {
     const lockedPeriods = calcLockedPeriods(schoolReportingPeriods);
     let total = 0;
-    CONTEXT_PERIODS.forEach(p => { if (!lockedPeriods[p]) total += 14; }); // Attendance %: 14 rows per period (incl. National Attendance Percentage row)
+    CONTEXT_PERIODS.forEach(p => { if (!lockedPeriods[p]) total += 13; }); // Attendance %: 13 rows per period (National Attendance % removed — now sourced centrally from National Averages, not entered per school)
     CONTEXT_PERIODS.forEach(p => { if (!lockedPeriods[p]) total += 10; }); // Behaviour Numbers: 10 rows per period
     total += 1; // Overall Rating
     const filled = (attendanceRows || []).length;
@@ -403,7 +412,7 @@
       label: 'Attendance & Behaviour',
       category: 'National Averages',
       type: 'flat',
-      rows: ['Overall Attendance %', 'Persistent Absence %', 'PP Attendance %', 'PP Persistent Absence %', 'SEND Attendance %', 'SEND Persistent Absence %', 'Suspensions', 'PP Suspensions', 'SEND Suspensions', 'Permanent Exclusions']
+      rows: ['Persistent Absence %', 'PP Persistent Absence %', 'SEND Attendance %', 'SEND Persistent Absence %', 'Suspensions', 'PP Suspensions', 'SEND Suspensions', 'Permanent Exclusions']
     },
     gcseResults: {
       label: 'GCSE',
@@ -458,17 +467,32 @@
     html += '</select>';
 
     if (section.type === 'flat') {
-      html += '<table class="grid-table resources-table"><thead><tr><th>Metric</th><th>Period</th><th>Value</th></tr></thead><tbody>';
-      section.rows.forEach(r => {
-        const existing = NATAVG_DATA.find(x => x.category === section.category && x.metric === r);
-        const isPercent = r !== 'Permanent Exclusions';
-        html += `<tr data-metric="${r}">
-          <td class="label-cell">${r}</td>
-          <td><input type="text" data-field="period" value="${existing ? existing.period : ''}" placeholder="e.g. 2022-2025"></td>
-          <td><div style="display:flex;align-items:center;gap:6px;"><input type="text" data-field="value" value="${existing ? existing.value : ''}">${isPercent ? '<span style="color:#5A6B80;font-weight:700;">%</span>' : ''}</div></td>
+      // Every existing (metric, period) combination for this category gets
+      // its own row, editable — plus a blank starter row for any known
+      // metric that has no data yet at all, so the familiar fields still
+      // show up ready to fill in on first use. New rows (any metric name,
+      // any period) can be added freely below.
+      const existingRows = NATAVG_DATA.filter(x => x.category === section.category);
+      const metricsWithData = new Set(existingRows.map(x => x.metric));
+      const starterRows = section.rows.filter(r => !metricsWithData.has(r)).map(r => ({ metric: r, period: '', value: '' }));
+      const allRows = [...existingRows, ...starterRows];
+
+      html += `<datalist id="natAvgMetricList">${section.rows.map(r => `<option value="${r}">`).join('')}</datalist>`;
+      html += '<table class="grid-table resources-table"><thead><tr><th>Metric</th><th>Period</th><th>Value</th><th></th></tr></thead><tbody id="natAvgFlatBody">';
+      allRows.forEach(r => {
+        const isPercent = r.metric !== 'Permanent Exclusions';
+        html += `<tr>
+          <td><input type="text" list="natAvgMetricList" data-field="metric" value="${r.metric}" placeholder="Metric name"></td>
+          <td><input type="text" data-field="period" value="${r.period || ''}" placeholder="e.g. Autumn 1 2026"></td>
+          <td><div style="display:flex;align-items:center;gap:6px;"><input type="text" data-field="value" value="${r.value || ''}">${isPercent ? '<span style="color:#5A6B80;font-weight:700;">%</span>' : ''}</div></td>
+          <td>
+            <button type="button" onclick="duplicateNatAvgRow(this)" style="background:#E6F4F1;color:#0D7377;border:none;border-radius:6px;padding:6px 10px;font-size:12px;font-weight:700;cursor:pointer;margin-right:6px;">Duplicate</button>
+            <button type="button" onclick="this.closest('tr').remove()" style="background:#F3B8B8;color:#7A1F1F;border:none;border-radius:6px;padding:6px 10px;font-size:12px;font-weight:700;cursor:pointer;">Remove</button>
+          </td>
         </tr>`;
       });
       html += '</tbody></table>';
+      html += '<div style="margin-top:10px;"><button type="button" onclick="addNatAvgRow()" style="background:#F0F4F8;color:#1B2A4A;border:1px solid #DCE3EA;border-radius:6px;padding:8px 14px;font-size:13px;font-weight:700;cursor:pointer;">+ Add Row</button></div>';
     } else {
       html += '<table class="grid-table resources-table wide-table"><thead><tr><th>Metric</th>';
       section.years.forEach(y => html += `<th>${y}</th>`);
@@ -494,24 +518,69 @@
     container.innerHTML = html;
   }
 
+  function addNatAvgRow() {
+    const tbody = document.getElementById('natAvgFlatBody');
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td><input type="text" list="natAvgMetricList" data-field="metric" value="" placeholder="Metric name"></td>
+      <td><input type="text" data-field="period" value="" placeholder="e.g. Autumn 1 2026"></td>
+      <td><div style="display:flex;align-items:center;gap:6px;"><input type="text" data-field="value" value=""></div></td>
+      <td>
+        <button type="button" onclick="duplicateNatAvgRow(this)" style="background:#E6F4F1;color:#0D7377;border:none;border-radius:6px;padding:6px 10px;font-size:12px;font-weight:700;cursor:pointer;margin-right:6px;">Duplicate</button>
+        <button type="button" onclick="this.closest('tr').remove()" style="background:#F3B8B8;color:#7A1F1F;border:none;border-radius:6px;padding:6px 10px;font-size:12px;font-weight:700;cursor:pointer;">Remove</button>
+      </td>
+    `;
+    tbody.appendChild(tr);
+    tr.querySelector('[data-field="metric"]').focus();
+  }
+
+  // Copies a row's metric, period and value into a brand new row placed
+  // directly underneath it — built for exactly this workflow: same metric
+  // name reused across many periods, so only the period and value need
+  // changing each time rather than retyping the metric six times over.
+  function duplicateNatAvgRow(btn) {
+    const sourceTr = btn.closest('tr');
+    const metric = sourceTr.querySelector('[data-field="metric"]').value;
+    const period = sourceTr.querySelector('[data-field="period"]').value;
+    const value = sourceTr.querySelector('[data-field="value"]').value;
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td><input type="text" list="natAvgMetricList" data-field="metric" value="${metric}" placeholder="Metric name"></td>
+      <td><input type="text" data-field="period" value="${period}" placeholder="e.g. Autumn 1 2026"></td>
+      <td><div style="display:flex;align-items:center;gap:6px;"><input type="text" data-field="value" value="${value}"></div></td>
+      <td>
+        <button type="button" onclick="duplicateNatAvgRow(this)" style="background:#E6F4F1;color:#0D7377;border:none;border-radius:6px;padding:6px 10px;font-size:12px;font-weight:700;cursor:pointer;margin-right:6px;">Duplicate</button>
+        <button type="button" onclick="this.closest('tr').remove()" style="background:#F3B8B8;color:#7A1F1F;border:none;border-radius:6px;padding:6px 10px;font-size:12px;font-weight:700;cursor:pointer;">Remove</button>
+      </td>
+    `;
+    sourceTr.after(tr);
+    const periodInput = tr.querySelector('[data-field="period"]');
+    periodInput.focus();
+    periodInput.select();
+  }
+
   async function saveNatAvgSection() {
     const section = NATAVG_SECTIONS[natAvgSectionKey];
     const container = document.getElementById('resourcesContent');
     const rows = [];
-    container.querySelectorAll('tr[data-metric]').forEach(tr => {
-      const metric = tr.dataset.metric;
-      if (section.type === 'flat') {
+
+    if (section.type === 'flat') {
+      container.querySelectorAll('#natAvgFlatBody tr').forEach(tr => {
+        const metric = tr.querySelector('[data-field="metric"]').value.trim();
         const period = tr.querySelector('[data-field="period"]').value.trim();
         const value = tr.querySelector('[data-field="value"]').value.trim();
-        if (period || value) rows.push({ category: section.category, metric, period, value });
-      } else {
+        if (metric && (period || value)) rows.push({ category: section.category, metric, period, value });
+      });
+    } else {
+      container.querySelectorAll('tr[data-metric]').forEach(tr => {
+        const metric = tr.dataset.metric;
         tr.querySelectorAll('[data-field="year"]').forEach(el => {
           const year = el.dataset.year;
           const value = el.value.trim();
           if (value) rows.push({ category: section.category, metric, period: year, value });
         });
-      }
-    });
+      });
+    }
 
     const { error: delErr } = await sb.from('resource_stats').delete().eq('category', section.category);
     if (delErr) { showAmendToast('⚠ Save failed — see browser console', true); console.error(delErr); return; }
@@ -542,7 +611,7 @@
 
     const regContent = document.getElementById('regContent');
 
-    const [schoolsRes, contactsRes, ofstedRes, periodsRes, assessRes, trackerRes, regsRes, contextRes, safeguardingRes, inclusionRes, curriculumRes, achievementRes, attendanceRes, pdwRes, leadershipRes, financeRes] = await Promise.all([
+    const [schoolsRes, contactsRes, ofstedRes, periodsRes, assessRes, trackerRes, regsRes, contextRes, safeguardingRes, inclusionRes, curriculumRes, achievementRes, attendanceRes, pdwRes, leadershipRes, financeRes, supportRes] = await Promise.all([
       sb.from('schools').select('*').order('created_at', { ascending: false }),
       sb.from('key_contacts').select('*'),
       sb.from('ofsted_judgements').select('*'),
@@ -558,7 +627,8 @@
       sb.from('attendance_data').select('*'),
       sb.from('pdw_data').select('*'),
       sb.from('leadership_governance_data').select('*'),
-      sb.from('finance_data').select('*')
+      sb.from('finance_data').select('*'),
+      sb.from('support_messages').select('*').order('created_at', { ascending: false })
     ]);
 
     const regs = regsRes.data || [];
@@ -572,17 +642,64 @@
         r.wants_soap_suite === 'Yes' ? 'SOAP Performance Suite' : null,
         r.wants_survey === 'Yes' ? 'Survey Service' : null
       ].filter(Boolean).join(', ') || '—';
-      regContent.innerHTML = renderMiniTable(
-        ['Name', 'School', 'Email', 'Phone', 'Interested in', 'Message', 'Submitted'],
-        regs.map(r => [
-          r.name, r.school_name, r.email, r.phone, wanted(r), r.message,
-          r.created_at ? new Date(r.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '—'
-        ])
-      );
+
+      regContent.innerHTML = `
+        <div class="school-card" style="padding:16px 20px;overflow-x:auto;">
+          <table class="mini-table">
+            <thead><tr>
+              <th>Name</th><th>School</th><th>Email</th><th>Phone</th><th>Interested in</th><th>Message</th><th>Submitted</th><th>Contacted</th><th></th>
+            </tr></thead>
+            <tbody>
+              ${regs.map(r => `
+                <tr id="reg-row-${r.id}" style="${r.contacted ? 'background:#E6F4F1;' : ''}">
+                  <td>${r.name ?? '—'}</td>
+                  <td>${r.school_name ?? '—'}</td>
+                  <td>${r.email ?? '—'}</td>
+                  <td>${r.phone ?? '—'}</td>
+                  <td>${wanted(r)}</td>
+                  <td>${r.message ?? '—'}</td>
+                  <td>${r.created_at ? new Date(r.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '—'}</td>
+                  <td style="text-align:center;"><input type="checkbox" ${r.contacted ? 'checked' : ''} onchange="toggleContacted('${r.id}', this.checked)"></td>
+                  <td><button type="button" class="delete-reg-btn" onclick="deleteRegistration('${r.id}')" style="background:#F3B8B8;color:#7A1F1F;border:none;border-radius:6px;padding:6px 12px;font-size:12px;font-weight:700;cursor:pointer;">Delete</button></td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>`;
     }
 
     const schools = schoolsRes.data || [];
     const bySchool = (rows, id) => (rows || []).filter(r => r.school_id === id);
+
+    const supportMsgs = supportRes.data || [];
+    const supportContent = document.getElementById('supportContent');
+    if (!supportMsgs.length) {
+      supportContent.innerHTML = '<div class="status-msg">No support messages yet.</div>';
+    } else {
+      supportContent.innerHTML = `
+        <div class="school-card" style="padding:16px 20px;overflow-x:auto;">
+          <table class="mini-table">
+            <thead><tr>
+              <th>School</th><th>Role</th><th>Message</th><th>Submitted</th><th>Resolved</th><th></th>
+            </tr></thead>
+            <tbody>
+              ${supportMsgs.map(m => {
+                const school = schools.find(s => s.id === m.school_id);
+                return `
+                <tr id="support-row-${m.id}">
+                  <td>${school ? school.name : '—'}</td>
+                  <td>${m.role ?? '—'}</td>
+                  <td>${m.message ?? '—'}</td>
+                  <td>${m.created_at ? new Date(m.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '—'}</td>
+                  <td style="text-align:center;"><input type="checkbox" ${m.resolved ? 'checked' : ''} onchange="toggleSupportResolved('${m.id}', this.checked)"></td>
+                  <td><button type="button" onclick="deleteSupportMessage('${m.id}')" style="background:#F3B8B8;color:#7A1F1F;border:none;border-radius:6px;padding:6px 12px;font-size:12px;font-weight:700;cursor:pointer;">Delete</button></td>
+                </tr>
+              `;
+              }).join('')}
+            </tbody>
+          </table>
+        </div>`;
+    }
 
     const soapListContent = document.getElementById('soapListContent');
     if (!schools.length) {
@@ -636,6 +753,25 @@
           }).join('')}
         </div>
         <iframe id="adminPublishFrame" style="display:none;width:1px;height:1px;"></iframe>
+      `;
+    }
+
+    const dashboardListContent = document.getElementById('dashboardListContent');
+    if (!schools.length) {
+      dashboardListContent.innerHTML = '<div class="status-msg">No schools yet.</div>';
+    } else {
+      dashboardListContent.innerHTML = `
+        <div class="school-card">
+          ${schools.map(s => `
+            <a href="soap-dashboard.html?school_id=${s.id}" target="_blank" style="display:flex;justify-content:space-between;align-items:center;padding:14px 20px;text-decoration:none;color:inherit;border-bottom:1px solid #DCE3EA;">
+              <div>
+                <div class="school-name">${s.name}</div>
+                <div class="school-meta">${s.phase || '—'} · ${s.academic_year || '—'} · ${s.package_tier || '—'}</div>
+              </div>
+              <div style="color:#0D7377;font-weight:700;font-size:13px;">View Dashboard →</div>
+            </a>
+          `).join('')}
+        </div>
       `;
     }
 
@@ -923,7 +1059,7 @@
   const AMEND_INCLUSION_KEY_DATES_ROWS = ['SEND Review Completed', 'SEND Audit Completed', 'SEND Governor Visit', 'Inclusion Review'];
 
   const AMEND_ATTENDANCE_ROWS = [
-    'Overall Attendance %', 'National Attendance %', 'Persistent Absence %', 'PP Attendance %', 'PP Persistent Absence %',
+    'Overall Attendance %', 'Persistent Absence %', 'PP Attendance %', 'PP Persistent Absence %',
     'SEND Attendance %', 'SEND Persistent Absence %',
     'Year 7 Attendance %', 'Year 8 Attendance %', 'Year 9 Attendance %', 'Year 10 Attendance %',
     'Year 11 Attendance %', 'Year 12 Attendance %', 'Year 13 Attendance %'
@@ -1128,6 +1264,49 @@
       btn.disabled = false;
       btn.textContent = 'Publish SOAP';
     }
+  }
+
+  async function toggleContacted(regId, checked) {
+    const row = document.getElementById(`reg-row-${regId}`);
+    if (row) row.style.background = checked ? '#E6F4F1' : '';
+    const { error } = await sb.from('registrations').update({ contacted: checked }).eq('id', regId);
+    if (error) {
+      console.error(error);
+      alert('Failed to save — see browser console.');
+      if (row) row.style.background = checked ? '' : '#E6F4F1'; // revert the colour since the save actually failed
+    }
+  }
+
+  async function deleteRegistration(regId) {
+    if (!confirm('Delete this registration? This removes it permanently from the database — it cannot be undone.')) return;
+    const { error } = await sb.from('registrations').delete().eq('id', regId);
+    if (error) {
+      console.error(error);
+      alert('Delete failed — see browser console.');
+      return;
+    }
+    const row = document.getElementById(`reg-row-${regId}`);
+    if (row) row.remove();
+  }
+
+  async function toggleSupportResolved(msgId, checked) {
+    const { error } = await sb.from('support_messages').update({ resolved: checked }).eq('id', msgId);
+    if (error) {
+      console.error(error);
+      alert('Failed to save — see browser console.');
+    }
+  }
+
+  async function deleteSupportMessage(msgId) {
+    if (!confirm('Delete this support message? This removes it permanently from the database — it cannot be undone.')) return;
+    const { error } = await sb.from('support_messages').delete().eq('id', msgId);
+    if (error) {
+      console.error(error);
+      alert('Delete failed — see browser console.');
+      return;
+    }
+    const row = document.getElementById(`support-row-${msgId}`);
+    if (row) row.remove();
   }
 
   async function savePackageTier(schoolId) {

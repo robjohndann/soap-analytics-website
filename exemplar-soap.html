@@ -27,7 +27,7 @@
   .soap-sheet { max-width: 1500px; margin: 8px auto; padding: 0 1%; }
 
   /* Masthead */
-  .masthead { display: grid; grid-template-columns: 160px 1fr 170px 130px; gap: 2px; margin-bottom: 2px; }
+  .masthead { display: grid; grid-template-columns: 160px 1fr 210px 130px; gap: 2px; margin-bottom: 2px; }
   .badge-box { background: #1B2A4A; color: #fff; display: flex; align-items: center; justify-content: center; font-size: 11px; border-radius: 0; text-align: center; padding: 6px; }
   .badge-box img { max-width: 100%; max-height: 46px; }
   .title-box { background: #1B2A4A; color: #fff; display: flex; align-items: center; gap: 14px; padding: 0 20px; border-radius: 0; }
@@ -35,6 +35,7 @@
   .current-period-box { background: #1B2A4A; color: #fff; border-radius: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 6px; }
   .current-period-box .tag { font-size: 9px; letter-spacing: 1px; text-transform: uppercase; color: #3DCFB8; font-weight: 700; }
   .current-period-box .period-name { font-size: 14px; font-weight: 700; color: #fff; margin-top: 4px; }
+  .current-period-box .period-dates { font-size: 11px; font-weight: 600; color: #3DCFB8; margin-top: 3px; }
   .period-box { background: #1B2A4A; color: #fff; border-radius: 0; display: flex; align-items: center; justify-content: center; text-align: center; padding: 6px; }
   .period-box .slogan { font-size: 15px; font-weight: 700; font-style: italic; color: #3DCFB8; line-height: 1.3; }
 
@@ -243,6 +244,7 @@
           <div class="current-period-box">
             <div class="tag">Current Period</div>
             <div class="period-name">Autumn 1 2026</div>
+            <div class="period-dates">2 Sep – 24 Oct</div>
           </div>
           <div class="period-box">
             <div class="slogan">Clarity.<br>Insight.<br>Impact.</div>
@@ -660,7 +662,7 @@
       ]
     },
     attendanceNational: {
-      text: 'Persistent Absence %, PP Attendance %, PP Persistent Absence %, SEND Attendance % and SEND Persistent Absence % are shaded against the National Averages table, in percentage points — for attendance, higher than national is better; for persistent absence, lower is better. Overall Attendance % and every year group are shaded against the school\'s own entered National Attendance % for that period, as before. National Attendance % itself is never shaded.',
+      text: 'Overall Attendance %, Persistent Absence %, PP Attendance %, PP Persistent Absence %, SEND Attendance %, SEND Persistent Absence % and every year group are all shaded against the National Averages table, in percentage points — for attendance, higher than national is better; for persistent absence, lower is better.',
       swatches: [
         { cls: 'rs-exceptional', label: 'More than 2% better than national' },
         { cls: 'rs-strong', label: '0.75–2% better than national' },
@@ -763,7 +765,6 @@
     // with direction flipped for Persistent Absence rows since lower is better there.
     const ATTENDANCE_NATIONAL_MAPPING = {
       'Persistent Absence %': { metric: 'Persistent Absence %', reverse: true },
-      'PP Attendance %': { metric: 'PP Attendance %', reverse: false },
       'PP Persistent Absence %': { metric: 'PP Persistent Absence %', reverse: true },
       'SEND Attendance %': { metric: 'SEND Attendance %', reverse: false },
       'SEND Persistent Absence %': { metric: 'SEND Persistent Absence %', reverse: true }
@@ -775,12 +776,49 @@
       if (diff >= -2) return 'rs-attention';
       return 'rs-urgent';
     }
-    // Colours an attendance figure. Persistent Absence %, PP Attendance %, PP
-    // Persistent Absence %, SEND Attendance % and SEND Persistent Absence % compare
-    // against National Averages (resource_stats), a flat figure not tied to a
-    // period. Overall Attendance % and every year group keep the original
-    // behaviour: compared against the school's own entered National Attendance %
-    // for that same period. National Attendance % itself is never shaded.
+    function normalizePeriodInput(str) {
+      if (!str) return null;
+      const m = String(str).toUpperCase().match(/(AUT|SPR|SUM)\D*(1|2)\D*(\d{2,4})/);
+      if (!m) return null;
+      let [, season, num, year] = m;
+      if (year.length === 4) year = year.slice(-2);
+      return `${season}${num} ${year}`;
+    }
+    function natAvgValForPeriod(metric, periodKey) {
+      const row = resourceStats.find(r =>
+        r.category === 'National Averages' &&
+        r.metric === metric &&
+        normalizePeriodInput(r.period) === periodKey
+      );
+      return row ? row.value : null;
+    }
+    function overallNationalFor(period) {
+      const specific = natAvgValForPeriod('Overall National Attendance', period);
+      return specific !== null ? specific : natAvgVal('Overall Attendance %');
+    }
+    function ppNationalFor(period) {
+      const specific = natAvgValForPeriod('PP National Attendance', period);
+      return specific !== null ? specific : natAvgVal('PP Attendance %');
+    }
+    // National YTD — averages the national figure only across periods the
+    // school itself has actually reported for that same metric, so it's a
+    // fair like-for-like comparison against the school's own YTD (which is
+    // also just an average of the periods entered so far, not the full year).
+    function nationalYtdAverage(lookupFn, schoolMetric) {
+      let sum = 0, count = 0;
+      PERIODS.forEach(p => {
+        const schoolHasData = attVal('Attendance Percentages', schoolMetric, p) !== null;
+        if (!schoolHasData) return;
+        const v = parseFloat(lookupFn(p));
+        if (!isNaN(v)) { sum += v; count++; }
+      });
+      return count ? (Math.round((sum / count) * 10) / 10).toFixed(1) : null;
+    }
+    // Overall Attendance and every year group compare against a term-specific
+    // national figure where one has been added (metric "Overall National
+    // Attendance", matched to the exact period), falling back to the flat
+    // "Overall Attendance %" figure for any term without its own row yet.
+    // PP Attendance % works the same way against "PP National Attendance".
     function attendanceNationalDiffClass(row, value, period) {
       if (ATTENDANCE_NATIONAL_MAPPING[row]) {
         const mapping = ATTENDANCE_NATIONAL_MAPPING[row];
@@ -797,7 +835,13 @@
       }
       if (row === 'Overall Attendance %' || /^Year \d+ Attendance %$/.test(row)) {
         const raw = parseFloat(value);
-        const national = parseFloat(attVal('Attendance Percentages', 'National Attendance %', period));
+        const national = parseFloat(period === 'YTD' ? nationalYtdAverage(overallNationalFor, 'Overall Attendance %') : overallNationalFor(period));
+        if (isNaN(raw) || isNaN(national)) return '';
+        return diffToRatingClass(raw - national);
+      }
+      if (row === 'PP Attendance %') {
+        const raw = parseFloat(value);
+        const national = parseFloat(period === 'YTD' ? nationalYtdAverage(ppNationalFor, 'PP Attendance %') : ppNationalFor(period));
         if (isNaN(raw) || isNaN(national)) return '';
         return diffToRatingClass(raw - national);
       }
@@ -992,6 +1036,18 @@
       });
       return current ? PERIOD_DISPLAY[current] : null;
     }
+    function currentPeriodDateRange() {
+      const today = new Date();
+      let currentMatch = null;
+      PERIODS.forEach(p => {
+        const match = reportingPeriods.find(r => r.period_name === PERIOD_TO_REPORTING_NAME[p]);
+        if (match && match.start_date && new Date(match.start_date) <= today) currentMatch = match;
+      });
+      if (!currentMatch || !currentMatch.start_date) return null;
+      const fmt = d => new Date(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+      const end = currentMatch.end_date ? ` – ${fmt(currentMatch.end_date)}` : '';
+      return fmt(currentMatch.start_date) + end;
+    }
     // Calculated workforce percentages: what share of teachers fall into each group, per period
     function workforcePct(numeratorMetric, period) {
       const teachers = parseFloat(ctxVal('Workforce', 'Number of Teachers', period));
@@ -1171,6 +1227,7 @@
           <div class="current-period-box">
             <div class="tag">Current Period</div>
             <div class="period-name">${currentPeriodLabel() || '—'}</div>
+            <div class="period-dates">${currentPeriodDateRange() || ''}</div>
           </div>
           <div class="period-box">
             <div class="slogan">Clarity.<br>Insight.<br>Impact.</div>
@@ -1240,12 +1297,12 @@
     html += `<div class="band">${safeguardingPanel}${inclusionPanel}</div>`;
 
     // ---------- BAND 3: ATTENDANCE & BEHAVIOUR | ACHIEVEMENT (foundational) ----------
-    const attRows = ['Overall Attendance %','National Attendance %','Persistent Absence %','PP Attendance %','PP Persistent Absence %','SEND Attendance %','SEND Persistent Absence %'];
+    const attRows = ['Overall Attendance %','National Attendance %','Persistent Absence %','PP Attendance %','PP National Attendance %','PP Persistent Absence %','SEND Attendance %','SEND Persistent Absence %'];
     const attYGRows = ['Year 7 Attendance %','Year 8 Attendance %','Year 9 Attendance %','Year 10 Attendance %','Year 11 Attendance %','Year 12 Attendance %','Year 13 Attendance %'];
     const behRows = ['Internal Removal Events — Total','Internal Removal Events — PP','Internal Removal Events — SEND','Suspensions — Total','Suspensions — PP','Suspensions — SEND','Permanent Exclusions — Total','Permanent Exclusions — PP','Permanent Exclusions — SEND','Late Arrivals / Punctuality Events'];
     const attendancePanel = panel('Attendance &amp; Behaviour', `
       <div class="subpanel-row">
-        ${subpanel('Attendance — Key Metrics', miniTable([...PERIODS,'YTD'], attRows, (r,c) => attVal('Attendance Percentages', r, c), false, (r,c,v) => attendanceNationalDiffClass(r, v, c)), 1, undefined, ` <button type="button" class="ctx-key-btn" onclick="event.stopPropagation(); openCtxKey('attendanceNational');">Key</button>`)}
+        ${subpanel('Attendance — Key Metrics', miniTable([...PERIODS,'YTD'], attRows, (r,c) => r === 'National Attendance %' ? (c === 'YTD' ? nationalYtdAverage(overallNationalFor, 'Overall Attendance %') : overallNationalFor(c)) : r === 'PP National Attendance %' ? (c === 'YTD' ? nationalYtdAverage(ppNationalFor, 'PP Attendance %') : ppNationalFor(c)) : attVal('Attendance Percentages', r, c), false, (r,c,v) => (r === 'National Attendance %' || r === 'PP National Attendance %') ? '' : attendanceNationalDiffClass(r, v, c)), 1, undefined, ` <button type="button" class="ctx-key-btn" onclick="event.stopPropagation(); openCtxKey('attendanceNational');">Key</button>`)}
         ${subpanel('Attendance by Year Group', miniTable([...PERIODS,'YTD'], attYGRows, (r,c) => attVal('Attendance Percentages', r, c), false, (r,c,v) => attendanceNationalDiffClass(r, v, c), 'narrow-periods tight-rowlabel'), 1, undefined, ` <button type="button" class="ctx-key-btn" onclick="event.stopPropagation(); openCtxKey('attendanceNational');">Key</button>`)}
         ${subpanel('Behaviour — Numbers by Half Term', miniTable([...PERIODS,'YTD'], behRows, (r,c) => attVal('Behaviour Numbers', r, c), false, (r,c,v) => internalRemovalContextClass(r,v)), 1, undefined, ` <button type="button" class="ctx-key-btn" onclick="event.stopPropagation(); openCtxKey('internalRemoval');">Key</button>`)}
       </div>

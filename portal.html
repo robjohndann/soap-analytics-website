@@ -68,6 +68,11 @@
   .soap-date { color: rgba(255,255,255,0.5); font-size: 12px; }
   .locked-note { text-align: center; font-size: 12px; color: rgba(255,255,255,0.6); margin-top: 6px; }
   .empty-note { color: rgba(255,255,255,0.6); font-size: 13px; text-align: center; padding: 8px 0; }
+  .support-box { margin-top: 28px; text-align: center; }
+  .support-title { color: rgba(255,255,255,0.5); font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 10px; }
+  .support-links { display: flex; justify-content: center; gap: 20px; }
+  .support-links a { color: #3DCFB8; text-decoration: none; font-size: 14px; font-weight: 600; }
+  .support-links a:hover { text-decoration: underline; }
 
   .modal-overlay {
     display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0;
@@ -243,7 +248,7 @@
   function attendanceCompletion(schoolReportingPeriods, rows) {
     const lockedPeriods = calcLockedPeriods(schoolReportingPeriods);
     let total = 0;
-    CONTEXT_PERIODS.forEach(p => { if (!lockedPeriods[p]) total += 24; });
+    CONTEXT_PERIODS.forEach(p => { if (!lockedPeriods[p]) total += 23; }); // 13 attendance % rows + 10 behaviour rows per period (National Attendance % removed — now sourced centrally, not entered per school)
     total += 1;
     const filled = (rows || []).length;
     return total ? Math.round((Math.min(filled, total) / total) * 100) : 0;
@@ -260,6 +265,32 @@
     if (bar.classList.contains('locked')) return;
     document.getElementById('panel-' + id).classList.toggle('open');
     document.getElementById('chev-' + id).classList.toggle('open');
+  }
+
+  async function submitSupportMessage(schoolId, role) {
+    const input = document.getElementById('supportMessageInput');
+    const btn = document.getElementById('supportSubmitBtn');
+    const note = document.getElementById('supportNote');
+    const message = input.value.trim();
+    if (!message) {
+      note.style.color = '#F3B8B8';
+      note.textContent = 'Please type your issue before sending.';
+      return;
+    }
+    btn.disabled = true;
+    btn.textContent = 'Sending…';
+    const { error } = await sb.from('support_messages').insert({ school_id: schoolId, role, message });
+    if (error) {
+      console.error(error);
+      note.style.color = '#F3B8B8';
+      note.textContent = 'Something went wrong — please try again.';
+    } else {
+      note.style.color = '#3DCFB8';
+      note.textContent = "Sent — we'll be in touch shortly.";
+      input.value = '';
+    }
+    btn.disabled = false;
+    btn.textContent = 'Send to support';
   }
 
   function openSoapModal(title, htmlContent) {
@@ -395,6 +426,19 @@
             </a>
           `).join('')}
         </div>
+      </div>
+
+      <div>
+        <button type="button" class="bar" id="bar-support" onclick="toggleAccordion('support');">
+          <span class="bar-label">Support</span>
+          <span class="bar-right"><i class="chev" id="chev-support">▾</i></span>
+        </button>
+        <div class="panel" id="panel-support">
+          <div style="font-size:13px;color:rgba(255,255,255,0.7);margin-bottom:10px;">Having an issue or a question? Type it below and it'll come straight through to us.</div>
+          <textarea id="supportMessageInput" rows="4" placeholder="Describe the issue you're having..." style="width:100%;padding:10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#0D2B4E;color:#fff;font-family:inherit;font-size:14px;resize:vertical;"></textarea>
+          <button type="button" onclick="submitSupportMessage('${linkRow.school_id}', '${linkRow.role}')" id="supportSubmitBtn" style="margin-top:10px;background:#3DCFB8;color:#0D2B4E;border:none;border-radius:6px;padding:10px 20px;font-weight:700;font-size:14px;cursor:pointer;">Send to support</button>
+          <div id="supportNote" style="font-size:12px;font-weight:700;margin-top:8px;"></div>
+        </div>
       </div>`;
 
     if (isHeadteacher) {
@@ -438,7 +482,7 @@
             <span class="bar-right"><span class="badge live">Live</span><i class="chev" id="chev-soapdash">▾</i></span>
           </button>
           <div class="panel" id="panel-soapdash">
-            <div class="empty-note">SOAP Dashboard content — to be built.</div>
+            <a class="form-row" href="soap-dashboard.html?school_id=${linkRow.school_id}" target="_blank"><span class="name">Open SOAP Dashboard</span></a>
           </div>
         </div>`;
       } else {

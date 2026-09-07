@@ -1,0 +1,613 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SOAP Dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js"></script>
+<style>
+  :root{
+    --navy:#0D2B4E;
+    --teal:#1A7A6E;
+    --pale:#F0F4F8;
+    --white:#FFFFFF;
+    --exceptional:#A9D6F5;
+    --strong:#B8D8C8;
+    --expected:#D4EDDA;
+    --attention:#FAE3C6;
+    --urgent:#F5C6C2;
+    --text-dark:#1B2A4A;
+    --text-muted:#5B6B7F;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin:0; font-family: 'Segoe UI', Arial, sans-serif;
+    background: var(--pale); color: var(--text-dark);
+    display:flex; min-height:100vh;
+  }
+  .sidebar {
+    width: 260px; background: var(--navy); color: white;
+    display:flex; flex-direction:column; flex-shrink:0;
+    position: sticky; top:0; height:100vh; overflow-y:auto;
+  }
+  .sidebar-header { padding: 20px 20px 16px; border-bottom: 1px solid rgba(255,255,255,0.15); text-align:center; }
+  .sidebar-header .logo-card { background: white; border-radius: 8px; padding: 10px; margin-bottom: 14px; display:inline-block; }
+  .sidebar-header .logo-card img { max-width: 120px; width:100%; height:auto; display:block; }
+  .sidebar-header .school { font-size: 13px; font-weight:600; opacity:0.9; }
+  .nav-item {
+    padding: 14px 20px; cursor:pointer; border-left: 3px solid transparent;
+    font-size:14px; font-weight:600; display:flex; align-items:center; gap:8px;
+  }
+  .nav-item:hover { background: rgba(255,255,255,0.06); }
+  .nav-item.active { background: rgba(255,255,255,0.1); border-left-color: var(--teal); }
+  .nav-item.disabled { opacity:0.4; cursor:not-allowed; }
+  .nav-item.disabled:hover { background:none; }
+  .nav-group-label { padding: 16px 20px 6px; font-size:11px; text-transform:uppercase; letter-spacing:1px; opacity:0.5; }
+  .main { flex:1; padding: 32px 40px; overflow-y:auto; }
+  .page-title { font-size: 24px; font-weight:700; margin-bottom:4px; }
+  .page-sub { font-size:14px; color: var(--text-muted); margin-bottom:24px; }
+  .page-header-row { display:flex; justify-content:space-between; align-items:flex-start; gap:20px; }
+  .period-picker { position:relative; flex-shrink:0; }
+  .period-btn { display:flex; align-items:center; gap:8px; background:var(--teal); color:white; border:none; padding:10px 18px; border-radius:8px; font-weight:700; font-size:13px; cursor:pointer; font-family:inherit; }
+  .period-btn:hover { background:#155F55; }
+  .period-menu { display:none; position:absolute; top:calc(100% + 6px); right:0; background:white; border-radius:8px; box-shadow:0 8px 24px rgba(0,0,0,0.15); overflow:hidden; min-width:160px; z-index:10; }
+  .period-menu.open { display:block; }
+  .period-menu button { display:block; width:100%; text-align:left; padding:10px 16px; border:none; background:none; font-size:13px; cursor:pointer; font-family:inherit; color:var(--text-dark); }
+  .period-menu button:hover { background:var(--pale); }
+  .period-menu button.selected { background:var(--pale); font-weight:700; color:var(--teal); }
+  .exec-summary { display:grid; grid-template-columns: repeat(4, 1fr); gap:16px; margin-bottom:28px; }
+  .exec-card { background:white; border-radius:10px; padding:16px 18px; border-top:4px solid var(--text-muted); }
+  .exec-card.strength { border-top-color: #1A7A6E; }
+  .exec-card.improvement { border-top-color: #2E86AB; }
+  .exec-card.regression { border-top-color: #C97B3E; }
+  .exec-card.concern { border-top-color: #B04A4A; }
+  .exec-card .exec-label { font-size:11px; text-transform:uppercase; letter-spacing:0.5px; color:var(--text-muted); font-weight:700; margin-bottom:8px; }
+  .exec-card .exec-metric { font-size:14px; font-weight:700; margin-bottom:4px; }
+  .exec-card .exec-detail { font-size:12px; color:var(--text-muted); }
+  .card-row { display:flex; gap:16px; flex-wrap:wrap; margin-bottom:28px; }
+  .stat-card { background:white; border-radius:10px; padding:16px 20px; flex:1; min-width:160px; border-left:4px solid var(--teal); }
+  .stat-card .label { font-size:12px; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:6px; }
+  .stat-card .value { font-size:24px; font-weight:700; }
+  .stat-card .sub { font-size:12px; color:var(--text-muted); margin-top:4px; }
+  .chart-panel { background:white; border-radius:10px; padding:20px; margin-bottom:24px; }
+  .chart-panel h3 { margin:0 0 16px; font-size:15px; }
+  .series-toggle { display:flex; flex-wrap:wrap; gap:14px; margin-bottom:14px; padding-bottom:14px; border-bottom:1px solid #EEF1F5; }
+  .series-toggle-item { display:flex; align-items:center; gap:6px; font-size:13px; cursor:pointer; user-select:none; }
+  .series-swatch { width:12px; height:12px; border-radius:3px; display:inline-block; }
+  .clear-filter-btn { background:none; border:none; color:var(--teal); font-size:12px; font-weight:700; cursor:pointer; text-decoration:underline; font-family:inherit; padding:0; }
+  .compare-row { display:flex; align-items:center; gap:10px; margin-bottom:16px; font-size:13px; flex-wrap:wrap; }
+  .compare-row select { padding:8px 12px; border:1px solid #DCE3EA; border-radius:6px; font-size:13px; background:white; font-family:inherit; }
+  .compare-row button { padding:8px 16px; border:none; border-radius:6px; background:var(--teal); color:white; font-weight:600; font-size:13px; cursor:pointer; font-family:inherit; }
+  .diff-up { color: #1A7A6E; font-weight:700; }
+  .diff-down { color: #B04A4A; font-weight:700; }
+  .data-table { width:100%; border-collapse:collapse; font-size:13px; background:white; border-radius:10px; overflow:hidden; }
+  .data-table th, .data-table td { padding:10px 14px; text-align:left; border-bottom:1px solid #EEF1F5; }
+  .data-table th { background:var(--navy); color:white; font-weight:600; }
+  .loading-msg { color: var(--text-muted); padding: 40px; text-align:center; }
+  .empty-msg { color: var(--text-muted); padding: 20px; text-align:center; font-style:italic; }
+
+  @media (max-width: 1400px) {
+    .exec-summary { grid-template-columns: repeat(2, 1fr); }
+  }
+  @media (max-width: 900px) {
+    .sidebar { width: 200px; }
+    .main { padding: 24px 20px; }
+    .card-row { flex-direction: column; }
+    .exec-summary { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<div class="sidebar">
+  <div class="sidebar-header">
+    <div class="logo-card"><img src="images/logo-navy.png" alt="SOAP Analytics"></div>
+    <div class="school" id="sidebarSchoolName">Loading…</div>
+  </div>
+  <div class="nav-item active" data-section="attendance">📊&nbsp;&nbsp;Attendance</div>
+  <div class="nav-group-label">Coming soon</div>
+  <div class="nav-item disabled">Context</div>
+  <div class="nav-item disabled">Achievement</div>
+  <div class="nav-item disabled">Safeguarding</div>
+  <div class="nav-item disabled">Finance & Resources</div>
+</div>
+
+<div class="main">
+  <div id="statusArea"><div class="loading-msg">Loading live data…</div></div>
+</div>
+
+<script>
+  const SUPABASE_URL = 'https://caopycszjzrmwhxxvtpx.supabase.co';
+  const SUPABASE_KEY = 'sb_publishable_2CTGR0PKyRPpSk59lcr3sA_hvvUDX97';
+  const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+  const PERIODS = ['AUT1 26', 'AUT2 26', 'SPR1 27', 'SPR2 27', 'SUM1 27', 'SUM2 27'];
+  const PERIOD_DISPLAY = {
+    'AUT1 26': 'Autumn 1', 'AUT2 26': 'Autumn 2',
+    'SPR1 27': 'Spring 1', 'SPR2 27': 'Spring 2',
+    'SUM1 27': 'Summer 1', 'SUM2 27': 'Summer 2'
+  };
+  // Full-caps label with year, used specifically for the "View as of"
+  // control — chart axes and table headers keep the shorter form, since a
+  // longer label there would get cluttered with six of them side by side.
+  const PERIOD_DISPLAY_FULL = {
+    'AUT1 26': 'AUTUMN 1 2026', 'AUT2 26': 'AUTUMN 2 2026',
+    'SPR1 27': 'SPRING 1 2027', 'SPR2 27': 'SPRING 2 2027',
+    'SUM1 27': 'SUMMER 1 2027', 'SUM2 27': 'SUMMER 2 2027'
+  };
+  const YEAR_GROUPS = ['Year 7','Year 8','Year 9','Year 10','Year 11','Year 12','Year 13'];
+
+  // Which periods to show is based on where real data actually exists, not
+  // on today's calendar date — a dashboard should reflect whatever has been
+  // entered, and pick up new periods automatically as data is added, rather
+  // than hiding genuine data behind the same date-gate that governs when a
+  // form becomes available to fill in.
+  function getPeriodsWithData(attendanceData) {
+    return PERIODS.filter(p => attendanceData.some(r => r.period === p && r.value !== null && r.value !== ''));
+  }
+
+  function attVal(attendanceData, metric, period) {
+    const row = attendanceData.find(r => r.category === 'Attendance Percentages' && r.metric === metric && r.period === period);
+    return row ? parseFloat(row.value) : null;
+  }
+
+  async function init() {
+    const params = new URLSearchParams(window.location.search);
+    const schoolId = params.get('school_id');
+    const statusArea = document.getElementById('statusArea');
+
+    const { data: { session } } = await sb.auth.getSession();
+    if (!session) {
+      statusArea.innerHTML = '<div class="empty-msg">Please <a href="login.html">log in</a> to view this dashboard.</div>';
+      return;
+    }
+    if (!schoolId) {
+      statusArea.innerHTML = '<div class="empty-msg">No school specified — this page needs a ?school_id= in the URL.</div>';
+      return;
+    }
+
+    const [schoolRes, attendanceRes, resourceStatsRes] = await Promise.all([
+      sb.from('schools').select('*').eq('id', schoolId).maybeSingle(),
+      sb.from('attendance_data').select('*').eq('school_id', schoolId),
+      sb.from('resource_stats').select('*').eq('category', 'National Averages')
+    ]);
+    const resourceStats = resourceStatsRes.data || [];
+    function natAvgVal(metric) {
+      const row = resourceStats.find(r => r.metric === metric);
+      return row ? parseFloat(row.value) : null;
+    }
+    function normalizePeriodInput(str) {
+      if (!str) return null;
+      const m = String(str).toUpperCase().match(/(AUT|SPR|SUM)\D*(1|2)\D*(\d{2,4})/);
+      if (!m) return null;
+      let [, season, num, year] = m;
+      if (year.length === 4) year = year.slice(-2);
+      return `${season}${num} ${year}`;
+    }
+    function natAvgValForPeriod(metric, periodKey) {
+      const row = resourceStats.find(r => r.metric === metric && normalizePeriodInput(r.period) === periodKey);
+      return row ? parseFloat(row.value) : null;
+    }
+    function overallNationalFor(period) {
+      const specific = natAvgValForPeriod('Overall National Attendance', period);
+      return specific !== null ? specific : natAvgVal('Overall Attendance %');
+    }
+    function ppNationalFor(period) {
+      const specific = natAvgValForPeriod('PP National Attendance', period);
+      return specific !== null ? specific : natAvgVal('PP Attendance %');
+    }
+
+    if (schoolRes.error || attendanceRes.error) {
+      statusArea.innerHTML = '<div class="empty-msg">Could not load data — you may not have access to this school\'s dashboard.</div>';
+      console.error(schoolRes.error || attendanceRes.error);
+      return;
+    }
+
+    const school = schoolRes.data || {};
+    document.getElementById('sidebarSchoolName').textContent = school.name || 'SOAP Dashboard';
+
+    // Package check — admins can always preview any school's dashboard;
+    // everyone else needs a package that actually includes SOAP Dashboard.
+    // This lives here (not just hidden in the portal link) so navigating
+    // straight to this URL can't bypass the restriction.
+    const { data: adminRow } = await sb.from('admins').select('auth_user_id').eq('auth_user_id', session.user.id).maybeSingle();
+    const PACKAGES_WITH_DASHBOARD = ['SOAP Performance Suite'];
+    if (!adminRow && !PACKAGES_WITH_DASHBOARD.includes(school.package_tier)) {
+      statusArea.innerHTML = `
+        <div class="page-title">SOAP Dashboard</div>
+        <div class="empty-msg">🔒 SOAP Dashboard isn't included in ${school.name || 'this school'}'s current package. Contact SOAP Analytics to upgrade.</div>`;
+      return;
+    }
+
+    const attendanceData = attendanceRes.data || [];
+    const periodsWithData = getPeriodsWithData(attendanceData);
+
+    if (!periodsWithData.length || !attendanceData.length) {
+      statusArea.innerHTML = `
+        <div class="page-title">Attendance</div>
+        <div class="page-sub">Live attendance trends for ${school.name || 'this school'}.</div>
+        <div class="empty-msg">No attendance data has been entered yet for any active period — once it is, this page will fill in automatically.</div>`;
+      return;
+    }
+
+    // Build the static shell once. The dropdown lets you view the dashboard
+    // "as of" any period that has data — everything below it (cards, both
+    // charts, the table) re-renders to show only that period and earlier,
+    // hiding anything later even if it already has data.
+    statusArea.innerHTML = `
+      <div class="page-header-row">
+        <div>
+          <div class="page-title">Attendance</div>
+          <div class="page-sub">Live attendance trends for ${school.name || 'this school'} — updates automatically as new data is entered via the forms.</div>
+        </div>
+        <div class="period-picker">
+          <button type="button" class="period-btn" onclick="togglePeriodMenu()">View as of: <span id="periodBtnLabel"></span> ▾</button>
+          <div class="period-menu" id="periodMenu">
+            ${periodsWithData.map(p => `<button type="button" data-period="${p}" onclick="selectPeriod('${p}')">${PERIOD_DISPLAY_FULL[p]}</button>`).join('')}
+          </div>
+        </div>
+      </div>
+
+      <div class="exec-summary" id="execSummary"></div>
+
+      <div class="card-row" id="cardRow"></div>
+
+      <div class="chart-panel">
+        <h3>Overall Attendance vs National — by period</h3>
+        <div class="series-toggle" id="trendToggle"></div>
+        <canvas id="trendChart" height="90"></canvas>
+      </div>
+
+      <div class="chart-panel">
+        <h3>Pupil Premium & SEND vs Main Cohort — by period</h3>
+        <div class="series-toggle" id="ppSendToggle"></div>
+        <canvas id="ppSendChart" height="90"></canvas>
+      </div>
+
+      <div class="chart-panel">
+        <h3>Attendance by Year Group — trend across the year</h3>
+        <div class="series-toggle" id="ygToggle"></div>
+        <canvas id="yearGroupChart" height="100"></canvas>
+      </div>
+
+      <div class="chart-panel">
+        <table class="data-table" id="dataTable"></table>
+      </div>
+
+      <div class="chart-panel">
+        <h3>Compare Two Periods</h3>
+        <div class="compare-row">
+          <select id="compareA"></select>
+          <span>vs</span>
+          <select id="compareB"></select>
+          <button type="button" onclick="renderComparison()">Compare</button>
+        </div>
+        <table class="data-table" id="compareTable"></table>
+      </div>
+    `;
+
+    function buildSeriesToggle(containerId, chart, colors) {
+      const container = document.getElementById(containerId);
+      container.innerHTML = chart.data.datasets.map((ds, i) => `
+        <label class="series-toggle-item">
+          <input type="checkbox" checked onchange="toggleSeries('${containerId}', ${i}, this.checked)">
+          <span class="series-swatch" style="background:${colors[i % colors.length]}"></span>
+          ${ds.label}
+        </label>
+      `).join('') + `<button type="button" class="clear-filter-btn" onclick="clearSeriesToggle('${containerId}')">Clear all</button>`;
+    }
+
+    window.clearSeriesToggle = function(containerId) {
+      const chart = CHARTS[containerId];
+      chart.data.datasets.forEach((ds, i) => chart.setDatasetVisibility(i, false));
+      chart.update();
+      document.querySelectorAll(`#${containerId} input[type="checkbox"]`).forEach(cb => cb.checked = false);
+    };
+
+    const CHARTS = {};
+    window.toggleSeries = function(containerId, index, visible) {
+      const chart = CHARTS[containerId];
+      chart.setDatasetVisibility(index, visible);
+      chart.update();
+    };
+
+    const trendColors = ['#1A7A6E', '#5B6B7F'];
+    const YG_COLORS = ['#1A7A6E','#2E86AB','#C97B3E','#8E5572','#4B7F52','#B04A4A','#5B6B7F'];
+    const PPSEND_COLORS = ['#1A7A6E','#2E86AB','#C97B3E'];
+    const metrics = ['Overall Attendance %','Persistent Absence %','PP Attendance %','PP Persistent Absence %','SEND Attendance %','SEND Persistent Absence %'];
+    const LOWER_IS_BETTER = ['Persistent Absence %', 'PP Persistent Absence %', 'SEND Persistent Absence %'];
+    const SUMMARY_METRICS = ['Overall Attendance %','Persistent Absence %','PP Attendance %','PP Persistent Absence %','SEND Attendance %','SEND Persistent Absence %'];
+    const CHANGE_THRESHOLD = 0.5; // pp — below this, a change isn't worth calling out
+    const GAP_THRESHOLD = 1.0; // pp — below this, standing vs national isn't worth calling out as a standout
+
+    // Y-axis scaling — rather than a fixed range that leaves half the chart
+    // blank, size it to the actual data: 5 points below the lowest value
+    // shown, 2 above the highest, so the shape of the trend fills the space.
+    function computeYScale(valueArrays) {
+      const all = valueArrays.flat().filter(v => v !== null && v !== undefined);
+      if (!all.length) return { min: 80, max: 100 };
+      const min = Math.min(...all);
+      const max = Math.max(...all);
+      return { min: Math.max(0, Math.floor(min - 5)), max: Math.min(100, Math.ceil(max + 2)) };
+    }
+
+    function togglePeriodMenu() {
+      document.getElementById('periodMenu').classList.toggle('open');
+    }
+    window.togglePeriodMenu = togglePeriodMenu;
+    window.selectPeriod = function(p) {
+      document.getElementById('periodMenu').classList.remove('open');
+      renderForCutoff(p);
+    };
+    document.addEventListener('click', (e) => {
+      const picker = document.querySelector('.period-picker');
+      if (picker && !picker.contains(e.target)) document.getElementById('periodMenu').classList.remove('open');
+    });
+
+    // Executive summary — genuine standouts only. If nothing clears the
+    // threshold, say so plainly rather than inventing a "strength" or
+    // "regression" out of noise-level movement.
+    function buildExecutiveSummary(cutoffPeriod, shownPeriods) {
+      const prevPeriod = shownPeriods.length >= 2 ? shownPeriods[shownPeriods.length - 2] : null;
+
+      // Strength / Concern: current standing vs national, direction-adjusted
+      let bestGap = null, worstGap = null;
+      SUMMARY_METRICS.forEach(m => {
+        const schoolVal = attVal(attendanceData, m, cutoffPeriod);
+        const natVal = m === 'Overall Attendance %' ? overallNationalFor(cutoffPeriod)
+          : m === 'PP Attendance %' ? ppNationalFor(cutoffPeriod)
+          : natAvgVal(m);
+        if (schoolVal === null || natVal === null) return;
+        const rawGap = schoolVal - natVal;
+        const gap = LOWER_IS_BETTER.includes(m) ? -rawGap : rawGap;
+        if (bestGap === null || gap > bestGap.gap) bestGap = { metric: m, gap, schoolVal, natVal };
+        if (worstGap === null || gap < worstGap.gap) worstGap = { metric: m, gap, schoolVal, natVal };
+      });
+
+      // Improvement / Regression: change from previous period, direction-adjusted
+      let bestChange = null, worstChange = null;
+      if (prevPeriod) {
+        SUMMARY_METRICS.forEach(m => {
+          const now = attVal(attendanceData, m, cutoffPeriod);
+          const prev = attVal(attendanceData, m, prevPeriod);
+          if (now === null || prev === null) return;
+          const rawChange = now - prev;
+          const change = LOWER_IS_BETTER.includes(m) ? -rawChange : rawChange;
+          if (bestChange === null || change > bestChange.change) bestChange = { metric: m, change, now, prev };
+          if (worstChange === null || change < worstChange.change) worstChange = { metric: m, change, now, prev };
+        });
+      }
+
+      const strengthCard = (bestGap && bestGap.gap >= GAP_THRESHOLD)
+        ? { metric: bestGap.metric, detail: `${Math.abs(bestGap.gap).toFixed(1)}pp ahead of national (${bestGap.schoolVal}% vs ${bestGap.natVal}%)` }
+        : { metric: 'No standout strength', detail: 'Nothing is significantly ahead of national this period' };
+
+      const concernCard = (worstGap && worstGap.gap <= -GAP_THRESHOLD)
+        ? { metric: worstGap.metric, detail: `${Math.abs(worstGap.gap).toFixed(1)}pp behind national (${worstGap.schoolVal}% vs ${worstGap.natVal}%)` }
+        : { metric: 'No major concern', detail: 'Nothing is significantly behind national this period' };
+
+      const improvementCard = !prevPeriod
+        ? { metric: 'Not enough data yet', detail: 'Need at least two periods to compare' }
+        : (bestChange && bestChange.change >= CHANGE_THRESHOLD)
+          ? { metric: bestChange.metric, detail: `Improved ${Math.abs(bestChange.change).toFixed(1)}pp since ${PERIOD_DISPLAY[prevPeriod]} (${bestChange.prev}% → ${bestChange.now}%)` }
+          : { metric: 'No significant improvement', detail: `Nothing moved meaningfully since ${PERIOD_DISPLAY[prevPeriod]}` };
+
+      const regressionCard = !prevPeriod
+        ? { metric: 'Not enough data yet', detail: 'Need at least two periods to compare' }
+        : (worstChange && worstChange.change <= -CHANGE_THRESHOLD)
+          ? { metric: worstChange.metric, detail: `Dropped ${Math.abs(worstChange.change).toFixed(1)}pp since ${PERIOD_DISPLAY[prevPeriod]} (${worstChange.prev}% → ${worstChange.now}%)` }
+          : { metric: 'No significant regression', detail: `Nothing worsened meaningfully since ${PERIOD_DISPLAY[prevPeriod]}` };
+
+      document.getElementById('execSummary').innerHTML = `
+        <div class="exec-card strength">
+          <div class="exec-label">Strength</div>
+          <div class="exec-metric">${strengthCard.metric}</div>
+          <div class="exec-detail">${strengthCard.detail}</div>
+        </div>
+        <div class="exec-card improvement">
+          <div class="exec-label">Improvement</div>
+          <div class="exec-metric">${improvementCard.metric}</div>
+          <div class="exec-detail">${improvementCard.detail}</div>
+        </div>
+        <div class="exec-card regression">
+          <div class="exec-label">Regression</div>
+          <div class="exec-metric">${regressionCard.metric}</div>
+          <div class="exec-detail">${regressionCard.detail}</div>
+        </div>
+        <div class="exec-card concern">
+          <div class="exec-label">Main Concern</div>
+          <div class="exec-metric">${concernCard.metric}</div>
+          <div class="exec-detail">${concernCard.detail}</div>
+        </div>
+      `;
+    }
+
+    window.renderForCutoff = function(cutoffPeriod) {
+      const cutoffIdx = PERIODS.indexOf(cutoffPeriod);
+      const shownPeriods = periodsWithData.filter(p => PERIODS.indexOf(p) <= cutoffIdx);
+
+      document.getElementById('periodBtnLabel').textContent = PERIOD_DISPLAY_FULL[cutoffPeriod];
+      document.querySelectorAll('#periodMenu button').forEach(btn => {
+        btn.classList.toggle('selected', btn.dataset.period === cutoffPeriod);
+      });
+
+      buildExecutiveSummary(cutoffPeriod, shownPeriods);
+
+      const overallLatest = attVal(attendanceData, 'Overall Attendance %', cutoffPeriod);
+      const nationalLatest = overallNationalFor(cutoffPeriod);
+      const paLatest = attVal(attendanceData, 'Persistent Absence %', cutoffPeriod);
+
+      document.getElementById('cardRow').innerHTML = `
+        <div class="stat-card">
+          <div class="label">Overall Attendance</div>
+          <div class="value">${overallLatest !== null ? overallLatest + '%' : '—'}</div>
+          <div class="sub">${PERIOD_DISPLAY[cutoffPeriod]}</div>
+        </div>
+        <div class="stat-card">
+          <div class="label">vs National</div>
+          <div class="value">${overallLatest !== null && nationalLatest !== null ? (overallLatest - nationalLatest >= 0 ? '+' : '') + (overallLatest - nationalLatest).toFixed(1) + 'pp' : '—'}</div>
+          <div class="sub">National: ${nationalLatest !== null ? nationalLatest + '%' : '—'}</div>
+        </div>
+        <div class="stat-card">
+          <div class="label">Persistent Absence</div>
+          <div class="value">${paLatest !== null ? paLatest + '%' : '—'}</div>
+          <div class="sub">${PERIOD_DISPLAY[cutoffPeriod]}</div>
+        </div>
+      `;
+
+      if (CHARTS.trend) CHARTS.trend.destroy();
+      if (CHARTS.yg) CHARTS.yg.destroy();
+      if (CHARTS.ppSend) CHARTS.ppSend.destroy();
+
+      const overallSeries = shownPeriods.map(p => attVal(attendanceData, 'Overall Attendance %', p));
+      // National line now genuinely varies by period where a term-specific
+      // figure has been added, rather than repeating one flat number —
+      // falls back to the flat figure for any term without its own row yet
+      const nationalSeries = shownPeriods.map(p => overallNationalFor(p));
+      const trendScale = computeYScale([overallSeries, nationalSeries]);
+      CHARTS.trend = new Chart(document.getElementById('trendChart'), {
+        type: 'line',
+        data: {
+          labels: shownPeriods.map(p => PERIOD_DISPLAY[p]),
+          datasets: [
+            { label: 'School', data: overallSeries, borderColor: trendColors[0], backgroundColor: 'rgba(26,122,110,0.1)', tension: 0.3, fill: true },
+            { label: 'National', data: nationalSeries, borderColor: trendColors[1], borderDash: [5,5], tension: 0.3, fill: false }
+          ]
+        },
+        options: { responsive: true, scales: { y: { min: trendScale.min, max: trendScale.max } }, plugins: { legend: { display: false } } }
+      });
+      CHARTS.trendToggle = CHARTS.trend;
+      buildSeriesToggle('trendToggle', CHARTS.trend, trendColors);
+
+      const ygSeries = YEAR_GROUPS.map(yg => shownPeriods.map(p => attVal(attendanceData, yg + ' Attendance %', p)));
+      const ygNationalSeries = shownPeriods.map(p => overallNationalFor(p));
+      const hasAnyNational = ygNationalSeries.some(v => v !== null);
+      const ygDatasets = YEAR_GROUPS.map((yg, i) => ({
+        label: yg,
+        data: ygSeries[i],
+        borderColor: YG_COLORS[i % YG_COLORS.length],
+        backgroundColor: YG_COLORS[i % YG_COLORS.length],
+        tension: 0.3,
+        fill: false,
+        spanGaps: true
+      }));
+      if (hasAnyNational) {
+        ygDatasets.push({
+          label: 'National Average',
+          data: ygNationalSeries,
+          borderColor: '#5B6B7F',
+          borderDash: [5,5],
+          borderWidth: 2,
+          pointRadius: 0,
+          tension: 0,
+          fill: false,
+          spanGaps: true
+        });
+      }
+      const ygScale = computeYScale(hasAnyNational ? [...ygSeries, ygNationalSeries] : ygSeries);
+      CHARTS.yg = new Chart(document.getElementById('yearGroupChart'), {
+        type: 'line',
+        data: { labels: shownPeriods.map(p => PERIOD_DISPLAY[p]), datasets: ygDatasets },
+        options: { responsive: true, scales: { y: { min: ygScale.min, max: ygScale.max } }, plugins: { legend: { display: false } } }
+      });
+      CHARTS.ygToggle = CHARTS.yg;
+      buildSeriesToggle('ygToggle', CHARTS.yg, hasAnyNational ? [...YG_COLORS, '#5B6B7F'] : YG_COLORS);
+
+      // Pupil Premium & SEND vs Main Cohort, each paired with its own
+      // National Average as a dashed line in the same colour, so it's clear
+      // which national figure belongs to which cohort
+      const mainSeries = shownPeriods.map(p => attVal(attendanceData, 'Overall Attendance %', p));
+      const ppSeries = shownPeriods.map(p => attVal(attendanceData, 'PP Attendance %', p));
+      const sendSeries = shownPeriods.map(p => attVal(attendanceData, 'SEND Attendance %', p));
+      const natMainSeries = shownPeriods.map(p => overallNationalFor(p));
+      const natPPSeries = shownPeriods.map(p => ppNationalFor(p));
+      const natSEND = natAvgVal('SEND Attendance %');
+
+      const ppSendDatasets = [
+        { label: 'Main Cohort', data: mainSeries, borderColor: PPSEND_COLORS[0], tension: 0.3, fill: false },
+        { label: 'Pupil Premium', data: ppSeries, borderColor: PPSEND_COLORS[1], tension: 0.3, fill: false },
+        { label: 'SEND', data: sendSeries, borderColor: PPSEND_COLORS[2], tension: 0.3, fill: false }
+      ];
+      const ppSendColorsForToggle = [...PPSEND_COLORS];
+      if (natMainSeries.some(v => v !== null)) {
+        ppSendDatasets.push({ label: 'National (Main)', data: natMainSeries, borderColor: PPSEND_COLORS[0], borderDash: [5,5], pointRadius: 0, tension: 0, fill: false, spanGaps: true });
+        ppSendColorsForToggle.push(PPSEND_COLORS[0]);
+      }
+      if (natPPSeries.some(v => v !== null)) {
+        ppSendDatasets.push({ label: 'National (PP)', data: natPPSeries, borderColor: PPSEND_COLORS[1], borderDash: [5,5], pointRadius: 0, tension: 0, fill: false, spanGaps: true });
+        ppSendColorsForToggle.push(PPSEND_COLORS[1]);
+      }
+      if (natSEND !== null) {
+        ppSendDatasets.push({ label: 'National (SEND)', data: shownPeriods.map(() => natSEND), borderColor: PPSEND_COLORS[2], borderDash: [5,5], pointRadius: 0, tension: 0, fill: false });
+        ppSendColorsForToggle.push(PPSEND_COLORS[2]);
+      }
+
+      const ppSendScale = computeYScale([mainSeries, ppSeries, sendSeries, natMainSeries, natPPSeries, [natSEND]]);
+      CHARTS.ppSend = new Chart(document.getElementById('ppSendChart'), {
+        type: 'line',
+        data: { labels: shownPeriods.map(p => PERIOD_DISPLAY[p]), datasets: ppSendDatasets },
+        options: { responsive: true, scales: { y: { min: ppSendScale.min, max: ppSendScale.max } }, plugins: { legend: { display: false } } }
+      });
+      CHARTS.ppSendToggle = CHARTS.ppSend;
+      buildSeriesToggle('ppSendToggle', CHARTS.ppSend, ppSendColorsForToggle);
+
+      const table = document.getElementById('dataTable');
+      table.innerHTML = `
+        <thead><tr><th>Metric</th>${shownPeriods.map(p => `<th>${PERIOD_DISPLAY[p]}</th>`).join('')}</tr></thead>
+        <tbody>
+          ${metrics.map(m => `
+            <tr><td>${m}</td>${shownPeriods.map(p => {
+              const v = attVal(attendanceData, m, p);
+              return `<td>${v !== null ? v + '%' : '—'}</td>`;
+            }).join('')}</tr>
+          `).join('')}
+        </tbody>
+      `;
+    };
+
+    // Comparison tool — pick any two periods with data and see the metrics
+    // side by side, with the difference and direction made explicit rather
+    // than left for someone to work out by eye.
+    const compareA = document.getElementById('compareA');
+    const compareB = document.getElementById('compareB');
+    [compareA, compareB].forEach(sel => {
+      sel.innerHTML = periodsWithData.map(p => `<option value="${p}">${PERIOD_DISPLAY[p]}</option>`).join('');
+    });
+    compareA.value = periodsWithData[0];
+    compareB.value = periodsWithData[periodsWithData.length - 1];
+
+    window.renderComparison = function() {
+      const pA = compareA.value;
+      const pB = compareB.value;
+      const table = document.getElementById('compareTable');
+      table.innerHTML = `
+        <thead><tr><th>Metric</th><th>${PERIOD_DISPLAY[pA]}</th><th>${PERIOD_DISPLAY[pB]}</th><th>Change</th></tr></thead>
+        <tbody>
+          ${metrics.map(m => {
+            const vA = attVal(attendanceData, m, pA);
+            const vB = attVal(attendanceData, m, pB);
+            let changeCell = '—';
+            if (vA !== null && vB !== null) {
+              const diff = vB - vA;
+              const isGoodDirection = LOWER_IS_BETTER.includes(m) ? diff < 0 : diff > 0;
+              const cls = diff === 0 ? '' : (isGoodDirection ? 'diff-up' : 'diff-down');
+              const arrow = diff > 0 ? '▲' : (diff < 0 ? '▼' : '');
+              changeCell = `<span class="${cls}">${arrow} ${diff >= 0 ? '+' : ''}${diff.toFixed(1)}pp</span>`;
+            }
+            return `<tr><td>${m}</td><td>${vA !== null ? vA + '%' : '—'}</td><td>${vB !== null ? vB + '%' : '—'}</td><td>${changeCell}</td></tr>`;
+          }).join('')}
+        </tbody>
+      `;
+    };
+    renderComparison();
+
+    // Default view: the genuine latest period with real data
+    renderForCutoff(periodsWithData[periodsWithData.length - 1]);
+  }
+
+  init();
+</script>
+
+</body>
+</html>
