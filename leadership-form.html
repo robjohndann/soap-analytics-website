@@ -229,8 +229,28 @@
       return;
     }
 
-    const { data: linkRow } = await sb
-      .from('school_users').select('school_id, role').eq('auth_user_id', session.user.id).maybeSingle();
+    const { data: linkRows, error: linkError } = await sb
+      .from('school_users').select('school_id, role').eq('auth_user_id', session.user.id);
+
+    if (linkError) {
+      statusMsg.innerHTML = 'Unable to load your school access. Please return to the <a href="portal.html">portal</a> and try again.';
+      return;
+    }
+
+    const requestedSchoolId = new URLSearchParams(window.location.search).get('school_id');
+    const linkRow = requestedSchoolId
+      ? (linkRows || []).find(r => r.school_id === requestedSchoolId)
+      : ((linkRows || []).length === 1 ? linkRows[0] : null);
+
+    if ((linkRows || []).length > 1 && !requestedSchoolId) {
+      statusMsg.innerHTML = 'Your account has access to more than one school. Please <a href="portal.html">return to the portal</a> and choose a school first.';
+      return;
+    }
+
+    if (requestedSchoolId && !linkRow) {
+      statusMsg.innerHTML = 'Access denied: this school is not linked to your account. Please <a href="portal.html">return to the portal</a>.';
+      return;
+    }
 
     if (!linkRow) {
       statusMsg.innerHTML = 'Your login isn\'t linked to a school yet. Please complete <a href="school-setup-form.html">School Setup</a> first.';

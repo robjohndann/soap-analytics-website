@@ -37,7 +37,7 @@
   table.grid-table td.label-cell { font-weight: 700; color: #1B2A4A; white-space: nowrap; }
   table.grid-table input { width: 78px; font-family: Arial, Helvetica, sans-serif; font-size: 13px; padding: 6px 8px; border: 1px solid #DCE3EA; border-radius: 5px; }
   table.grid-table input:focus { outline: none; border-color: #0D7377; box-shadow: 0 0 0 3px rgba(13,115,119,0.12); }
-  table.grid-table input.calculated-cell { background: #E8F4F4; color: #1A7A6E; font-weight: 700; cursor: default; }
+  table.grid-table input.calculated-cell { background: #E8F4F4; color: #1B2A4A; font-weight: 700; cursor: default; }
 
   .submit-bar { position: sticky; bottom: 0; background: #1B2A4A; padding: 14px 5%; display: flex; justify-content: space-between; align-items: center; gap: 16px; box-shadow: 0 -4px 16px rgba(0,0,0,0.15); }
   .submit-bar .note { font-size: 12px; color: rgba(255,255,255,0.55); }
@@ -249,8 +249,28 @@
       return;
     }
 
-    const { data: linkRow } = await sb
-      .from('school_users').select('school_id, role').eq('auth_user_id', session.user.id).maybeSingle();
+    const { data: linkRows, error: linkError } = await sb
+      .from('school_users').select('school_id, role').eq('auth_user_id', session.user.id);
+
+    if (linkError) {
+      statusMsg.innerHTML = 'Unable to load your school access. Please return to the <a href="portal.html">portal</a> and try again.';
+      return;
+    }
+
+    const requestedSchoolId = new URLSearchParams(window.location.search).get('school_id');
+    const linkRow = requestedSchoolId
+      ? (linkRows || []).find(r => r.school_id === requestedSchoolId)
+      : ((linkRows || []).length === 1 ? linkRows[0] : null);
+
+    if ((linkRows || []).length > 1 && !requestedSchoolId) {
+      statusMsg.innerHTML = 'Your account has access to more than one school. Please <a href="portal.html">return to the portal</a> and choose a school first.';
+      return;
+    }
+
+    if (requestedSchoolId && !linkRow) {
+      statusMsg.innerHTML = 'Access denied: this school is not linked to your account. Please <a href="portal.html">return to the portal</a>.';
+      return;
+    }
 
     if (!linkRow) {
       statusMsg.innerHTML = 'Your login isn\'t linked to a school yet. Please complete <a href="school-setup-form.html">School Setup</a> first.';

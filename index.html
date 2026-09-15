@@ -25,8 +25,6 @@
   .nav-cta { background: #0D2B4E; color: #fff !important; font-weight: 600 !important; padding: 8px 14px; border-radius: 6px; white-space: nowrap; }
   .nav-login-btn { background: #fff; color: #0D2B4E !important; font-weight: 600 !important; padding: 8px 14px; border-radius: 6px; white-space: nowrap; }
   .nav-login-btn:hover { background: #F0F4F8; color: #0D2B4E !important; }
-  .nav-register-btn { background: #fff; color: #0D7377 !important; font-weight: 600 !important; padding: 8px 14px; border-radius: 6px; white-space: nowrap; }
-  .nav-register-btn:hover { background: #F0F4F8; color: #0D7377 !important; }
 
   .nav-burger { display: none; flex-direction: column; justify-content: center; gap: 5px; width: 30px; height: 30px; background: none; border: none; cursor: pointer; padding: 0; }
   .nav-burger span { display: block; width: 100%; height: 3px; background: #0D2B4E; border-radius: 2px; transition: transform 0.2s, opacity 0.2s; }
@@ -173,8 +171,8 @@
   @media (max-width: 1500px) {
     .hero { min-height: auto; padding-bottom: 60px; }
     .hero-inner { grid-template-columns: 1fr; }
-    .hero-left-col { padding-left: 0; }
-    .hero-card { width: 100%; max-width: 640px; margin: 32px auto 0; }
+    .hero-left-col { padding-left: 0; max-width: 640px; margin: 0 auto; }
+    .hero-card { width: 100%; max-width: 640px; margin: 32px 0 0; }
     .nav-burger { display: flex; }
     .nav-links { display: none; }
     .nav-links.mobile-open {
@@ -197,7 +195,6 @@
     .nav-social-mobile .nav-social-link { background: rgba(255,255,255,0.12); color: #fff; }
     .nav-social-mobile .nav-social-link:hover { background: rgba(255,255,255,0.25); }
     .nav-links.mobile-open .nav-login-btn { margin: 8px 24px; text-align: center; }
-    .nav-links.mobile-open .nav-register-btn { margin: 8px 24px; text-align: center; }
     .nav-links.mobile-open .nav-dropdown { position: static; }
     .nav-links.mobile-open .dropdown-menu { position: static; box-shadow: none; border-radius: 0; background: rgba(255,255,255,0.06); min-width: 0; padding: 0; margin: 0 24px 4px; width: calc(100% - 48px); }
     .nav-links.mobile-open .dropdown-menu li a { padding: 12px 16px; font-size: 14px; }
@@ -251,7 +248,6 @@
     </li>
     <li><a href="#about">About</a></li>
     <li><a href="login.html" class="nav-login-btn">School Login</a></li>
-    <li><a href="register-interest.html" class="nav-register-btn">Register Interest</a></li>
     <li><a href="mailto:robin@soapanalytics.co.uk?subject=Callback request&body=Name%3A%0ASchool%3A%0APhone%20number%3A%0ABest%20time%20to%20call%3A%0A%0A" class="nav-cta">Request a Callback</a></li>
   </ul>
 </nav>

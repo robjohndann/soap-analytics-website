@@ -39,6 +39,7 @@
   table.grid-table input, table.grid-table select { width: 78px; font-family: Arial, Helvetica, sans-serif; font-size: 13px; padding: 6px 8px; border: 1px solid #DCE3EA; border-radius: 5px; }
   table.grid-table select.rating-select { width: 100%; min-width: 190px; }
   table.grid-table input:focus, table.grid-table select:focus { outline: none; border-color: #0D7377; box-shadow: 0 0 0 3px rgba(13,115,119,0.12); }
+  table.grid-table input.time-locked, table.grid-table select.time-locked { background:#EDEFF2; color:#A0ADB8; cursor:not-allowed; }
 
   table.grid-table.year-table { min-width: 0; }
   table.grid-table.year-table th { padding: 6px 5px; font-size: 10px; }
@@ -214,8 +215,34 @@
   }
 
   let currentSchoolId = null;
+  let existingAchievementRows = [];
   let gcseYearCols = [...BASE_YEAR_COLS, 'Predicted'];
   let post16YearCols = [...BASE_YEAR_COLS, 'Predicted'];
+  let achievementLocks = {
+    'GCSE Outcomes': { PPE1: true, PPE2: true, Predicted: true },
+    'Post-16 Outcomes': { PPE1: true, PPE2: true, Predicted: true }
+  };
+
+  function localTodayISO() {
+    const d = new Date();
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  }
+
+  function dateReached(dateString) {
+    return !!dateString && dateString <= localTodayISO();
+  }
+
+  function isAchievementPeriodLocked(category, period) {
+    return !!(achievementLocks[category] && achievementLocks[category][period]);
+  }
+
+  function lockTitle(category, period) {
+    if (period === 'Predicted') return 'Predicted outcomes unlock when the first reporting period begins';
+    return `${category === 'GCSE Outcomes' ? 'Year 11' : 'Year 13'} ${period === 'PPE1' ? 'PPE 1' : 'PPE 2'} unlocks on its School Setup assessment date`;
+  }
 
   function openRatingKey() {
     const body = document.getElementById('ratingKeyBody');
@@ -245,8 +272,11 @@
       const hint = format ? ` title="${FORMAT_HINTS[format]}"` : '';
       html += `<tr data-category="${category}" data-metric="${r}"><td class="label-cell">${r}</td>`;
       periodKeys.forEach(p => {
+        const timeLocked = isAchievementPeriodLocked(category, p);
         if (blankedPeriods.includes(p)) {
           html += `<td><input type="text" data-period="${p}" disabled style="background:#EDEFF2;color:#A0ADB8;" placeholder="—" title="Not recorded for this year, in school or nationally"></td>`;
+        } else if (timeLocked) {
+          html += `<td><input type="text" data-period="${p}" disabled class="time-locked" placeholder="—" title="${lockTitle(category, p)}"></td>`;
         } else if (isSelect) {
           html += `<td><select data-period="${p}"><option value="">—</option>${rowDef.options.map(o => `<option>${o}</option>`).join('')}</select></td>`;
         } else {
@@ -369,13 +399,16 @@
   async function prefillForm(schoolId) {
     const { data: existingRows } = await sb
       .from('achievement_data').select('category, metric, period, value').eq('school_id', schoolId);
-    (existingRows || []).forEach(r => {
-      const row = Array.from(document.querySelectorAll('#achievementForm tr')).find(
-        tr => tr.dataset.category === r.category && tr.dataset.metric === r.metric
+    existingAchievementRows = existingRows || [];
+    existingAchievementRows.forEach(r => {
+      const row = Array.from(document.querySelectorAll('#achievementForm tr[data-category], #achievementForm .rating-field[data-category]')).find(
+        el => el.dataset.category === r.category && el.dataset.metric === r.metric
       );
       if (!row) return;
       const el = Array.from(row.querySelectorAll('input, select')).find(input => input.dataset.period === r.period);
-      if (el && r.value) el.value = r.value;
+      // Future PPE/Predicted values from an earlier version stay stored, but are not
+      // displayed until the configured unlock date is reached.
+      if (el && !el.disabled && r.value) el.value = r.value;
     });
   }
 
@@ -389,11 +422,38 @@
   }
 
   async function loadAssessmentSetup(schoolId) {
-    const { data } = await sb.from('assessment_setup').select('*').eq('school_id', schoolId);
+    const [assessmentRes, reportingRes] = await Promise.all([
+      sb.from('assessment_setup').select('*').eq('school_id', schoolId),
+      sb.from('reporting_periods').select('period_name, start_date').eq('school_id', schoolId)
+    ]);
+    const data = assessmentRes.data || [];
+    const reportingPeriods = reportingRes.data || [];
+    const assessment = (name) => data.find(a => a.assessment_name === name);
     const planned = (name) => {
-      const row = (data || []).find(a => a.assessment_name === name);
+      const row = assessment(name);
       return row ? row.planned === 'Yes' : false;
     };
+    const unlocked = (name) => {
+      const row = assessment(name);
+      return !!(row && row.planned === 'Yes' && dateReached(row.assessment_date));
+    };
+
+    const firstReporting = reportingPeriods.find(r => r.period_name === 'Autumn 1');
+    const predictedLocked = !(firstReporting && dateReached(firstReporting.start_date));
+
+    achievementLocks = {
+      'GCSE Outcomes': {
+        PPE1: !unlocked('Year 11 PPE 1'),
+        PPE2: !unlocked('Year 11 PPE 2'),
+        Predicted: predictedLocked
+      },
+      'Post-16 Outcomes': {
+        PPE1: !unlocked('Year 13 PPE 1'),
+        PPE2: !unlocked('Year 13 PPE 2'),
+        Predicted: predictedLocked
+      }
+    };
+
     gcseYearCols = [...BASE_YEAR_COLS];
     if (planned('Year 11 PPE 1')) gcseYearCols.push('PPE1');
     if (planned('Year 11 PPE 2')) gcseYearCols.push('PPE2');
@@ -414,8 +474,28 @@
       return;
     }
 
-    const { data: linkRow } = await sb
-      .from('school_users').select('school_id, role').eq('auth_user_id', session.user.id).maybeSingle();
+    const { data: linkRows, error: linkError } = await sb
+      .from('school_users').select('school_id, role').eq('auth_user_id', session.user.id);
+
+    if (linkError) {
+      statusMsg.innerHTML = 'Unable to load your school access. Please return to the <a href="portal.html">portal</a> and try again.';
+      return;
+    }
+
+    const requestedSchoolId = new URLSearchParams(window.location.search).get('school_id');
+    const linkRow = requestedSchoolId
+      ? (linkRows || []).find(r => r.school_id === requestedSchoolId)
+      : ((linkRows || []).length === 1 ? linkRows[0] : null);
+
+    if ((linkRows || []).length > 1 && !requestedSchoolId) {
+      statusMsg.innerHTML = 'Your account has access to more than one school. Please <a href="portal.html">return to the portal</a> and choose a school first.';
+      return;
+    }
+
+    if (requestedSchoolId && !linkRow) {
+      statusMsg.innerHTML = 'Access denied: this school is not linked to your account. Please <a href="portal.html">return to the portal</a>.';
+      return;
+    }
 
     if (!linkRow) {
       statusMsg.innerHTML = 'Your login isn\'t linked to a school yet. Please complete <a href="school-setup-form.html">School Setup</a> first.';
@@ -446,13 +526,27 @@
     btn.textContent = 'Saving…';
 
     const rows = [];
-    document.querySelectorAll('#achievementForm tr[data-category]').forEach(el => {
+    document.querySelectorAll('#achievementForm tr[data-category], #achievementForm .rating-field[data-category]').forEach(el => {
       const category = el.dataset.category;
       const metric = el.dataset.metric;
       el.querySelectorAll('input, select').forEach(input => {
+        if (input.disabled) return;
         const val = input.value.trim();
         if (val) rows.push({ school_id: currentSchoolId, category, metric, period: input.dataset.period, value: val });
       });
+    });
+
+    // Preserve any already-stored future PPE/Predicted values while those cells are
+    // temporarily locked, so moving from V54 to V55 cannot silently destroy data.
+    existingAchievementRows.forEach(r => {
+      const tr = Array.from(document.querySelectorAll('#achievementForm tr[data-category], #achievementForm .rating-field[data-category]')).find(
+        row => row.dataset.category === r.category && row.dataset.metric === r.metric
+      );
+      if (!tr) return;
+      const el = Array.from(tr.querySelectorAll('input, select')).find(input => input.dataset.period === r.period);
+      if (el && el.disabled && el.classList.contains('time-locked') && r.value) {
+        rows.push({ school_id: currentSchoolId, category: r.category, metric: r.metric, period: r.period, value: r.value });
+      }
     });
 
     const { error: delError } = await sb.from('achievement_data').delete().eq('school_id', currentSchoolId);

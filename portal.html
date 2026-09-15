@@ -211,20 +211,43 @@
     return Math.round((Math.min(filled, total) / total) * 100);
   }
 
-  function achievementCompletion(assessmentSetupRows, rows) {
+  function achievementCompletion(assessmentSetupRows, reportingPeriods, rows) {
+    const today = (() => {
+      const d = new Date();
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${y}-${m}-${day}`;
+    })();
+    const assessment = (name) => (assessmentSetupRows || []).find(a => a.assessment_name === name);
     const planned = (name) => {
-      const row = (assessmentSetupRows || []).find(a => a.assessment_name === name);
-      return row ? row.planned === 'Yes' : false;
+      const row = assessment(name);
+      return !!(row && row.planned === 'Yes');
     };
-    const gcseCols = 4 + (planned('Year 11 PPE 1') ? 1 : 0) + (planned('Year 11 PPE 2') ? 1 : 0) + 1;
-    const post16Cols = 4 + (planned('Year 13 PPE 1') ? 1 : 0) + (planned('Year 13 PPE 2') ? 1 : 0) + 1;
-    let total = 4;
-    total += 10 * gcseCols;
-    total -= 4;
-    total += 8 * post16Cols;
-    total += 1;
-    const filled = (rows || []).length;
-    return total ? Math.round((Math.min(filled, total) / total) * 100) : 0;
+    const live = (name) => {
+      const row = assessment(name);
+      return !!(row && row.planned === 'Yes' && row.assessment_date && row.assessment_date <= today);
+    };
+    const gcsePeriods = new Set(['2022/23', '2023/24', '2024/25', '2025/26']);
+    const post16Periods = new Set(['2022/23', '2023/24', '2024/25', '2025/26']);
+    if (planned('Year 11 PPE 1') && live('Year 11 PPE 1')) gcsePeriods.add('PPE1');
+    if (planned('Year 11 PPE 2') && live('Year 11 PPE 2')) gcsePeriods.add('PPE2');
+    if (planned('Year 13 PPE 1') && live('Year 13 PPE 1')) post16Periods.add('PPE1');
+    if (planned('Year 13 PPE 2') && live('Year 13 PPE 2')) post16Periods.add('PPE2');
+
+    let total = 4; // Foundational Knowledge
+    total += 10 * gcsePeriods.size;
+    total -= 4; // Progress 8 rows have four historical cells intentionally unavailable
+    total += 8 * post16Periods.size;
+    total += 1; // Overall Rating
+
+    const filled = (rows || []).filter(r => {
+      if (r.category === 'GCSE Outcomes') return gcsePeriods.has(r.period);
+      if (r.category === 'Post-16 Outcomes') return post16Periods.has(r.period);
+      return true;
+    }).length;
+    const pct = total ? Math.round((Math.min(filled, total) / total) * 100) : 0;
+    return pct;
   }
 
   function pdwCompletion(rows) {
@@ -293,6 +316,59 @@
     btn.textContent = 'Send to support';
   }
 
+  async function uploadIdsr(schoolId) {
+    const input = document.getElementById('idsrFileInput');
+    const btn = document.getElementById('idsrUploadBtn');
+    const note = document.getElementById('idsrUploadNote');
+    const file = input.files[0];
+    if (!file) {
+      note.style.color = '#F3B8B8';
+      note.textContent = 'Choose a file first.';
+      return;
+    }
+    btn.disabled = true;
+    btn.textContent = 'Uploading…';
+    note.style.color = '#5A6B80';
+    note.textContent = 'Uploading your IDSR…';
+
+    const storagePath = `${schoolId}/idsr.html`;
+
+    const { error: uploadError } = await sb.storage.from('idsr-uploads').upload(storagePath, file, {
+      upsert: true,
+      contentType: 'text/html'
+    });
+    if (uploadError) {
+      console.error(uploadError);
+      note.style.color = '#F3B8B8';
+      note.textContent = 'Upload failed — please try again.';
+      btn.disabled = false;
+      btn.textContent = 'Upload IDSR';
+      return;
+    }
+
+    const { error: dbError } = await sb.from('idsr_uploads').upsert({
+      school_id: schoolId,
+      storage_path: storagePath,
+      file_name: file.name,
+      file_size: file.size,
+      status: 'pending',
+      uploaded_at: new Date().toISOString(),
+      published_at: null
+    }, { onConflict: 'school_id' });
+    if (dbError) {
+      console.error(dbError);
+      note.style.color = '#F3B8B8';
+      note.textContent = 'Uploaded, but something went wrong saving the record — contact support.';
+      btn.disabled = false;
+      btn.textContent = 'Upload IDSR';
+      return;
+    }
+
+    note.style.color = '#3DCFB8';
+    note.textContent = 'Uploaded — awaiting review.';
+    await checkLogin();
+  }
+
   function openSoapModal(title, htmlContent) {
     document.getElementById('soapModalTitle').textContent = title;
     document.getElementById('soapModalFrame').srcdoc = htmlContent;
@@ -358,9 +434,17 @@
     const { data: adminRow } = await sb.from('admins').select('auth_user_id').eq('auth_user_id', session.user.id).maybeSingle();
     if (adminRow) document.getElementById('adminLink').style.display = '';
 
-    const { data: linkRow } = await sb.from('school_users').select('school_id, role').eq('auth_user_id', session.user.id).maybeSingle();
+    const { data: linkRows, error: linkError } = await sb
+      .from('school_users')
+      .select('school_id, role')
+      .eq('auth_user_id', session.user.id);
 
-    if (!linkRow) {
+    if (linkError) {
+      statusArea.innerHTML = `<div class="status-card"><h1>Unable to load school access</h1><p>Please refresh or contact support.</p></div>`;
+      return;
+    }
+
+    if (!linkRows || linkRows.length === 0) {
       if (adminRow) {
         statusArea.innerHTML = `<div class="status-card"><h1>Welcome back, Admin</h1><p>You're logged in as <strong>${email}</strong> with admin access.</p><p style="margin-top:16px;">Use <strong>Admin Dashboard</strong> in the top bar to see every school's submitted data.</p></div>`;
       } else {
@@ -369,11 +453,38 @@
       return;
     }
 
+    const params = new URLSearchParams(window.location.search);
+    const requestedSchoolId = params.get('school_id');
+
+    if (linkRows.length > 1 && !requestedSchoolId) {
+      const schoolIds = linkRows.map(r => r.school_id);
+      const { data: linkedSchools } = await sb.from('schools').select('id, name').in('id', schoolIds);
+      const schoolNameById = Object.fromEntries((linkedSchools || []).map(s => [s.id, s.name]));
+      statusArea.innerHTML = `
+        <div class="status-card">
+          <h1>Choose a school</h1>
+          <p>Your account has access to more than one school. Select the school you want to work with.</p>
+          <div style="margin-top:18px;display:grid;gap:10px;">
+            ${linkRows.map(r => `<a href="portal.html?school_id=${encodeURIComponent(r.school_id)}" style="display:block;padding:14px 16px;border-radius:8px;background:#0D2B4E;color:#fff;text-decoration:none;font-weight:700;">${schoolNameById[r.school_id] || 'School'} <span style="opacity:.7;font-weight:500;">— ${r.role}</span></a>`).join('')}
+          </div>
+        </div>`;
+      return;
+    }
+
+    const linkRow = requestedSchoolId
+      ? linkRows.find(r => r.school_id === requestedSchoolId)
+      : linkRows[0];
+
+    if (!linkRow) {
+      statusArea.innerHTML = `<div class="status-card"><h1>Access denied</h1><p>This school is not linked to your account. <a href="portal.html">Return to the portal</a>.</p></div>`;
+      return;
+    }
+
     const availableForms = FORM_ACCESS[linkRow.role] || [];
 
     const [
       schoolRes, periodsRes, contextRes, safeguardingRes, inclusionRes, curriculumRes,
-      achievementRes, assessRes, attendanceRes, pdwRes, leadershipRes, financeRes, publishedRes
+      achievementRes, assessRes, attendanceRes, pdwRes, leadershipRes, financeRes, publishedRes, idsrRes
     ] = await Promise.all([
       sb.from('schools').select('*').eq('id', linkRow.school_id).maybeSingle(),
       sb.from('reporting_periods').select('*').eq('school_id', linkRow.school_id),
@@ -387,7 +498,8 @@
       sb.from('pdw_data').select('*').eq('school_id', linkRow.school_id),
       sb.from('leadership_governance_data').select('*').eq('school_id', linkRow.school_id),
       sb.from('finance_data').select('*').eq('school_id', linkRow.school_id),
-      sb.from('published_soaps').select('*').eq('school_id', linkRow.school_id).order('published_at', { ascending: false })
+      sb.from('published_soaps').select('*').eq('school_id', linkRow.school_id).order('published_at', { ascending: false }),
+      sb.from('idsr_uploads').select('*').eq('school_id', linkRow.school_id).maybeSingle()
     ]);
 
     const school = schoolRes.data || {};
@@ -401,7 +513,7 @@
       inclusion: inclusionCompletion(periods, inclusionRes.data),
       attendance: attendanceCompletion(periods, attendanceRes.data),
       curriculum: curriculumCompletion(curriculumRes.data),
-      achievement: achievementCompletion(assessRes.data, achievementRes.data),
+      achievement: achievementCompletion(assessRes.data, periods, achievementRes.data),
       pdw: pdwCompletion(pdwRes.data),
       leadership: leadershipCompletion(leadershipRes.data),
       finance: financeCompletion(financeRes.data)
@@ -409,6 +521,7 @@
 
     const isHeadteacher = linkRow.role === 'Headteacher';
     const publishedSoaps = publishedRes.data || [];
+    const idsrUpload = idsrRes.data || null;
 
     let accordionHtml = `
       <div>
@@ -420,7 +533,7 @@
         </button>
         <div class="panel open" id="panel-forms">
           ${availableForms.map(f => `
-            <a class="form-row" href="${f.href}">
+            <a class="form-row" href="${f.href}?school_id=${encodeURIComponent(linkRow.school_id)}">
               <span class="name">${f.label}</span>
               <span class="pct-badge" style="background:${pctColor(PCT[f.key] || 0)};">${PCT[f.key] || 0}%</span>
             </a>
@@ -491,6 +604,34 @@
 
       // IDSR SOAP
       if (features.idsrSoap) {
+        let idsrPanelBody;
+        if (!idsrUpload) {
+          idsrPanelBody = `
+            <div class="form-row" style="flex-direction:column; align-items:flex-start; gap:10px;">
+              <p style="margin:0; color:#fff;">Upload your school's raw DfE IDSR HTML export to get started.</p>
+              <input type="file" id="idsrFileInput" accept=".html,.htm" style="font-size:13px;">
+              <button type="button" id="idsrUploadBtn" onclick="uploadIdsr('${linkRow.school_id}')" style="background:#3DCFB8;color:#0D2B4E;border:none;border-radius:6px;padding:10px 20px;font-weight:700;font-size:14px;cursor:pointer;">Upload IDSR</button>
+              <div id="idsrUploadNote" style="font-size:12px;font-weight:700;"></div>
+            </div>`;
+        } else if (idsrUpload.status === 'pending') {
+          idsrPanelBody = `
+            <div class="form-row" style="flex-direction:column; align-items:flex-start; gap:6px;">
+              <p style="margin:0; color:#fff;"><strong>${idsrUpload.file_name || 'IDSR'}</strong> uploaded ${new Date(idsrUpload.uploaded_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })} — awaiting review.</p>
+              <p style="margin:0; color:rgba(255,255,255,0.6); font-size:13px;">We'll let you know once it's ready to view in IDSR Dashboard below.</p>
+              <input type="file" id="idsrFileInput" accept=".html,.htm" style="font-size:13px; margin-top:8px;">
+              <button type="button" id="idsrUploadBtn" onclick="uploadIdsr('${linkRow.school_id}')" style="background:#3DCFB8;color:#0D2B4E;border:none;border-radius:6px;padding:10px 20px;font-weight:700;font-size:14px;cursor:pointer;">Upload a different file</button>
+              <div id="idsrUploadNote" style="font-size:12px;font-weight:700;"></div>
+            </div>`;
+        } else {
+          idsrPanelBody = `
+            <div class="form-row" style="flex-direction:column; align-items:flex-start; gap:6px;">
+              <p style="margin:0; color:#fff;"><strong>${idsrUpload.file_name || 'IDSR'}</strong> published ${new Date(idsrUpload.published_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}.</p>
+              <a href="idsr-soap.html?school_id=${linkRow.school_id}" target="_blank" style="color:#3DCFB8;font-weight:700;font-size:13px;text-decoration:none;">Open IDSR SOAP →</a>
+              <input type="file" id="idsrFileInput" accept=".html,.htm" style="font-size:13px; margin-top:8px;">
+              <button type="button" id="idsrUploadBtn" onclick="uploadIdsr('${linkRow.school_id}')" style="background:#3DCFB8;color:#0D2B4E;border:none;border-radius:6px;padding:10px 20px;font-weight:700;font-size:14px;cursor:pointer;">Upload a new IDSR (replaces this one)</button>
+              <div id="idsrUploadNote" style="font-size:12px;font-weight:700;"></div>
+            </div>`;
+        }
         accordionHtml += `
         <div>
           <button type="button" class="bar" id="bar-idsrsoap" onclick="toggleAccordion('idsrsoap');">
@@ -498,7 +639,7 @@
             <span class="bar-right"><span class="badge live">Live</span><i class="chev" id="chev-idsrsoap">▾</i></span>
           </button>
           <div class="panel" id="panel-idsrsoap">
-            <div class="empty-note">IDSR SOAP content — to be built.</div>
+            ${idsrPanelBody}
           </div>
         </div>`;
       } else {
@@ -507,6 +648,9 @@
 
       // IDSR Dashboard
       if (features.idsrDashboard) {
+        const idsrDashBody = (idsrUpload && idsrUpload.status === 'published')
+          ? `<a class="form-row" href="idsr-dashboard.html?school_id=${linkRow.school_id}" target="_blank"><span class="name">Open IDSR Dashboard</span></a>`
+          : `<div class="empty-note">Your IDSR Dashboard will appear here once your uploaded IDSR has been reviewed and published \u2014 see IDSR SOAP above to upload.</div>`;
         accordionHtml += `
         <div>
           <button type="button" class="bar" id="bar-idsrdash" onclick="toggleAccordion('idsrdash');">
@@ -514,7 +658,7 @@
             <span class="bar-right"><span class="badge live">Live</span><i class="chev" id="chev-idsrdash">▾</i></span>
           </button>
           <div class="panel" id="panel-idsrdash">
-            <div class="empty-note">IDSR Dashboard content — to be built.</div>
+            ${idsrDashBody}
           </div>
         </div>`;
       } else {

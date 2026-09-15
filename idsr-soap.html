@@ -1,0 +1,699 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>SOAP Analytics — IDSR SOAP</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  :root{
+    --navy:#0D2B4E; --teal:#1A7A6E; --pale:#F0F4F8; --mint:#B9F0E4;
+    --exceptional:#A9D6F5; --strong:#B8D8C8; --expected:#D4EDDA; --attention:#FAE3C6; --urgent:#F5C6C2;
+    --text-dark:#1B2A4A; --text-muted:#5B6B7F;
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family:'Segoe UI', Arial, sans-serif; background:var(--navy); color:var(--text-dark); }
+  .topbar { background:var(--navy); color:white; padding:14px 24px; display:flex; align-items:center; justify-content:space-between; border-bottom: 3px solid var(--mint); }
+  .topbar .brand { font-size:11px; letter-spacing:1.5px; opacity:0.7; text-transform:uppercase; }
+  .topbar h1 { font-size:18px; margin:2px 0 0; font-weight:700; }
+  .status-pill { font-size:12px; font-weight:700; padding:5px 12px; border-radius:12px; }
+  .status-pill.pending { background:#FAE3C6; color:#7A4A00; }
+  .status-pill.published { background:#B8D8C8; color:#1A4D2E; }
+  .publish-btn { background:var(--teal); color:white; border:none; border-radius:6px; padding:9px 16px; font-size:13px; font-weight:600; cursor:pointer; }
+  .print-btn { background:transparent; color:white; border:1px solid var(--mint); border-radius:6px; padding:9px 16px; font-size:13px; font-weight:600; cursor:pointer; }
+  .print-btn:hover { background:rgba(255,255,255,0.08); }
+
+  .empty-state { background:white; border-radius:12px; padding:60px 30px; text-align:center; color:var(--text-muted); box-shadow:0 1px 3px rgba(0,0,0,0.2); max-width:900px; margin: 40px auto; }
+  .empty-state h2 { color:var(--navy); font-size:18px; margin-bottom:8px; }
+
+  .soap-page { display:none; padding: 18px; }
+  .soap-page.visible { display:block; }
+  .page-header { background:var(--navy); border: 1px solid var(--mint); border-radius:10px; padding:12px 20px; margin-bottom:14px; text-align:center; }
+  .page-header h2 { color:white; font-size:20px; margin:0 0 6px; }
+  .page-header .meta { color:var(--mint); font-size:12px; display:flex; justify-content:center; gap:24px; flex-wrap:wrap; }
+
+  .cols { column-count: 3; column-gap: 14px; }
+  .card { background:white; border-radius:8px; overflow:hidden; box-shadow:0 1px 3px rgba(0,0,0,0.25); margin-bottom:14px; break-inside: avoid; display: inline-block; width: 100%; }
+  .card-title { background:var(--teal); color:white; font-size:12.5px; font-weight:700; padding:7px 12px; text-align:center; }
+  table.static-table { width:100%; border-collapse:collapse; }
+  table.static-table th { background:var(--pale); color:var(--text-dark); font-size:9.5px; font-weight:700; padding:4px 4px; text-align:center; border-bottom:1px solid #DCE3EA; }
+  table.static-table th:first-child { text-align:left; padding-left:8px; }
+  table.static-table td { padding:3px 4px; font-size:9.5px; text-align:center; border-bottom:1px solid #EEF1F4; white-space:nowrap; }
+  table.static-table td:first-child { text-align:left; padding-left:8px; white-space:normal; }
+  table.static-table td.avgcell { font-style:italic; font-weight:700; background:var(--pale) !important; }
+  table.static-table tr.section-row td { background:var(--navy); color:white; font-weight:700; font-size:9.5px; text-transform:uppercase; letter-spacing:0.3px; padding:4px 8px; }
+  .cell-exceptional { background: var(--exceptional); }
+  .cell-strong { background: var(--strong); }
+  .cell-expected { background: var(--expected); }
+  .cell-attention { background: var(--attention); }
+  .cell-urgent { background: var(--urgent); }
+
+  .legend { display:flex; justify-content:center; gap:18px; flex-wrap:wrap; margin-top:14px; padding:10px; background:var(--navy); border-radius:8px; }
+  .legend span { display:inline-flex; align-items:center; gap:6px; color:white; font-size:11px; font-weight:600; }
+  .legend i { width:14px; height:14px; border-radius:3px; display:inline-block; }
+
+  @media print {
+    body { background:white; }
+    .topbar { display:none; }
+    .soap-page { padding:0; }
+  }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div>
+    <div class="brand">SOAP Analytics</div>
+    <h1 id="pageTitle">IDSR SOAP</h1>
+  </div>
+  <div style="display:flex; align-items:center; gap:12px;">
+    <button class="print-btn" onclick="window.print()">Print / Save PDF</button>
+    <div id="topbarActions"></div>
+  </div>
+</div>
+
+<div class="empty-state" id="emptyState">
+  <h2 id="emptyStateTitle">Loading…</h2>
+  <p id="emptyStateBody">Checking your access and fetching the latest IDSR upload.</p>
+</div>
+
+<div class="soap-page" id="soapPage">
+  <div class="page-header">
+    <h2 id="schoolHeading">SOAP Analytics IDSR</h2>
+    <div class="meta" id="pageMeta"></div>
+  </div>
+  <div class="cols" id="colsContainer"></div>
+  <div class="legend">
+    <span><i style="background:var(--exceptional)"></i>Exceptional</span>
+    <span><i style="background:var(--strong)"></i>Strong Standard</span>
+    <span><i style="background:var(--expected)"></i>Expected Standard</span>
+    <span><i style="background:var(--attention)"></i>Needs Attention</span>
+    <span><i style="background:var(--urgent)"></i>Urgent Improvement</span>
+  </div>
+</div>
+
+<script>
+// ============================================================================
+// 1. PARSER — identical to the interactive Dashboard, unmodified.
+// ============================================================================
+function parseIDSRHtml(htmlText) {
+  const doc = new DOMParser().parseFromString(htmlText, 'text/html');
+  const data = {};
+  const h3s = Array.from(doc.querySelectorAll('h3'));
+  for (const h3 of h3s) {
+    const label = h3.textContent.replace(/\s+/g, ' ').trim();
+    if (!label.includes(' - ')) continue;
+    const splitIdx = label.indexOf(' - ');
+    const group = label.slice(0, splitIdx).trim();
+    const measure = label.slice(splitIdx + 3).trim();
+    let tbl = null;
+    let cursor = h3;
+    while (cursor) {
+      cursor = cursor.nextElementSibling;
+      if (!cursor) break;
+      if (cursor.tagName === 'TABLE') { tbl = cursor; break; }
+      const found = cursor.querySelector && cursor.querySelector('table');
+      if (found) { tbl = found; break; }
+    }
+    if (!tbl) continue;
+    const theadRows = Array.from(tbl.querySelectorAll('thead tr'));
+    if (theadRows.length === 0) continue;
+    let colIds = [];
+    if (theadRows.length === 1) {
+      colIds = Array.from(theadRows[0].querySelectorAll('th')).map(th => th.id || null);
+    } else {
+      const row1Ths = Array.from(theadRows[0].querySelectorAll('th'));
+      const row2Ids = Array.from(theadRows[1].querySelectorAll('th')).map(th => th.id || null);
+      let row2Ptr = 0;
+      for (const th of row1Ths) {
+        const colspan = parseInt(th.getAttribute('colspan') || '1', 10);
+        const rowspan = parseInt(th.getAttribute('rowspan') || '1', 10);
+        if (rowspan > 1) colIds.push(th.id || null);
+        else for (let i = 0; i < colspan; i++) { colIds.push(row2Ids[row2Ptr] !== undefined ? row2Ids[row2Ptr] : null); row2Ptr++; }
+      }
+    }
+    const rows = [];
+    for (const tr of Array.from(tbl.querySelectorAll('tbody tr'))) {
+      const cells = Array.from(tr.querySelectorAll('td,th'));
+      const texts = cells.map(td => td.textContent.trim());
+      if (texts.length !== colIds.length) continue;
+      const rowObj = {};
+      colIds.forEach((id, i) => { if (id) rowObj[id] = texts[i]; });
+      rows.push(rowObj);
+    }
+    const key = group + ' - ' + measure;
+    if (data[key]) data[key].push(...rows); else data[key] = rows;
+  }
+  return data;
+}
+
+function toNumber(s) {
+  if (s === null || s === undefined) return null;
+  s = s.trim().replace(/%$/, '');
+  if (s === '' || s === '-' || s === '\u2014') return null;
+  const n = parseFloat(s);
+  return isNaN(n) ? null : n;
+}
+
+function byAcademicMap(rows) {
+  const byAcademic = {};
+  for (const row of rows) {
+    let calYear = row.datayear;
+    if (!calYear) continue;
+    if (calYear.includes('/')) byAcademic[calYear] = row;
+    else if (/^\d+$/.test(calYear)) { const y = parseInt(calYear, 10); byAcademic[(y - 1) + '/' + String(y).slice(-2)] = row; }
+  }
+  return byAcademic;
+}
+
+function getSeries(idsrData, group, measure, yearLabels) {
+  const rows = idsrData[group + ' - ' + measure] || [];
+  const byAcademic = byAcademicMap(rows);
+  const values = [], natByYear = [], natValsPresent = [];
+  for (const yl of yearLabels) {
+    const row = byAcademic[yl];
+    if (!row) { values.push(null); natByYear.push(null); continue; }
+    const sv = toNumber(row.value_rounded), nv = toNumber(row.nat_value_rounded);
+    values.push(sv); natByYear.push(nv);
+    if (nv !== null) natValsPresent.push(nv);
+  }
+  const natAvg = natValsPresent.length ? Math.round((natValsPresent.reduce((a,b)=>a+b,0)/natValsPresent.length)*100)/100 : null;
+  return { values, natByYear, natAvg };
+}
+
+function parsePermanentExclusionsWholeSchool(doc) {
+  const startAnchor = doc.getElementById('suspensions-and-permanent-exclusions---whole-school');
+  const endAnchor = doc.getElementById('suspensions-and-permanent-exclusions---16-18');
+  if (!startAnchor) return null;
+  const allH3 = Array.from(doc.querySelectorAll('h3'));
+  const startIdx = allH3.indexOf(startAnchor);
+  const endIdx = endAnchor ? allH3.indexOf(endAnchor) : allH3.length;
+  const sectionH3s = allH3.slice(startIdx, endIdx === -1 ? undefined : endIdx);
+  const reasonsHeading = sectionH3s.find(h => h.textContent.replace(/\s+/g, ' ').trim() === 'Permanent exclusion reasons');
+  if (!reasonsHeading) return null;
+  let tbl = null; let cursor = reasonsHeading;
+  while (cursor) {
+    cursor = cursor.nextElementSibling;
+    if (!cursor) break;
+    if (cursor.tagName === 'TABLE') { tbl = cursor; break; }
+    const found = cursor.querySelector && cursor.querySelector('table');
+    if (found) { tbl = found; break; }
+  }
+  if (!tbl) return null;
+  const headerCells = Array.from(tbl.querySelectorAll('thead th'));
+  const years = headerCells.slice(1).map(th => th.textContent.trim());
+  if (years.length === 0) return null;
+  let schoolCounts = null, natCounts = null;
+  for (const tr of tbl.querySelectorAll('tbody tr')) {
+    const cells = Array.from(tr.querySelectorAll('td'));
+    if (cells.length === 0) continue;
+    const label = cells[0].textContent.replace(/\s+/g, ' ').trim().toLowerCase();
+    const vals = cells.slice(1).map(td => toNumber(td.textContent.trim()));
+    if (label.includes('total number') && label.includes('permanent')) schoolCounts = vals;
+    else if (label.includes('national average') && label.includes('permanent')) natCounts = vals;
+  }
+  if (!schoolCounts || !natCounts) return null;
+  return { years, schoolCounts, natCounts };
+}
+
+function bandExclusionCount(school, nat) {
+  if (school === null || school === undefined || nat === null || nat === undefined) return null;
+  if (school === 0) return 'exceptional';
+  const diff = school - nat;
+  if (diff > 2) return 'urgent';
+  if (diff > 0) return 'attention';
+  if (diff === 0) return 'expected';
+  return 'strong';
+}
+
+function parseDestinationsPanel(doc, panelId, targetLabels) {
+  const panel = doc.getElementById(panelId);
+  if (!panel) return null;
+  const tables = Array.from(panel.querySelectorAll('table.gt_table'));
+  if (tables.length < 2) return null;
+  function extractTable(tbl) {
+    const headerCells = Array.from(tbl.querySelectorAll('thead th')).slice(1);
+    const years = headerCells.map(th => {
+      const m = th.textContent.match(/(\d{4})\s*leavers/i);
+      return m ? m[1] + ' leavers' : th.textContent.trim();
+    });
+    const result = {};
+    for (const label of targetLabels) {
+      const tr = Array.from(tbl.querySelectorAll('tbody tr')).find(row => {
+        const first = row.querySelector('td');
+        return first && first.textContent.trim() === label;
+      });
+      if (!tr) { result[label] = null; continue; }
+      const cells = Array.from(tr.querySelectorAll('td')).slice(1);
+      const values = [], sigLabels = [];
+      for (const td of cells) {
+        const divs = td.querySelectorAll('div');
+        if (divs.length >= 2) { sigLabels.push(divs[0].textContent.trim()); values.push(toNumber(divs[1].textContent)); }
+        else { sigLabels.push(null); values.push(null); }
+      }
+      result[label] = { values, sigLabels };
+    }
+    return { years, rows: result };
+  }
+  return { allPupils: extractTable(tables[0]), disadvantaged: extractTable(tables[1]) };
+}
+
+function bandFromSig(sig) {
+  if (!sig) return null;
+  const l = sig.toLowerCase();
+  if (l.includes('sig above')) return 'exceptional';
+  if (l.includes('sig below')) return 'attention';
+  if (l.includes('non-sig')) return 'expected';
+  return null;
+}
+
+// ============================================================================
+// 2. CLASSIFY + BAND — identical to the interactive Dashboard, unmodified.
+// ============================================================================
+function classify(measureLabel) {
+  const l = measureLabel.toLowerCase();
+  const lowerBetter = ['persistent absence', 'suspension', 'exclusion'].some(k => l.includes(k));
+  if (l.includes('progress 8') || l === 'va' || l.includes('value added') || l.endsWith('va') || l.includes(' p8')) {
+    return { kind: 'idx', lowerBetter };
+  }
+  if (l.includes('attainment 8') || l.includes('aps') || l.endsWith('a8') || l.includes(' a8')) {
+    return { kind: 'pts', lowerBetter };
+  }
+  return { kind: 'pct', lowerBetter };
+}
+
+const THRESH = { pct: 2.0, pts: 0.5, idx: 0.1 };
+
+function computeBand(diff, kind, lowerBetter) {
+  const th = THRESH[kind];
+  const d = lowerBetter ? -diff : diff;
+  if (d >= 2 * th) return 'exceptional';
+  if (d >= th) return 'strong';
+  if (d > -th) return 'expected';
+  if (d <= -2 * th) return 'urgent';
+  return 'attention';
+}
+
+function cellBand(row, i) {
+  const v = row.values[i];
+  let n = row.natByYear[i];
+  if (n === null || n === undefined) n = row.natAvg;
+  if (v === null || v === undefined || n === null || n === undefined) return null;
+  if (row.isCount) return bandExclusionCount(v, n);
+  return computeBand(v - n, row.kind, row.lowerBetter);
+}
+
+function buildYearAxis(idsrData, rowSpecs) {
+  const yearSet = new Set();
+  for (const spec of rowSpecs) {
+    for (const row of (idsrData[spec.group + ' - ' + spec.measure] || [])) {
+      if (!row.datayear) continue;
+      if (row.datayear.includes('/')) yearSet.add(row.datayear);
+      else if (/^\d+$/.test(row.datayear)) { const y = parseInt(row.datayear, 10); yearSet.add((y - 1) + '/' + String(y).slice(-2)); }
+    }
+  }
+  return Array.from(yearSet).sort((a, b) => parseInt(a) - parseInt(b));
+}
+
+// ============================================================================
+// 3. ROW / METRIC DEFINITIONS — same underlying measures already proven in
+// the interactive Dashboard. GCSE_HEADLINE_METRICS is a distinct list from
+// the Dashboard's own GCSE_METRICS (adds Open A8 / Open P8, confirmed real
+// measures) since this static page separates "GCSE Headline — All Pupils"
+// and "Disadvantaged Pupils" into two cards, matching the exemplar exactly —
+// the interactive Dashboard's already-shipped GCSE Headline card is untouched.
+// ============================================================================
+const CARD_ROWS_ATTENDANCE = [
+  { section: 'Attendance',          group: 'All pupils', measure: 'Attendance' },
+  { section: 'Attendance',          group: 'FSM6',        measure: 'Attendance' },
+  { section: 'Attendance',          group: 'SEN',         measure: 'Attendance' },
+  { section: 'Persistent Absence',  group: 'All pupils', measure: 'Persistent absence' },
+  { section: 'Persistent Absence',  group: 'FSM6',        measure: 'Persistent absence' },
+  { section: 'Persistent Absence',  group: 'SEN',         measure: 'Persistent absence' },
+  { section: '1+ Suspensions',      group: 'All pupils', measure: '1 or more suspensions' },
+  { section: '1+ Suspensions',      group: 'FSM6',        measure: '1 or more suspensions' },
+  { section: '1+ Suspensions',      group: 'SEN',         measure: '1 or more suspensions' },
+  { section: '2+ Suspensions',      group: 'All pupils', measure: '2 or more suspensions' },
+  { section: '2+ Suspensions',      group: 'FSM6',        measure: '2 or more suspensions' },
+  { section: '2+ Suspensions',      group: 'SEN',         measure: '2 or more suspensions' },
+];
+
+const CARD_ROWS_ALEVEL = [
+  { section: 'A Level APS',            group: 'All pupils',   measure: 'A level APS' },
+  { section: 'Best 3 A Level APS',     group: 'All pupils',   measure: 'Best 3 A level APS' },
+  { section: 'A Level AAB %',          group: 'All pupils',   measure: 'A level AAB percentage' },
+  { section: 'A Level VA',             group: 'All students', measure: 'A level VA' },
+  { section: 'Applied General APS',    group: 'All pupils',   measure: 'Applied general APS' },
+  { section: 'Applied General VA',     group: 'All students', measure: 'Applied general VA' },
+];
+
+const GCSE_HEADLINE_METRICS = [
+  { section: 'English & Maths 5+ (%)',  measure: 'English and mathematics grade 5 plus' },
+  { section: 'English & Maths 4+ (%)',  measure: 'English and mathematics grade 4 plus' },
+  { section: 'Attainment 8',            measure: 'Overall A8' },
+  { section: 'Progress 8',              measure: 'Overall P8' },
+  { section: 'EBacc Attainment 8',      measure: 'EBacc A8' },
+  { section: 'EBacc Progress 8',        measure: 'EBacc P8' },
+  { section: 'Open Attainment 8',       measure: 'Open A8' },
+  { section: 'Open Progress 8',         measure: 'Open P8' },
+];
+
+const SUBJECT_METRICS = {
+  english:     [ { section: 'English A8', measure: 'English A8' }, { section: 'English P8', measure: 'English P8' }, { section: 'English 4+ (%)', measure: 'English grade 4 plus' }, { section: 'English 5+ (%)', measure: 'English grade 5 plus' } ],
+  mathematics: [ { section: 'Mathematics A8', measure: 'Mathematics A8' }, { section: 'Mathematics P8', measure: 'Mathematics P8' }, { section: 'Mathematics 4+ (%)', measure: 'Mathematics grade 4 plus' }, { section: 'Mathematics 5+ (%)', measure: 'Mathematics grade 5 plus' } ],
+  science:     [ { section: 'Science 4+ (%)', measure: 'Science grade 4 plus' }, { section: 'Science 5+ (%)', measure: 'Science grade 5 plus' }, { section: 'Science VA', measure: 'Science VA' } ],
+  languages:   [ { section: 'Languages 4+ (%)', measure: 'Languages grade 4 plus' }, { section: 'Languages 5+ (%)', measure: 'Languages grade 5 plus' }, { section: 'Languages VA', measure: 'Languages VA' } ],
+  humanities:  [ { section: 'Humanities 4+ (%)', measure: 'Humanities grade 4 plus' }, { section: 'Humanities 5+ (%)', measure: 'Humanities grade 5 plus' }, { section: 'Humanities VA', measure: 'Humanities VA' } ],
+};
+
+const PRIOR_ATTAINMENT_METRICS = [
+  ...GCSE_HEADLINE_METRICS.slice(0, 6), // Overall A8/P8 + English&Maths 4/5+ + EBacc A8/P8 (Open A8/P8 not part of the Prior Attainment cards in the exemplar)
+  ...SUBJECT_METRICS.english, ...SUBJECT_METRICS.mathematics, ...SUBJECT_METRICS.science,
+  ...SUBJECT_METRICS.languages, ...SUBJECT_METRICS.humanities,
+];
+const PRIOR_ATTAINMENT_COHORTS = ['Low prior attainers', 'Middle prior attainers', 'High prior attainers'];
+
+const DEST_TARGET_LABELS = [
+  { label: 'Sustained education, employment or training', display: 'EET (%)' },
+  { label: 'Destination not sustained', display: 'NEET (%)' },
+  { label: 'Activity not captured', display: 'Unknown (%)' },
+];
+
+// ============================================================================
+// 4. BUILD — single-cohort, single-trailing-average-column shape (distinct
+// from the interactive Dashboard's paired-column format, matching this
+// static page's exemplar layout exactly).
+// ============================================================================
+function buildSimpleStaticCard(idsrData, rowSpecs) {
+  const years = buildYearAxis(idsrData, rowSpecs);
+  const rows = rowSpecs.map(spec => {
+    const { values, natByYear, natAvg } = getSeries(idsrData, spec.group, spec.measure, years);
+    const { kind, lowerBetter } = classify(spec.measure);
+    return { section: spec.section, group: spec.group, measure: spec.measure, values, natByYear, natAvg, kind, lowerBetter };
+  });
+  return { years, rows };
+}
+
+function buildAttendanceStaticCard(idsrData, doc) {
+  const years = buildYearAxis(idsrData, CARD_ROWS_ATTENDANCE);
+  const rows = CARD_ROWS_ATTENDANCE.map(spec => {
+    const { values, natByYear, natAvg } = getSeries(idsrData, spec.group, spec.measure, years);
+    const { kind, lowerBetter } = classify(spec.measure);
+    return { section: spec.section, group: spec.group, measure: spec.measure, values, natByYear, natAvg, kind, lowerBetter };
+  });
+  const pex = parsePermanentExclusionsWholeSchool(doc);
+  if (pex) {
+    const values = years.map(y => { const i = pex.years.indexOf(y); return i === -1 ? null : pex.schoolCounts[i]; });
+    const natByYear = years.map(y => { const i = pex.years.indexOf(y); return i === -1 ? null : pex.natCounts[i]; });
+    const natValsPresent = natByYear.filter(v => v !== null);
+    const natAvg = natValsPresent.length ? Math.round((natValsPresent.reduce((a,b)=>a+b,0)/natValsPresent.length)*100)/100 : null;
+    rows.push({ section: 'Permanent Exclusions', group: 'All pupils', measure: 'Permanent exclusions', values, natByYear, natAvg, kind: 'count', lowerBetter: true, isCount: true });
+  }
+  return { years, rows };
+}
+
+function buildDestinationsStaticCard(doc) {
+  const ks4 = parseDestinationsPanel(doc, 'after-key-stage-4', DEST_TARGET_LABELS.map(t => t.label));
+  const p1618 = parseDestinationsPanel(doc, 'after-16-to-18', DEST_TARGET_LABELS.map(t => t.label));
+
+  function rowsFrom(panelData, panelLabel) {
+    if (!panelData) return [];
+    const out = [];
+    function fromCohort(cohortData, cohortSuffix) {
+      if (!cohortData) return;
+      for (const { label, display } of DEST_TARGET_LABELS) {
+        const row = cohortData.rows[label];
+        if (!row) continue;
+        const present = row.values.filter(v => v !== null && v !== undefined);
+        const avg = present.length ? Math.round((present.reduce((a,b)=>a+b,0)/present.length)*100)/100 : null;
+        out.push({ group: panelLabel + ' - ' + display + cohortSuffix, years: cohortData.years, values: row.values, sigLabels: row.sigLabels, avg });
+      }
+    }
+    fromCohort(panelData.allPupils, '');
+    fromCohort(panelData.disadvantaged, ' DisAdv');
+    return out;
+  }
+
+  const rows = [...rowsFrom(ks4, 'After KS4'), ...rowsFrom(p1618, 'After 16-18')];
+  // union of all leaver-years actually present, oldest first
+  const yearSet = new Set();
+  rows.forEach(r => r.years.forEach(y => yearSet.add(y)));
+  const years = Array.from(yearSet).sort();
+  return { years, rows };
+}
+
+// ============================================================================
+// 5. RENDER
+// ============================================================================
+const BAND_LABEL = { exceptional:'Exceptional', strong:'Strong Standard', expected:'Expected Standard', attention:'Needs Attention', urgent:'Urgent Improvement' };
+
+function unitFor(row) {
+  if (row.isCount) return '';
+  if (row.kind === 'pct') return '%';
+  return '';
+}
+
+function renderStaticCardHTML(title, card, avgLabel) {
+  // Flat layout: one row per metric, metric name IS the row label — matches
+  // every card in the exemplar except Attendance (which has real genuine
+  // sub-cohort grouping under shared measure headings, handled separately
+  // by renderAttendanceStaticCardHTML below).
+  let thead = '<thead><tr><th>Metric</th>' + card.years.map(y => '<th>' + y + '</th>').join('') + '<th>' + (avgLabel || 'Nat Avg') + '</th></tr></thead>';
+  let bodyHtml = card.rows.map(row => {
+    const unit = unitFor(row);
+    const cells = row.values.map((v, i) => {
+      const b = cellBand(row, i);
+      const cls = b ? 'cell-' + b : '';
+      const disp = (v === null || v === undefined) ? '\u2014' : (unit === '%' ? v + '%' : v);
+      return '<td class="' + cls + '" title="' + (b ? BAND_LABEL[b] : '') + '">' + disp + '</td>';
+    }).join('');
+    const avgDisp = (row.natAvg === null || row.natAvg === undefined) ? '\u2014' : (unit === '%' ? row.natAvg + '%' : row.natAvg);
+    return '<tr><td>' + row.section + '</td>' + cells + '<td class="avgcell">' + avgDisp + '</td></tr>';
+  }).join('');
+  return '<div class="card"><div class="card-title">' + title + '</div><table class="static-table">' + thead + '<tbody>' + bodyHtml + '</tbody></table></div>';
+}
+
+function renderAttendanceStaticCardHTML(title, card) {
+  // The one card that genuinely needs section-header dividers — each measure
+  // (Attendance, Persistent Absence, 1+/2+ Suspensions) shares one heading
+  // across its All pupils / FSM6 / SEN sub-rows.
+  let thead = '<thead><tr><th>Metric</th>' + card.years.map(y => '<th>' + y + '</th>').join('') + '<th>Nat Avg</th></tr></thead>';
+  let bodyHtml = '';
+  let lastSection = null;
+  card.rows.forEach(row => {
+    if (row.section !== lastSection) {
+      bodyHtml += '<tr class="section-row"><td colspan="' + (card.years.length + 2) + '">' + row.section + '</td></tr>';
+      lastSection = row.section;
+    }
+    const unit = unitFor(row);
+    const cells = row.values.map((v, i) => {
+      const b = cellBand(row, i);
+      const cls = b ? 'cell-' + b : '';
+      const disp = (v === null || v === undefined) ? '\u2014' : (unit === '%' ? v + '%' : v);
+      return '<td class="' + cls + '" title="' + (b ? BAND_LABEL[b] : '') + '">' + disp + '</td>';
+    }).join('');
+    const avgDisp = (row.natAvg === null || row.natAvg === undefined) ? '\u2014' : (unit === '%' ? row.natAvg + '%' : row.natAvg);
+    bodyHtml += '<tr><td>' + row.group + '</td>' + cells + '<td class="avgcell">' + avgDisp + '</td></tr>';
+  });
+  return '<div class="card"><div class="card-title">' + title + '</div><table class="static-table">' + thead + '<tbody>' + bodyHtml + '</tbody></table></div>';
+}
+
+function renderDestinationsCardHTML(card) {
+  let thead = '<thead><tr><th>Metric</th>' + card.years.map(y => '<th>' + y + '</th>').join('') + '<th>3-Yr Avg</th></tr></thead>';
+  let bodyHtml = card.rows.map(row => {
+    const cells = card.years.map(y => {
+      const idx = row.years.indexOf(y);
+      if (idx === -1) return '<td>\u2014</td>';
+      const v = row.values[idx];
+      const band = bandFromSig(row.sigLabels[idx]);
+      const cls = band ? 'cell-' + band : '';
+      const disp = (v === null || v === undefined) ? '\u2014' : v + '%';
+      return '<td class="' + cls + '" title="' + (band ? BAND_LABEL[band] : (row.sigLabels[idx] || '')) + '">' + disp + '</td>';
+    }).join('');
+    const avgDisp = (row.avg === null || row.avg === undefined) ? '\u2014' : row.avg + '%';
+    return '<tr><td>' + row.group + '</td>' + cells + '<td class="avgcell">' + avgDisp + '</td></tr>';
+  }).join('');
+  return '<div class="card"><div class="card-title">Destinations \u2014 Sustained EET (%)</div><table class="static-table">' + thead + '<tbody>' + bodyHtml + '</tbody></table></div>';
+}
+
+function renderIdsrSoap(idsrData, doc, schoolName) {
+  document.getElementById('schoolHeading').textContent = 'SOAP Analytics IDSR \u2014 ' + (schoolName || '');
+
+  const gcseAll = buildSimpleStaticCard(idsrData, GCSE_HEADLINE_METRICS.map(m => ({ section: m.section, group: 'All pupils', measure: m.measure })));
+  const disadv = buildSimpleStaticCard(idsrData, GCSE_HEADLINE_METRICS.map(m => ({ section: m.section, group: 'Disadvantaged pupils', measure: m.measure })));
+  const alevel = buildSimpleStaticCard(idsrData, CARD_ROWS_ALEVEL);
+  const dest = buildDestinationsStaticCard(doc);
+  const attendance = buildAttendanceStaticCard(idsrData, doc);
+
+  const english = buildSimpleStaticCard(idsrData, SUBJECT_METRICS.english.map(m => ({ section: m.section, group: 'All pupils', measure: m.measure })));
+  const maths = buildSimpleStaticCard(idsrData, SUBJECT_METRICS.mathematics.map(m => ({ section: m.section, group: 'All pupils', measure: m.measure })));
+  const science = buildSimpleStaticCard(idsrData, SUBJECT_METRICS.science.map(m => ({ section: m.section, group: 'All pupils', measure: m.measure })));
+  const languages = buildSimpleStaticCard(idsrData, SUBJECT_METRICS.languages.map(m => ({ section: m.section, group: 'All pupils', measure: m.measure })));
+  const humanities = buildSimpleStaticCard(idsrData, SUBJECT_METRICS.humanities.map(m => ({ section: m.section, group: 'All pupils', measure: m.measure })));
+
+  const priorCards = {};
+  PRIOR_ATTAINMENT_COHORTS.forEach(cohort => {
+    priorCards[cohort] = buildSimpleStaticCard(idsrData, PRIOR_ATTAINMENT_METRICS.map(m => ({ section: m.section, group: cohort, measure: m.measure })));
+  });
+
+  // note: each column's rows here don't need every measure/section labelled per
+  // row since sections already carry that — keeping metric labels short/flat
+  // note: flat cards use row.section directly as the label (handled inside
+  // renderStaticCardHTML) — only Attendance needs a real cohort label per row.
+  attendance.rows.forEach(r => { /* group already meaningful per-row (cohort under each section) */ });
+
+  // CSS multi-column layout (see .cols) auto-balances card heights across
+  // three columns, so we no longer need to manually decide which card goes
+  // in which column — just render them all into one container, in a sensible
+  // reading order, and let the browser distribute by actual rendered height.
+  document.getElementById('colsContainer').innerHTML =
+    renderStaticCardHTML('GCSE Headline \u2014 All Pupils', gcseAll) +
+    renderStaticCardHTML('A Level Headline', alevel) +
+    renderDestinationsCardHTML(dest) +
+    renderAttendanceStaticCardHTML('Attendance &amp; Suspension Trends', attendance) +
+    renderStaticCardHTML('Disadvantaged Pupils', disadv) +
+    renderStaticCardHTML('English', english) +
+    renderStaticCardHTML('Mathematics', maths) +
+    renderStaticCardHTML('Science', science) +
+    renderStaticCardHTML('Languages', languages) +
+    renderStaticCardHTML('Humanities', humanities) +
+    renderStaticCardHTML('Prior Attainment - Low', priorCards['Low prior attainers']) +
+    renderStaticCardHTML('Prior Attainment - Middle', priorCards['Middle prior attainers']) +
+    renderStaticCardHTML('Prior Attainment - High', priorCards['High prior attainers']);
+}
+
+// ============================================================================
+// 6. SUPABASE BOOTSTRAP — same access pattern as idsr-dashboard.html
+// (admins/school_users gating, same idsr_uploads row, same Storage bucket).
+// ============================================================================
+const SUPABASE_URL = 'https://caopycszjzrmwhxxvtpx.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_2CTGR0PKyRPpSk59lcr3sA_hvvUDX97';
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+let VIEW_SCHOOL_ID = null;
+let VIEW_IS_ADMIN = false;
+let UPLOAD_ROW = null;
+
+function showEmptyState(title, body) {
+  document.getElementById('soapPage').classList.remove('visible');
+  document.getElementById('emptyState').style.display = 'block';
+  document.getElementById('emptyStateTitle').textContent = title;
+  document.getElementById('emptyStateBody').textContent = body;
+}
+
+function fmtDate(iso) {
+  return new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+function renderTopbarActions() {
+  const el = document.getElementById('topbarActions');
+  if (VIEW_IS_ADMIN) {
+    if (UPLOAD_ROW.status === 'pending') {
+      el.innerHTML = '<button class="publish-btn" id="publishBtn" onclick="publishIdsr()">Publish to school</button>';
+    } else {
+      el.innerHTML = '<span class="status-pill published">Published ' + fmtDate(UPLOAD_ROW.published_at) + '</span>';
+    }
+  } else {
+    el.innerHTML = '<span class="status-pill published">Published</span>';
+  }
+}
+
+// exposed for admin.html's hidden-iframe orchestration, same convention as
+// idsr-dashboard.html's publishIdsr() — publishes the one shared idsr_uploads
+// row, so publishing from either page has the same effect.
+window.publishIdsr = async function () {
+  if (!UPLOAD_ROW) throw new Error('No IDSR upload loaded for this school.');
+  const { error } = await sb.from('idsr_uploads')
+    .update({ status: 'published', published_at: new Date().toISOString() })
+    .eq('school_id', VIEW_SCHOOL_ID);
+  if (error) throw error;
+  UPLOAD_ROW.status = 'published';
+  UPLOAD_ROW.published_at = new Date().toISOString();
+  renderTopbarActions();
+};
+
+async function boot() {
+  const { data: { session } } = await sb.auth.getSession();
+  if (!session) {
+    showEmptyState('Please log in', 'You need to be logged in to view this page.');
+    window.idsrSoapReady = true;
+    return;
+  }
+
+  const params = new URLSearchParams(window.location.search);
+  const paramSchoolId = params.get('school_id');
+
+  const { data: adminRow } = await sb.from('admins').select('auth_user_id').eq('auth_user_id', session.user.id).maybeSingle();
+  VIEW_IS_ADMIN = !!adminRow;
+
+  if (VIEW_IS_ADMIN) {
+    if (!paramSchoolId) {
+      showEmptyState('No school specified', 'Open this page with ?school_id=... from the Admin IDSR SOAP list.');
+      window.idsrSoapReady = true;
+      return;
+    }
+    VIEW_SCHOOL_ID = paramSchoolId;
+  } else {
+    const { data: linkRows, error: linkError } = await sb.from('school_users').select('school_id, role').eq('auth_user_id', session.user.id);
+    if (linkError || !linkRows || linkRows.length === 0) {
+      showEmptyState('Access denied', 'No school is linked to your account.');
+      window.idsrSoapReady = true;
+      return;
+    }
+    if (linkRows.length > 1 && !paramSchoolId) {
+      showEmptyState('Choose a school first', 'Return to the portal and choose which school you want to view.');
+      window.idsrSoapReady = true;
+      return;
+    }
+    const linkRow = paramSchoolId ? linkRows.find(r => r.school_id === paramSchoolId) : linkRows[0];
+    if (!linkRow) {
+      showEmptyState('Access denied', 'This school is not linked to your account.');
+      window.idsrSoapReady = true;
+      return;
+    }
+    VIEW_SCHOOL_ID = linkRow.school_id;
+  }
+
+  const { data: schoolRow } = await sb.from('schools').select('name').eq('id', VIEW_SCHOOL_ID).maybeSingle();
+  const schoolName = schoolRow ? schoolRow.name : '';
+  if (schoolRow) document.getElementById('pageTitle').textContent = 'IDSR SOAP \u2014 ' + schoolName;
+
+  const { data: uploadRow } = await sb.from('idsr_uploads').select('*').eq('school_id', VIEW_SCHOOL_ID).maybeSingle();
+  UPLOAD_ROW = uploadRow;
+
+  if (!uploadRow) {
+    showEmptyState('No IDSR uploaded yet', VIEW_IS_ADMIN ? 'This school hasn\u2019t uploaded an IDSR yet.' : 'Upload your IDSR HTML export from the IDSR SOAP section to get started.');
+    window.idsrSoapReady = true;
+    return;
+  }
+
+  if (!VIEW_IS_ADMIN && uploadRow.status !== 'published') {
+    showEmptyState('Your IDSR is being reviewed', 'We\u2019ll let you know once it\u2019s ready to view here.');
+    window.idsrSoapReady = true;
+    return;
+  }
+
+  renderTopbarActions();
+
+  const { data: fileBlob, error: downloadErr } = await sb.storage.from('idsr-uploads').download(uploadRow.storage_path);
+  if (downloadErr || !fileBlob) {
+    showEmptyState('Couldn\u2019t load the IDSR file', 'There was a problem fetching the uploaded file. Try again, or contact support if this persists.');
+    window.idsrSoapReady = true;
+    return;
+  }
+
+  const htmlText = await fileBlob.text();
+  const idsrData = parseIDSRHtml(htmlText);
+  const doc = new DOMParser().parseFromString(htmlText, 'text/html');
+
+  renderIdsrSoap(idsrData, doc, schoolName);
+
+  document.getElementById('emptyState').style.display = 'none';
+  document.getElementById('soapPage').classList.add('visible');
+  window.idsrSoapReady = true;
+}
+
+window.idsrSoapReady = false;
+boot();
+</script>
+</body>
+</html>

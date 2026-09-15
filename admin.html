@@ -163,10 +163,6 @@
 <div class="amend-toast" id="amendToast">✓ Saved</div>
 
 <div class="wrap">
-  <div class="page-title">Interest Registrations</div>
-  <div class="page-sub">People who've registered interest via the website, most recent first.</div>
-  <div id="regContent" style="margin-bottom:40px;"></div>
-
   <div class="page-title">SOAPs</div>
   <div class="page-sub">View any school's live School on a Page.</div>
   <div id="soapListContent" style="margin-bottom:40px;"></div>
@@ -174,6 +170,14 @@
   <div class="page-title">SOAP Dashboard</div>
   <div class="page-sub">View any school's live SOAP Dashboard (Attendance currently, more sections coming).</div>
   <div id="dashboardListContent" style="margin-bottom:40px;"></div>
+
+  <div class="page-title">IDSR SOAP</div>
+  <div class="page-sub">Review a school's uploaded IDSR before publishing it back to them.</div>
+  <div id="idsrSoapListContent" style="margin-bottom:40px;"></div>
+
+  <div class="page-title">IDSR Dashboard</div>
+  <div class="page-sub">Review a school's uploaded IDSR before publishing it back to them.</div>
+  <div id="idsrDashListContent" style="margin-bottom:40px;"></div>
 
   <div class="page-title">Support Messages</div>
   <div class="page-sub">Issues raised by schools via their portal, most recent first.</div>
@@ -201,6 +205,39 @@
     </div>
     <div class="school-detail" id="resourcesContent"></div>
   </div>
+
+  <div class="page-title">Invite Subscriber</div>
+  <div class="page-sub">Creates the subscriber's account and links them to a school — handled entirely by the admin-invite-subscriber Edge Function, not by this page directly.</div>
+  <div class="school-card" style="margin-bottom:40px; padding:20px 22px;">
+    <div class="amend-field-grid">
+      <div class="field">
+        <label for="inviteEmail">Email</label>
+        <input type="email" id="inviteEmail" placeholder="subscriber@example.com">
+      </div>
+      <div class="field">
+        <label for="inviteSchool">School</label>
+        <select id="inviteSchool"><option value="">Loading schools…</option></select>
+      </div>
+      <div class="field">
+        <label for="inviteRole">Role</label>
+        <select id="inviteRole">
+          <option>Headteacher</option>
+          <option>Achievement</option>
+          <option>Attendance &amp; Behaviour</option>
+          <option>Context</option>
+          <option>Curriculum &amp; Teaching</option>
+          <option>Finance &amp; Resources</option>
+          <option>Inclusion</option>
+          <option>Leadership &amp; Governance</option>
+          <option>PDW</option>
+          <option>Safeguarding</option>
+        </select>
+      </div>
+    </div>
+    <button type="button" class="save-amend-btn" id="inviteSubmitBtn" style="margin-top:18px;" onclick="inviteSubscriber()">Send Invitation</button>
+    <div id="inviteResultMsg" style="margin-top:12px; font-size:13px; font-weight:700;"></div>
+  </div>
+
 </div>
 
 <script>
@@ -312,19 +349,41 @@
     return { pct, filled, total };
   }
 
-  function achievementCompletion(assessmentSetupRows, achievementRows) {
+  function achievementCompletion(assessmentSetupRows, reportingPeriods, rows) {
+    const today = (() => {
+      const d = new Date();
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${y}-${m}-${day}`;
+    })();
+    const assessment = (name) => (assessmentSetupRows || []).find(a => a.assessment_name === name);
     const planned = (name) => {
-      const row = (assessmentSetupRows || []).find(a => a.assessment_name === name);
-      return row ? row.planned === 'Yes' : false;
+      const row = assessment(name);
+      return !!(row && row.planned === 'Yes');
     };
-    const gcseCols = 4 + (planned('Year 11 PPE 1') ? 1 : 0) + (planned('Year 11 PPE 2') ? 1 : 0) + 1; // base 4 years (no more National Average column) + PPE + Predicted
-    const post16Cols = 4 + (planned('Year 13 PPE 1') ? 1 : 0) + (planned('Year 13 PPE 2') ? 1 : 0) + 1;
-    let total = 4; // Foundational Knowledge: 4 rows
-    total += 10 * gcseCols; // GCSE Outcomes: 10 rows
-    total -= 4; // Progress 8 and Progress 8 - Disadvantaged each have 2 blanked cells (24/25, 25/26) — not recorded in school or nationally
-    total += 8 * post16Cols; // Post-16 Outcomes: 8 rows
+    const live = (name) => {
+      const row = assessment(name);
+      return !!(row && row.planned === 'Yes' && row.assessment_date && row.assessment_date <= today);
+    };
+    const gcsePeriods = new Set(['2022/23', '2023/24', '2024/25', '2025/26']);
+    const post16Periods = new Set(['2022/23', '2023/24', '2024/25', '2025/26']);
+    if (planned('Year 11 PPE 1') && live('Year 11 PPE 1')) gcsePeriods.add('PPE1');
+    if (planned('Year 11 PPE 2') && live('Year 11 PPE 2')) gcsePeriods.add('PPE2');
+    if (planned('Year 13 PPE 1') && live('Year 13 PPE 1')) post16Periods.add('PPE1');
+    if (planned('Year 13 PPE 2') && live('Year 13 PPE 2')) post16Periods.add('PPE2');
+
+    let total = 4; // Foundational Knowledge
+    total += 10 * gcsePeriods.size;
+    total -= 4; // Progress 8 rows have four historical cells intentionally unavailable
+    total += 8 * post16Periods.size;
     total += 1; // Overall Rating
-    const filled = (achievementRows || []).length;
+
+    const filled = (rows || []).filter(r => {
+      if (r.category === 'GCSE Outcomes') return gcsePeriods.has(r.period);
+      if (r.category === 'Post-16 Outcomes') return post16Periods.has(r.period);
+      return true;
+    }).length;
     const pct = total ? Math.round((Math.min(filled, total) / total) * 100) : 0;
     return { pct, filled, total };
   }
@@ -609,16 +668,13 @@
       return;
     }
 
-    const regContent = document.getElementById('regContent');
-
-    const [schoolsRes, contactsRes, ofstedRes, periodsRes, assessRes, trackerRes, regsRes, contextRes, safeguardingRes, inclusionRes, curriculumRes, achievementRes, attendanceRes, pdwRes, leadershipRes, financeRes, supportRes] = await Promise.all([
+    const [schoolsRes, contactsRes, ofstedRes, periodsRes, assessRes, trackerRes, contextRes, safeguardingRes, inclusionRes, curriculumRes, achievementRes, attendanceRes, pdwRes, leadershipRes, financeRes, supportRes, idsrUploadsRes] = await Promise.all([
       sb.from('schools').select('*').order('created_at', { ascending: false }),
       sb.from('key_contacts').select('*'),
       sb.from('ofsted_judgements').select('*'),
       sb.from('reporting_periods').select('*'),
       sb.from('assessment_setup').select('*'),
       sb.from('completion_tracker').select('*'),
-      sb.from('registrations').select('*').order('created_at', { ascending: false }),
       sb.from('context_data').select('*'),
       sb.from('safeguarding_data').select('*'),
       sb.from('inclusion_data').select('*'),
@@ -628,48 +684,14 @@
       sb.from('pdw_data').select('*'),
       sb.from('leadership_governance_data').select('*'),
       sb.from('finance_data').select('*'),
-      sb.from('support_messages').select('*').order('created_at', { ascending: false })
+      sb.from('support_messages').select('*').order('created_at', { ascending: false }),
+      sb.from('idsr_uploads').select('*')
     ]);
-
-    const regs = regsRes.data || [];
-    if (!regs.length) {
-      regContent.innerHTML = '<div class="status-msg">No registrations yet.</div>';
-    } else {
-      const wanted = r => [
-        r.wants_idsr_summary === 'Yes' ? 'IDSR Intelligence Summary' : null,
-        r.wants_idsr_dashboard === 'Yes' ? 'IDSR Intelligence Dashboard' : null,
-        r.wants_soap_summary === 'Yes' ? 'SOAP Performance Summary' : null,
-        r.wants_soap_suite === 'Yes' ? 'SOAP Performance Suite' : null,
-        r.wants_survey === 'Yes' ? 'Survey Service' : null
-      ].filter(Boolean).join(', ') || '—';
-
-      regContent.innerHTML = `
-        <div class="school-card" style="padding:16px 20px;overflow-x:auto;">
-          <table class="mini-table">
-            <thead><tr>
-              <th>Name</th><th>School</th><th>Email</th><th>Phone</th><th>Interested in</th><th>Message</th><th>Submitted</th><th>Contacted</th><th></th>
-            </tr></thead>
-            <tbody>
-              ${regs.map(r => `
-                <tr id="reg-row-${r.id}" style="${r.contacted ? 'background:#E6F4F1;' : ''}">
-                  <td>${r.name ?? '—'}</td>
-                  <td>${r.school_name ?? '—'}</td>
-                  <td>${r.email ?? '—'}</td>
-                  <td>${r.phone ?? '—'}</td>
-                  <td>${wanted(r)}</td>
-                  <td>${r.message ?? '—'}</td>
-                  <td>${r.created_at ? new Date(r.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '—'}</td>
-                  <td style="text-align:center;"><input type="checkbox" ${r.contacted ? 'checked' : ''} onchange="toggleContacted('${r.id}', this.checked)"></td>
-                  <td><button type="button" class="delete-reg-btn" onclick="deleteRegistration('${r.id}')" style="background:#F3B8B8;color:#7A1F1F;border:none;border-radius:6px;padding:6px 12px;font-size:12px;font-weight:700;cursor:pointer;">Delete</button></td>
-                </tr>
-              `).join('')}
-            </tbody>
-          </table>
-        </div>`;
-    }
 
     const schools = schoolsRes.data || [];
     const bySchool = (rows, id) => (rows || []).filter(r => r.school_id === id);
+    const idsrUploads = idsrUploadsRes.data || [];
+    const idsrUploadFor = (id) => idsrUploads.find(u => u.school_id === id) || null;
 
     const supportMsgs = supportRes.data || [];
     const supportContent = document.getElementById('supportContent');
@@ -775,6 +797,56 @@
       `;
     }
 
+    // IDSR SOAP and IDSR Dashboard are now genuinely separate pages, sharing
+    // the same underlying idsr_uploads row/status — publishing from either
+    // section flips the one shared status, so both sections update together.
+    function renderIdsrList(containerId, pageFile, publishFn, iframeId) {
+      const container = document.getElementById(containerId);
+      if (!schools.length) {
+        container.innerHTML = '<div class="status-msg">No schools yet.</div>';
+        return;
+      }
+      container.innerHTML = `
+        <div class="school-card" style="display:flex;flex-direction:column;gap:2px;">
+          ${schools.map(s => {
+            const upload = idsrUploadFor(s.id);
+            let statusHtml, actionsHtml;
+            if (!upload) {
+              statusHtml = '<span style="color:#5A6B80;">No IDSR uploaded yet.</span>';
+              actionsHtml = '';
+            } else if (upload.status === 'pending') {
+              statusHtml = `<strong>${upload.file_name || 'IDSR'}</strong> uploaded ${new Date(upload.uploaded_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })} — awaiting review.`;
+              actionsHtml = `
+                <a href="${pageFile}?school_id=${s.id}" target="_blank" style="color:#0D7377;font-weight:700;font-size:13px;text-decoration:none;">Preview →</a>
+                <button type="button" class="save-amend-btn" style="padding:8px 16px;" onclick="${publishFn}('${s.id}', '${s.name.replace(/'/g, "\\'")}')" id="adminIdsrPublishBtn-${iframeId}-${s.id}">Publish to school</button>
+              `;
+            } else {
+              statusHtml = `<strong>${upload.file_name || 'IDSR'}</strong> published ${new Date(upload.published_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}.`;
+              actionsHtml = `<a href="${pageFile}?school_id=${s.id}" target="_blank" style="color:#0D7377;font-weight:700;font-size:13px;text-decoration:none;">View →</a>`;
+            }
+            return `
+            <div style="padding:16px 20px;border-bottom:1px solid #DCE3EA;">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                <div>
+                  <div class="school-name">${s.name}</div>
+                  <div class="school-meta">${s.phase || '—'} · ${s.academic_year || '—'} · ${s.package_tier || '—'}</div>
+                </div>
+              </div>
+              <div style="background:#F0F4F8;border:1px solid #DCE3EA;border-radius:8px;padding:12px 14px;">
+                <div style="font-size:13px;color:#1B2A4A;margin-bottom:8px;">${statusHtml}</div>
+                <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:center;">${actionsHtml}</div>
+                <div id="adminIdsrNote-${iframeId}-${s.id}" style="font-size:12px;font-weight:700;margin-top:8px;"></div>
+              </div>
+            </div>`;
+          }).join('')}
+        </div>
+        <iframe id="${iframeId}" style="display:none;width:1px;height:1px;"></iframe>
+      `;
+    }
+    renderIdsrList('idsrSoapListContent', 'idsr-soap.html', 'adminPublishIdsrSoap', 'adminIdsrSoapFrame');
+    renderIdsrList('idsrDashListContent', 'idsr-dashboard.html', 'adminPublishIdsr', 'adminIdsrFrame');
+    renderInviteSchoolOptions(schools);
+
     const AMEND_PACKAGE_OPTIONS_LIST = ['IDSR Intelligence Summary', 'IDSR Intelligence Summary + Dashboard', 'SOAP Performance Summary', 'SOAP Performance Suite'];
     const packageListContent = document.getElementById('packageListContent');
     if (!schools.length) {
@@ -835,7 +907,7 @@
       const safeguardingC = safeguardingCompletion(periods, safeguardingRows);
       const inclusionC = inclusionCompletion(periods, inclusionRows2);
       const curriculumC = curriculumCompletion(curriculumRows);
-      const achievementC = achievementCompletion(assess, achievementRows);
+      const achievementC = achievementCompletion(assess, periods, achievementRows);
       const attendanceC = attendanceCompletion(periods, attendanceRows);
       const pdwC = pdwCompletion(pdwRows);
       const leadershipC = leadershipCompletion(leadershipRows);
@@ -1266,27 +1338,147 @@
     }
   }
 
-  async function toggleContacted(regId, checked) {
-    const row = document.getElementById(`reg-row-${regId}`);
-    if (row) row.style.background = checked ? '#E6F4F1' : '';
-    const { error } = await sb.from('registrations').update({ contacted: checked }).eq('id', regId);
-    if (error) {
-      console.error(error);
-      alert('Failed to save — see browser console.');
-      if (row) row.style.background = checked ? '' : '#E6F4F1'; // revert the colour since the save actually failed
+  // Publishes a school's IDSR directly from either Admin IDSR list, mirroring
+  // adminPublishSoap()'s same hidden-iframe pattern — loads that school's real
+  // page (IDSR SOAP or IDSR Dashboard), waits for it to signal readiness, then
+  // calls its own publishIdsr() function directly. Both pages write to the
+  // same shared idsr_uploads row, so publishing from either has the same
+  // effect and both admin lists refresh together.
+  async function adminPublishIdsrGeneric(schoolId, schoolName, pageFile, iframeId, readyFlagName) {
+    const btn = document.getElementById(`adminIdsrPublishBtn-${iframeId}-${schoolId}`);
+    const note = document.getElementById(`adminIdsrNote-${iframeId}-${schoolId}`);
+    btn.disabled = true;
+    btn.textContent = 'Publishing…';
+    note.style.color = '#5A6B80';
+    note.textContent = 'Loading ' + pageFile + '…';
+
+    const frame = document.getElementById(iframeId);
+    frame.src = `${pageFile}?school_id=${schoolId}`;
+
+    const TIMEOUT_MS = 20000;
+    const start = Date.now();
+    try {
+      await new Promise((resolve, reject) => {
+        const check = () => {
+          let ready = false;
+          try { ready = frame.contentWindow && frame.contentWindow[readyFlagName]; } catch (e) { /* not loaded yet */ }
+          if (ready) { resolve(); return; }
+          if (Date.now() - start > TIMEOUT_MS) { reject(new Error(`Timed out waiting for ${pageFile} to load.`)); return; }
+          setTimeout(check, 200);
+        };
+        check();
+      });
+
+      const win = frame.contentWindow;
+      if (!win.publishIdsr) {
+        throw new Error(`This school's ${pageFile} did not offer a Publish control — check you're logged in as admin and the file has been uploaded.`);
+      }
+      await win.publishIdsr();
+
+      // reflect the new published state locally without a full page reload
+      const upload = idsrUploadFor(schoolId);
+      if (upload) {
+        upload.status = 'published';
+        upload.published_at = new Date().toISOString();
+      }
+      renderIdsrList('idsrSoapListContent', 'idsr-soap.html', 'adminPublishIdsrSoap', 'adminIdsrSoapFrame');
+      renderIdsrList('idsrDashListContent', 'idsr-dashboard.html', 'adminPublishIdsr', 'adminIdsrFrame');
+
+      note.style.color = '#0D7377';
+      note.textContent = `Published for ${schoolName} — now visible in their Headteacher's IDSR sections.`;
+    } catch (err) {
+      note.style.color = '#B3261E';
+      note.textContent = 'Publish failed: ' + err.message;
+      console.error(err);
+      btn.disabled = false;
+      btn.textContent = 'Publish to school';
+    } finally {
+      frame.src = 'about:blank';
     }
   }
 
-  async function deleteRegistration(regId) {
-    if (!confirm('Delete this registration? This removes it permanently from the database — it cannot be undone.')) return;
-    const { error } = await sb.from('registrations').delete().eq('id', regId);
-    if (error) {
-      console.error(error);
-      alert('Delete failed — see browser console.');
+  async function adminPublishIdsrSoap(schoolId, schoolName) {
+    return adminPublishIdsrGeneric(schoolId, schoolName, 'idsr-soap.html', 'adminIdsrSoapFrame', 'idsrSoapReady');
+  }
+
+  async function adminPublishIdsr(schoolId, schoolName) {
+    return adminPublishIdsrGeneric(schoolId, schoolName, 'idsr-dashboard.html', 'adminIdsrFrame', 'idsrDashboardReady');
+  }
+
+  function renderInviteSchoolOptions(schools) {
+    const select = document.getElementById('inviteSchool');
+    if (!schools || !schools.length) {
+      select.innerHTML = '<option value="">No schools yet</option>';
       return;
     }
-    const row = document.getElementById(`reg-row-${regId}`);
-    if (row) row.remove();
+    select.innerHTML = schools
+      .slice()
+      .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+      .map(s => `<option value="${s.id}">${s.name}</option>`)
+      .join('');
+  }
+
+  // Invite Subscriber — this function only ever calls the deployed
+  // admin-invite-subscriber Edge Function via supabase.functions.invoke(),
+  // which automatically attaches the current admin's own session token.
+  // No privileged logic (auth account creation, school_users writes) ever
+  // happens here — the Edge Function is the sole trusted layer for that,
+  // and it independently re-verifies the caller is an admin itself.
+  async function inviteSubscriber() {
+    const btn = document.getElementById('inviteSubmitBtn');
+    const msg = document.getElementById('inviteResultMsg');
+    const email = document.getElementById('inviteEmail').value.trim();
+    const school_id = document.getElementById('inviteSchool').value;
+    const role = document.getElementById('inviteRole').value;
+
+    if (!email || !email.includes('@')) {
+      msg.style.color = '#B3261E';
+      msg.textContent = 'Please enter a valid email address.';
+      return;
+    }
+    if (!school_id) {
+      msg.style.color = '#B3261E';
+      msg.textContent = 'Please choose a school.';
+      return;
+    }
+
+    btn.disabled = true;
+    btn.textContent = 'Sending…';
+    msg.style.color = '#5A6B80';
+    msg.textContent = 'Sending invitation…';
+
+    try {
+      const { data, error } = await sb.functions.invoke('admin-invite-subscriber', {
+        body: { email, school_id, role }
+      });
+
+      if (error) {
+        // supabase-js surfaces non-2xx function responses as a generic
+        // FunctionsHttpError — the function's own JSON error message is on
+        // error.context, if present, so surface that when we can.
+        let detail = error.message || 'Unknown error';
+        try {
+          if (error.context && typeof error.context.json === 'function') {
+            const body = await error.context.json();
+            if (body && body.error) detail = body.error;
+          }
+        } catch (_) { /* fall back to error.message above */ }
+        throw new Error(detail);
+      }
+
+      if (data && data.error) throw new Error(data.error);
+
+      msg.style.color = '#0D7377';
+      msg.textContent = `Invitation sent — ${email} linked to ${data.school_name || 'the selected school'} as ${data.role || role}.`;
+      document.getElementById('inviteEmail').value = '';
+    } catch (err) {
+      console.error(err);
+      msg.style.color = '#B3261E';
+      msg.textContent = 'Invitation failed: ' + err.message;
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Send Invitation';
+    }
   }
 
   async function toggleSupportResolved(msgId, checked) {

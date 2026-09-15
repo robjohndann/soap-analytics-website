@@ -428,21 +428,37 @@
 
     currentUserId = session.user.id;
 
-    const { data: linkRow } = await sb
-      .from('school_users').select('role, school_id').eq('auth_user_id', currentUserId).maybeSingle();
+    const { data: linkRows, error: linkError } = await sb
+      .from('school_users').select('role, school_id').eq('auth_user_id', currentUserId);
 
-    if (linkRow && linkRow.role !== 'Headteacher') {
+    if (linkError) {
+      banner.innerHTML = 'Unable to load your school access. Please return to the <a href="portal.html">portal</a> and try again.';
+      return;
+    }
+
+    const requestedSchoolId = new URLSearchParams(window.location.search).get('school_id');
+    const linkRow = requestedSchoolId
+      ? (linkRows || []).find(r => r.school_id === requestedSchoolId)
+      : ((linkRows || []).length === 1 ? linkRows[0] : null);
+
+    if ((linkRows || []).length > 1 && !requestedSchoolId) {
+      banner.innerHTML = 'Your account has access to more than one school. Please <a href="portal.html">return to the portal</a> and choose a school first.';
+      return;
+    }
+
+    if (!linkRow) {
+      banner.innerHTML = 'Your account is not linked to this school. School access is set up by SOAP Analytics administration. Please <a href="portal.html">return to the portal</a> or contact support.';
+      return;
+    }
+
+    if (linkRow.role !== 'Headteacher') {
       banner.innerHTML = `You're logged in as ${session.user.email}, but this account is assigned to ${linkRow.role}, not School Setup.`;
       return;
     }
 
-    if (linkRow) {
-      existingSchoolId = linkRow.school_id;
-      banner.textContent = `Logged in as ${session.user.email}. You're editing your existing school's record.`;
-      await prefillForm(existingSchoolId);
-    } else {
-      banner.textContent = `Logged in as ${session.user.email}. This form saves directly to your school's record.`;
-    }
+    existingSchoolId = linkRow.school_id;
+    banner.textContent = `Logged in as ${session.user.email}. You're editing the selected school's record.`;
+    await prefillForm(existingSchoolId);
     document.getElementById('setupForm').style.display = '';
     document.getElementById('submitBar').style.display = '';
   }
@@ -527,12 +543,8 @@
       const val = id => document.getElementById(id).value || null;
       const num = id => document.getElementById(id).value ? parseInt(document.getElementById(id).value, 10) : null;
 
-      const isNewSchool = !existingSchoolId;
-      const schoolId = existingSchoolId || ((window.crypto && crypto.randomUUID) ? crypto.randomUUID() :
-        'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
-          const r = Math.random()*16|0, v = c === 'x' ? r : (r&0x3|0x8);
-          return v.toString(16);
-        }));
+      if (!existingSchoolId) throw new Error('No authorised school selected. Return to the portal and choose a school.');
+      const schoolId = existingSchoolId;
 
       const schoolPayload = {
         id: schoolId,
@@ -549,39 +561,25 @@
         last_inspection_date: val('lastInspectionDate')
       };
 
-      if (isNewSchool) {
-        const { error: schoolError } = await sb.from('schools').insert(schoolPayload);
-        if (schoolError) throw schoolError;
-
-        const { error: linkError } = await sb
-          .from('school_users').insert({
-            auth_user_id: currentUserId,
-            school_id: schoolId,
-            role: 'Headteacher'
-          });
-        if (linkError) throw linkError;
-      } else {
-        console.log('Updating school with id:', schoolId);
-        console.log('Payload being saved:', schoolPayload);
-        const { data: updatedRows, error: schoolError } = await sb.from('schools').update(schoolPayload).eq('id', schoolId).select();
-        console.log('Rows actually updated:', updatedRows);
-        if (schoolError) throw schoolError;
-        if (!updatedRows || updatedRows.length === 0) {
-          console.warn('No rows were updated — the school ID may not match any existing record.');
-        }
-        if (schoolError) throw schoolError;
-
-        // Clear previous child rows so re-saving doesn't create duplicates
-        const deleteResults = await Promise.all([
-          sb.from('key_contacts').delete().eq('school_id', schoolId),
-          sb.from('ofsted_judgements').delete().eq('school_id', schoolId),
-          sb.from('reporting_periods').delete().eq('school_id', schoolId),
-          sb.from('assessment_setup').delete().eq('school_id', schoolId),
-          sb.from('completion_tracker').delete().eq('school_id', schoolId)
-        ]);
-        const deleteError = deleteResults.find(r => r.error);
-        if (deleteError) throw deleteError.error;
+      console.log('Updating school with id:', schoolId);
+      console.log('Payload being saved:', schoolPayload);
+      const { data: updatedRows, error: schoolError } = await sb.from('schools').update(schoolPayload).eq('id', schoolId).select();
+      console.log('Rows actually updated:', updatedRows);
+      if (schoolError) throw schoolError;
+      if (!updatedRows || updatedRows.length === 0) {
+        console.warn('No rows were updated — the school ID may not match any existing record.');
       }
+
+      // Clear previous child rows so re-saving doesn't create duplicates
+      const deleteResults = await Promise.all([
+        sb.from('key_contacts').delete().eq('school_id', schoolId),
+        sb.from('ofsted_judgements').delete().eq('school_id', schoolId),
+        sb.from('reporting_periods').delete().eq('school_id', schoolId),
+        sb.from('assessment_setup').delete().eq('school_id', schoolId),
+        sb.from('completion_tracker').delete().eq('school_id', schoolId)
+      ]);
+      const deleteError = deleteResults.find(r => r.error);
+      if (deleteError) throw deleteError.error;
 
       existingSchoolId = schoolId;
 
