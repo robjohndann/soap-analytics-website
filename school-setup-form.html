@@ -136,6 +136,22 @@
   table.grid-table input, table.grid-table select { width: 100%; }
   table.grid-table input[type="date"] { min-width: 150px; }
 
+  /* Completion Tracker — layout-only refinement. Scoped specifically to
+     .tracker-table / .tracker-card so the other tables on this page
+     (Ofsted, Reporting Periods, Assessment Setup) sharing .grid-table are
+     completely unaffected. */
+  .tracker-scroll { overflow-x: auto; }
+  .tracker-table input[type="email"] { min-width: 0; }
+  .tracker-table td.contributors-cell { min-width: 220px; }
+  .contributor-chip-list { display: flex; flex-wrap: wrap; }
+
+  @media (min-width: 1300px) {
+    .tracker-card {
+      margin-left: -160px;
+      margin-right: -160px;
+    }
+  }
+
   .submit-bar {
     position: sticky;
     bottom: 0;
@@ -348,23 +364,25 @@
       </div>
     </div>
 
-    <div class="card">
+    <div class="card tracker-card">
       <div class="card-head">Completion Tracker</div>
       <div class="card-body">
-        <table class="grid-table">
-          <thead><tr><th style="width:22%">Section</th><th>Responsible Person</th><th>Job Title</th><th>Email Address</th></tr></thead>
+        <div class="tracker-scroll">
+        <table class="grid-table tracker-table">
+          <thead><tr><th style="width:13%">Section</th><th style="width:15%">Responsible Person</th><th style="width:13%">Job Title</th><th style="width:26%">Email Address</th><th style="width:33%">Additional Contributors</th></tr></thead>
           <tbody id="trackerBody">
-            <tr data-section="Context"><td class="label-cell">Context</td><td><input type="text"></td><td><input type="text"></td><td><input type="email"></td></tr>
-            <tr data-section="Safeguarding"><td class="label-cell">Safeguarding</td><td><input type="text"></td><td><input type="text"></td><td><input type="email"></td></tr>
-            <tr data-section="Inclusion"><td class="label-cell">Inclusion</td><td><input type="text"></td><td><input type="text"></td><td><input type="email"></td></tr>
-            <tr data-section="Curriculum &amp; Teaching"><td class="label-cell">Curriculum &amp; Teaching</td><td><input type="text"></td><td><input type="text"></td><td><input type="email"></td></tr>
-            <tr data-section="Achievement"><td class="label-cell">Achievement</td><td><input type="text"></td><td><input type="text"></td><td><input type="email"></td></tr>
-            <tr data-section="Attendance &amp; Behaviour"><td class="label-cell">Attendance &amp; Behaviour</td><td><input type="text"></td><td><input type="text"></td><td><input type="email"></td></tr>
-            <tr data-section="PDW"><td class="label-cell">PDW</td><td><input type="text"></td><td><input type="text"></td><td><input type="email"></td></tr>
-            <tr data-section="Leadership &amp; Governance"><td class="label-cell">Leadership &amp; Governance</td><td><input type="text"></td><td><input type="text"></td><td><input type="email"></td></tr>
-            <tr data-section="Finance &amp; Resources"><td class="label-cell">Finance &amp; Resources</td><td><input type="text"></td><td><input type="text"></td><td><input type="email"></td></tr>
+            <tr data-section="Context"><td class="label-cell">Context</td><td><input type="text"></td><td><input type="text"></td><td><input type="email"></td><td class="contributors-cell"></td></tr>
+            <tr data-section="Safeguarding"><td class="label-cell">Safeguarding</td><td><input type="text"></td><td><input type="text"></td><td><input type="email"></td><td class="contributors-cell"></td></tr>
+            <tr data-section="Inclusion"><td class="label-cell">Inclusion</td><td><input type="text"></td><td><input type="text"></td><td><input type="email"></td><td class="contributors-cell"></td></tr>
+            <tr data-section="Curriculum &amp; Teaching"><td class="label-cell">Curriculum &amp; Teaching</td><td><input type="text"></td><td><input type="text"></td><td><input type="email"></td><td class="contributors-cell"></td></tr>
+            <tr data-section="Achievement"><td class="label-cell">Achievement</td><td><input type="text"></td><td><input type="text"></td><td><input type="email"></td><td class="contributors-cell"></td></tr>
+            <tr data-section="Attendance &amp; Behaviour"><td class="label-cell">Attendance &amp; Behaviour</td><td><input type="text"></td><td><input type="text"></td><td><input type="email"></td><td class="contributors-cell"></td></tr>
+            <tr data-section="PDW"><td class="label-cell">PDW</td><td><input type="text"></td><td><input type="text"></td><td><input type="email"></td><td class="contributors-cell"></td></tr>
+            <tr data-section="Leadership &amp; Governance"><td class="label-cell">Leadership &amp; Governance</td><td><input type="text"></td><td><input type="text"></td><td><input type="email"></td><td class="contributors-cell"></td></tr>
+            <tr data-section="Finance &amp; Resources"><td class="label-cell">Finance &amp; Resources</td><td><input type="text"></td><td><input type="text"></td><td><input type="email"></td><td class="contributors-cell"></td></tr>
           </tbody>
         </table>
+        </div>
       </div>
     </div>
 
@@ -451,7 +469,8 @@
       return;
     }
 
-    if (linkRow.role !== 'Headteacher') {
+    const FULL_ACCESS_ROLES = ['Headteacher', 'Executive Headteacher', 'CEO', 'School Improvement Director'];
+    if (!FULL_ACCESS_ROLES.includes(linkRow.role)) {
       banner.innerHTML = `You're logged in as ${session.user.email}, but this account is assigned to ${linkRow.role}, not School Setup.`;
       return;
     }
@@ -520,6 +539,126 @@
       if (t.job_title) texts[1].value = t.job_title;
       if (t.email) tr.querySelector('input[type="email"]').value = t.email;
     });
+
+    await loadContributors(schoolId);
+  }
+
+  // ============================================================================
+  // V60 — Additional Contributors (section_access), separate from Person
+  // Responsible above. Loads/renders existing grants, adds new ones via the
+  // deployed admin-grant-section-access Edge Function (never reproduces its
+  // privileged account-creation logic here), and removes grants via a plain
+  // RLS-permitted DELETE — the live database trigger handles cleaning up a
+  // now-redundant 'Contributor' school_users row automatically.
+  // ============================================================================
+
+  let CONTRIBUTOR_GRANTS = [];
+
+  async function loadContributors(schoolId) {
+    const { data, error } = await sb.from('section_access').select('*').eq('school_id', schoolId);
+    if (error) {
+      console.error('Could not load contributors:', error);
+      CONTRIBUTOR_GRANTS = [];
+    } else {
+      CONTRIBUTOR_GRANTS = data || [];
+    }
+    document.querySelectorAll('#trackerBody tr').forEach(tr => renderContributorsCell(tr, schoolId));
+  }
+
+  function escapeHtml(str) {
+    if (str === null || str === undefined) return '';
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  function renderContributorsCell(tr, schoolId) {
+    const section = tr.dataset.section;
+    const cell = tr.querySelector('.contributors-cell');
+    const grants = CONTRIBUTOR_GRANTS.filter(g => g.section === section);
+    const escSection = section.replace(/'/g, "\\'");
+    const chips = grants.map(g => {
+      const safeName = escapeHtml(g.contributor_name);
+      return `
+      <span class="contributor-chip" style="display:inline-flex;align-items:center;gap:4px;background:#EFF3F6;border-radius:12px;padding:3px 8px;margin:2px 4px 2px 0;font-size:12px;">
+        ${safeName}
+        <button type="button" onclick="removeContributor('${schoolId}','${escSection}','${g.auth_user_id}')" style="border:none;background:none;color:#7A1F1F;font-weight:700;cursor:pointer;padding:0 2px;" aria-label="Remove ${safeName}">×</button>
+      </span>
+    `;
+    }).join('');
+    cell.innerHTML = `
+      <div class="contributor-chip-list">${chips}</div>
+      <button type="button" class="add-contributor-btn" onclick="openAddContributorForm(this, '${schoolId}', '${escSection}')" style="margin-top:4px;background:#3DCFB8;color:#0D2B4E;border:none;border-radius:6px;padding:5px 12px;font-size:12px;font-weight:700;cursor:pointer;">+ Add</button>
+      <div class="add-contributor-form" style="display:none;margin-top:6px;"></div>
+    `;
+  }
+
+  function openAddContributorForm(btn, schoolId, section) {
+    const cell = btn.closest('.contributors-cell');
+    const formDiv = cell.querySelector('.add-contributor-form');
+    const isOpen = formDiv.style.display !== 'none';
+    if (isOpen) { formDiv.style.display = 'none'; formDiv.innerHTML = ''; return; }
+    formDiv.style.display = 'block';
+    formDiv.innerHTML = `
+      <input type="text" placeholder="Name" class="contrib-name-input" style="width:100%;margin-bottom:4px;padding:5px;font-size:12px;border:1px solid #DCE3EA;border-radius:4px;box-sizing:border-box;">
+      <input type="email" placeholder="Email" class="contrib-email-input" style="width:100%;margin-bottom:4px;padding:5px;font-size:12px;border:1px solid #DCE3EA;border-radius:4px;box-sizing:border-box;">
+      <button type="button" class="contrib-submit-btn" style="background:#0D7377;color:#fff;border:none;border-radius:4px;padding:5px 10px;font-size:12px;font-weight:700;cursor:pointer;" onclick="submitAddContributor(this, '${schoolId}', '${section}')">Grant Access</button>
+      <div class="contrib-msg" style="font-size:11px;font-weight:700;margin-top:4px;"></div>
+    `;
+  }
+
+  async function submitAddContributor(btn, schoolId, section) {
+    const formDiv = btn.closest('.add-contributor-form');
+    const name = formDiv.querySelector('.contrib-name-input').value.trim();
+    const email = formDiv.querySelector('.contrib-email-input').value.trim();
+    const msg = formDiv.querySelector('.contrib-msg');
+
+    if (!name) { msg.style.color = '#B3261E'; msg.textContent = 'Name is required.'; return; }
+    if (!email || !email.includes('@')) { msg.style.color = '#B3261E'; msg.textContent = 'A valid email is required.'; return; }
+
+    btn.disabled = true;
+    btn.textContent = 'Adding…';
+    msg.style.color = '#5A6B80';
+    msg.textContent = 'Granting access…';
+
+    try {
+      const { data, error } = await sb.functions.invoke('admin-grant-section-access', {
+        body: { email, name, school_id: schoolId, section }
+      });
+      if (error) {
+        let detail = error.message || 'Unknown error';
+        try {
+          if (error.context && typeof error.context.json === 'function') {
+            const errBody = await error.context.json();
+            if (errBody && errBody.error) detail = errBody.error;
+          }
+        } catch (_) { /* fall back to error.message above */ }
+        throw new Error(detail);
+      }
+      if (data && data.error) throw new Error(data.error);
+
+      await loadContributors(schoolId);
+    } catch (err) {
+      console.error(err);
+      msg.style.color = '#B3261E';
+      msg.textContent = 'Failed: ' + err.message;
+      btn.disabled = false;
+      btn.textContent = 'Grant Access';
+    }
+  }
+
+  async function removeContributor(schoolId, section, authUserId) {
+    if (!confirm('Remove this contributor\'s access to ' + section + '?')) return;
+    const { error } = await sb.from('section_access').delete()
+      .eq('school_id', schoolId).eq('section', section).eq('auth_user_id', authUserId);
+    if (error) {
+      alert('Could not remove access: ' + error.message);
+      return;
+    }
+    await loadContributors(schoolId);
   }
 
   requireLogin();

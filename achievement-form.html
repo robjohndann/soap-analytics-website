@@ -502,9 +502,21 @@
       return;
     }
 
-    if (linkRow.role !== 'Headteacher' && linkRow.role !== 'Achievement') {
-      statusMsg.innerHTML = `You're logged in, but this account is assigned to ${linkRow.role}, not Achievement.`;
-      return;
+    const FULL_ACCESS_ROLES = ['Headteacher', 'Executive Headteacher', 'CEO', 'School Improvement Director'];
+    if (!FULL_ACCESS_ROLES.includes(linkRow.role) && linkRow.role !== 'Achievement') {
+      // V60: a Contributor with a specific section_access grant for THIS
+      // exact school+section is also allowed in, even though their
+      // school_users.role ('Contributor') carries no access on its own.
+      const { data: sectionGrant } = await sb.from('section_access')
+        .select('section')
+        .eq('auth_user_id', session.user.id)
+        .eq('school_id', linkRow.school_id)
+        .eq('section', 'Achievement')
+        .maybeSingle();
+      if (!sectionGrant) {
+        statusMsg.innerHTML = `You're logged in, but this account is assigned to ${linkRow.role}, not Achievement.`;
+        return;
+      }
     }
 
     currentSchoolId = linkRow.school_id;

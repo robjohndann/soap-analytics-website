@@ -163,33 +163,19 @@
 <div class="amend-toast" id="amendToast">✓ Saved</div>
 
 <div class="wrap">
-  <div class="page-title">SOAPs</div>
-  <div class="page-sub">View any school's live School on a Page.</div>
-  <div id="soapListContent" style="margin-bottom:40px;"></div>
-
-  <div class="page-title">SOAP Dashboard</div>
-  <div class="page-sub">View any school's live SOAP Dashboard (Attendance currently, more sections coming).</div>
-  <div id="dashboardListContent" style="margin-bottom:40px;"></div>
-
-  <div class="page-title">IDSR SOAP</div>
-  <div class="page-sub">Review a school's uploaded IDSR before publishing it back to them.</div>
-  <div id="idsrSoapListContent" style="margin-bottom:40px;"></div>
-
-  <div class="page-title">IDSR Dashboard</div>
-  <div class="page-sub">Review a school's uploaded IDSR before publishing it back to them.</div>
-  <div id="idsrDashListContent" style="margin-bottom:40px;"></div>
+  <div class="page-title">Schools</div>
+  <div class="page-sub">Every subscribing school, organised as its own section — SOAP, IDSR, Package and Users & Access all live inside each school's card below.</div>
+  <input type="text" id="schoolSearchBox" placeholder="Search schools by name…" style="width:100%;max-width:420px;padding:10px 14px;border:1px solid #DCE3EA;border-radius:8px;font-size:14px;margin-bottom:18px;" oninput="filterSchoolCards(this.value)">
+  <iframe id="adminPublishFrame" style="display:none;width:1px;height:1px;"></iframe>
+  <iframe id="adminIdsrSoapFrame" style="display:none;width:1px;height:1px;"></iframe>
+  <iframe id="adminIdsrFrame" style="display:none;width:1px;height:1px;"></iframe>
+  <div id="content">
+    <div class="status-msg">Checking your access…</div>
+  </div>
 
   <div class="page-title">Support Messages</div>
-  <div class="page-sub">Issues raised by schools via their portal, most recent first.</div>
-  <div id="supportContent" style="margin-bottom:40px;"></div>
-
-  <div class="page-title">Package Selection</div>
-  <div class="page-sub">Choose each school's package — this determines what unlocks on their Headteacher portal.</div>
-  <div id="packageListContent" style="margin-bottom:40px;"></div>
-
-  <div class="page-title">All Schools</div>
-  <div class="page-sub">Every School Setup submission, most recent first. Click a school to see full details.</div>
-  <div id="content">
+  <div class="page-sub">Issues raised by schools via their portal, most recent first, across every school.</div>
+  <div id="supportContent" style="margin-bottom:40px;">
     <div class="status-msg">Checking your access…</div>
   </div>
 
@@ -222,6 +208,9 @@
         <label for="inviteRole">Role</label>
         <select id="inviteRole">
           <option>Headteacher</option>
+          <option>Executive Headteacher</option>
+          <option>CEO</option>
+          <option>School Improvement Director</option>
           <option>Achievement</option>
           <option>Attendance &amp; Behaviour</option>
           <option>Context</option>
@@ -440,6 +429,15 @@
     document.getElementById('card-' + id).classList.toggle('open');
   }
 
+  function filterSchoolCards(query) {
+    const q = query.trim().toLowerCase();
+    document.querySelectorAll('#content .school-card[id^="card-"]').forEach(card => {
+      const nameEl = card.querySelector('.school-name');
+      const name = nameEl ? nameEl.textContent.toLowerCase() : '';
+      card.style.display = (!q || name.includes(q)) ? '' : 'none';
+    });
+  }
+
   function switchTab(e, schoolId, tabKey) {
     const tabBar = document.getElementById('tabs-' + schoolId);
     tabBar.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
@@ -448,6 +446,35 @@
     const card = document.getElementById('card-' + schoolId);
     card.querySelectorAll('.tab-panel').forEach(panel => panel.classList.remove('active'));
     document.getElementById('panel-' + schoolId + '-' + tabKey).classList.add('active');
+  }
+
+  // Groups the 22 existing tabs into 5 top-level headings (School Setup,
+  // SOAP Data, SOAP & IDSR, Admin, Amend Data) — presentation only. This
+  // never touches switchTab, the panels, or any data — it only shows/hides
+  // which of the existing tab-btn elements are visible at a given moment,
+  // then defers to the existing switchTab (via a real .click()) to actually
+  // reveal a panel, so panel content and behaviour are completely unchanged.
+  function switchGroup(e, schoolId, groupKey) {
+    const groupBar = document.getElementById('groups-' + schoolId);
+    groupBar.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+    e.currentTarget.classList.add('active');
+
+    const tabBar = document.getElementById('tabs-' + schoolId);
+    const buttons = Array.from(tabBar.querySelectorAll('.tab-btn'));
+    let firstInGroup = null;
+    let activeAlreadyInGroup = false;
+    buttons.forEach(btn => {
+      const belongs = btn.dataset.group === groupKey;
+      btn.style.display = belongs ? '' : 'none';
+      if (belongs && !firstInGroup) firstInGroup = btn;
+      if (belongs && btn.classList.contains('active')) activeAlreadyInGroup = true;
+    });
+
+    // Switching to a group whose previously-active tab isn't in it would
+    // otherwise leave no panel visible — fall back to that group's first tab.
+    if (!activeAlreadyInGroup && firstInGroup) {
+      firstInGroup.click();
+    }
   }
 
   function renderMiniTable(headers, rows) {
@@ -668,7 +695,7 @@
       return;
     }
 
-    const [schoolsRes, contactsRes, ofstedRes, periodsRes, assessRes, trackerRes, contextRes, safeguardingRes, inclusionRes, curriculumRes, achievementRes, attendanceRes, pdwRes, leadershipRes, financeRes, supportRes, idsrUploadsRes] = await Promise.all([
+    const [schoolsRes, contactsRes, ofstedRes, periodsRes, assessRes, trackerRes, contextRes, safeguardingRes, inclusionRes, curriculumRes, achievementRes, attendanceRes, pdwRes, leadershipRes, financeRes, supportRes, idsrUploadsRes, schoolUsersRes, sectionAccessRes] = await Promise.all([
       sb.from('schools').select('*').order('created_at', { ascending: false }),
       sb.from('key_contacts').select('*'),
       sb.from('ofsted_judgements').select('*'),
@@ -685,15 +712,113 @@
       sb.from('leadership_governance_data').select('*'),
       sb.from('finance_data').select('*'),
       sb.from('support_messages').select('*').order('created_at', { ascending: false }),
-      sb.from('idsr_uploads').select('*')
+      sb.from('idsr_uploads').select('*'),
+      sb.from('school_users').select('*'),
+      sb.from('section_access').select('*')
     ]);
 
     const schools = schoolsRes.data || [];
     const bySchool = (rows, id) => (rows || []).filter(r => r.school_id === id);
     const idsrUploads = idsrUploadsRes.data || [];
     const idsrUploadFor = (id) => idsrUploads.find(u => u.school_id === id) || null;
+    const schoolUsers = schoolUsersRes.data || [];
+    const sectionAccessRows = sectionAccessRes.data || [];
 
     const supportMsgs = supportRes.data || [];
+    const AMEND_PACKAGE_OPTIONS_LIST = ['IDSR Intelligence Summary', 'IDSR Intelligence Summary + Dashboard', 'SOAP Performance Summary', 'SOAP Performance Suite'];
+
+    const PERIOD_TO_REPORTING_NAME_SOAP = {
+      'AUT1 26': 'Autumn 1', 'AUT2 26': 'Autumn 2',
+      'SPR1 27': 'Spring 1', 'SPR2 27': 'Spring 2',
+      'SUM1 27': 'Summer 1', 'SUM2 27': 'Summer 2'
+    };
+    const PERIOD_DISPLAY_SOAP = {
+      'AUT1 26': 'Autumn 1 2026', 'AUT2 26': 'Autumn 2 2026',
+      'SPR1 27': 'Spring 1 2027', 'SPR2 27': 'Spring 2 2027',
+      'SUM1 27': 'Summer 1 2027', 'SUM2 27': 'Summer 2 2027'
+    };
+    function guessCurrentPeriod(schoolPeriods) {
+      const today = new Date();
+      let current = null;
+      Object.keys(PERIOD_TO_REPORTING_NAME_SOAP).forEach(p => {
+        const match = (schoolPeriods || []).find(r => r.period_name === PERIOD_TO_REPORTING_NAME_SOAP[p]);
+        if (match && match.start_date && new Date(match.start_date) <= today) current = p;
+      });
+      return current ? PERIOD_DISPLAY_SOAP[current] : Object.values(PERIOD_DISPLAY_SOAP)[0];
+    }
+
+    // ------------------------------------------------------------------------
+    // School-centred Admin redesign (V59): each of the functions below
+    // renders ONE school's fragment for a given tab, reusing exactly the
+    // same markup/logic that used to live in separate top-level sections
+    // (SOAPs, SOAP Dashboard, IDSR SOAP, IDSR Dashboard, Package Selection,
+    // Support Messages) — only the grouping changed, not the underlying
+    // behaviour, publish functions, or data.
+    // ------------------------------------------------------------------------
+
+    function renderSoapFragment(s) {
+      const guessed = guessCurrentPeriod(bySchool(periodsRes.data, s.id));
+      return `
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+          <div class="school-meta">Live School on a Page</div>
+          <a href="soap-page.html?school_id=${s.id}" target="_blank" style="color:#0D7377;font-weight:700;font-size:13px;text-decoration:none;">View live SOAP →</a>
+        </div>
+        <div style="background:#F0F4F8;border:1px solid #DCE3EA;border-radius:8px;padding:12px 14px;">
+          <div style="font-size:12px;color:#5A6B80;margin-bottom:8px;">Publish period — auto-guessed <strong>${guessed}</strong> from today's date, change if you're finishing off a previous term's data</div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+            <select id="adminPublishPeriod-${s.id}" style="flex:1;min-width:160px;padding:8px;border:1px solid #DCE3EA;border-radius:6px;font-size:13px;">
+              ${Object.values(PERIOD_DISPLAY_SOAP).map(label => `<option${label === guessed ? ' selected' : ''}>${label}</option>`).join('')}
+            </select>
+            <button type="button" class="save-amend-btn" style="padding:8px 16px;" onclick="adminPublishSoap('${s.id}', '${s.name.replace(/'/g, "\\'")}')" id="adminPublishBtn-${s.id}">Publish SOAP</button>
+          </div>
+          <div id="adminPublishNote-${s.id}" style="font-size:12px;font-weight:700;margin-top:8px;"></div>
+        </div>
+        <div style="margin-top:14px;padding-top:14px;border-top:1px solid #DCE3EA;display:flex;justify-content:space-between;align-items:center;">
+          <div class="school-meta">Live SOAP Dashboard</div>
+          <a href="soap-dashboard.html?school_id=${s.id}" target="_blank" style="color:#0D7377;font-weight:700;font-size:13px;text-decoration:none;">View Dashboard →</a>
+        </div>
+      `;
+    }
+
+    function renderIdsrFragment(s, pageFile, publishFn, iframeId) {
+      const upload = idsrUploadFor(s.id);
+      let statusHtml, actionsHtml;
+      if (!upload) {
+        statusHtml = '<span style="color:#5A6B80;">No IDSR uploaded yet.</span>';
+        actionsHtml = '';
+      } else if (upload.status === 'pending') {
+        statusHtml = `<strong>${upload.file_name || 'IDSR'}</strong> uploaded ${new Date(upload.uploaded_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })} — awaiting review.`;
+        actionsHtml = `
+          <a href="${pageFile}?school_id=${s.id}" target="_blank" style="color:#0D7377;font-weight:700;font-size:13px;text-decoration:none;">Preview →</a>
+          <button type="button" class="save-amend-btn" style="padding:8px 16px;" onclick="${publishFn}('${s.id}', '${s.name.replace(/'/g, "\\'")}')" id="adminIdsrPublishBtn-${iframeId}-${s.id}">Publish to school</button>
+        `;
+      } else {
+        statusHtml = `<strong>${upload.file_name || 'IDSR'}</strong> published ${new Date(upload.published_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}.`;
+        actionsHtml = `<a href="${pageFile}?school_id=${s.id}" target="_blank" style="color:#0D7377;font-weight:700;font-size:13px;text-decoration:none;">View →</a>`;
+      }
+      return `
+        <div style="background:#F0F4F8;border:1px solid #DCE3EA;border-radius:8px;padding:12px 14px;">
+          <div style="font-size:13px;color:#1B2A4A;margin-bottom:8px;">${statusHtml}</div>
+          <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:center;">${actionsHtml}</div>
+          <div id="adminIdsrNote-${iframeId}-${s.id}" style="font-size:12px;font-weight:700;margin-top:8px;"></div>
+        </div>
+      `;
+    }
+
+    function renderPackageFragment(s) {
+      return `
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+          <select id="packageSelect-${s.id}" style="flex:1;min-width:260px;font-family:Arial,Helvetica,sans-serif;font-size:13px;padding:8px 10px;border:1px solid #DCE3EA;border-radius:6px;">
+            ${AMEND_PACKAGE_OPTIONS_LIST.map(o => `<option${o === s.package_tier ? ' selected' : ''}>${o}</option>`).join('')}
+          </select>
+          <button type="button" class="save-amend-btn" onclick="savePackageTier('${s.id}')" id="packageSaveBtn-${s.id}">Save</button>
+        </div>
+      `;
+    }
+
+    // Support Messages is a GLOBAL admin section (not per-school) — shows
+    // every school's messages together with the school clearly identified,
+    // matching how it worked before the per-school tab redesign.
     const supportContent = document.getElementById('supportContent');
     if (!supportMsgs.length) {
       supportContent.innerHTML = '<div class="status-msg">No support messages yet.</div>';
@@ -706,7 +831,7 @@
             </tr></thead>
             <tbody>
               ${supportMsgs.map(m => {
-                const school = schools.find(s => s.id === m.school_id);
+                const school = schools.find(sc => sc.id === m.school_id);
                 return `
                 <tr id="support-row-${m.id}">
                   <td>${school ? school.name : '—'}</td>
@@ -723,154 +848,77 @@
         </div>`;
     }
 
-    const soapListContent = document.getElementById('soapListContent');
-    if (!schools.length) {
-      soapListContent.innerHTML = '<div class="status-msg">No schools yet.</div>';
-    } else {
-      const PERIOD_TO_REPORTING_NAME_SOAP = {
-        'AUT1 26': 'Autumn 1', 'AUT2 26': 'Autumn 2',
-        'SPR1 27': 'Spring 1', 'SPR2 27': 'Spring 2',
-        'SUM1 27': 'Summer 1', 'SUM2 27': 'Summer 2'
-      };
-      const PERIOD_DISPLAY_SOAP = {
-        'AUT1 26': 'Autumn 1 2026', 'AUT2 26': 'Autumn 2 2026',
-        'SPR1 27': 'Spring 1 2027', 'SPR2 27': 'Spring 2 2027',
-        'SUM1 27': 'Summer 1 2027', 'SUM2 27': 'Summer 2 2027'
-      };
-      function guessCurrentPeriod(schoolPeriods) {
-        const today = new Date();
-        let current = null;
-        Object.keys(PERIOD_TO_REPORTING_NAME_SOAP).forEach(p => {
-          const match = (schoolPeriods || []).find(r => r.period_name === PERIOD_TO_REPORTING_NAME_SOAP[p]);
-          if (match && match.start_date && new Date(match.start_date) <= today) current = p;
+    // Users & Access: shows role and how long each membership has existed.
+    // NOTE — a genuine limitation, not an oversight: school_users has no
+    // email column, and there is no existing safe way to resolve
+    // auth_user_id -> email from the frontend (the one such lookup,
+    // get_user_id_by_email, is deliberately locked to service_role/the Edge
+    // Function only). Showing email here would need a new admin-only RPC,
+    // which is new backend surface — not built without being asked for.
+    function escapeHtml(str) {
+      if (str === null || str === undefined) return '';
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    function renderUsersAccessFragment(s) {
+      const members = schoolUsers.filter(u => u.school_id === s.id);
+      const contributors = sectionAccessRows.filter(g => g.school_id === s.id);
+
+      let membersHtml;
+      if (!members.length) {
+        membersHtml = '<div class="school-meta">No users linked to this school yet. Use Invite Subscriber below to add one.</div>';
+      } else {
+        membersHtml = `
+          <table class="mini-table">
+            <thead><tr><th>Role</th><th>Account ID</th></tr></thead>
+            <tbody>
+              ${members.map(u => `
+                <tr>
+                  <td>${u.role ?? '—'}</td>
+                  <td style="font-family:monospace;font-size:11px;color:#5A6B80;">${u.auth_user_id}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+          <div style="font-size:11px;color:#5A6B80;margin-top:8px;">Email addresses aren't shown here for these accounts yet — see Invite Subscriber below to add another user to this school.</div>
+        `;
+      }
+
+      // V60: Additional Contributors — grouped by person, since the same
+      // contributor can hold multiple section grants at this school.
+      let contributorsHtml = '';
+      if (contributors.length) {
+        const byPerson = {};
+        contributors.forEach(g => {
+          if (!byPerson[g.auth_user_id]) byPerson[g.auth_user_id] = { name: g.contributor_name, email: g.contributor_email, sections: [] };
+          byPerson[g.auth_user_id].sections.push(g.section);
         });
-        return current ? PERIOD_DISPLAY_SOAP[current] : Object.values(PERIOD_DISPLAY_SOAP)[0];
+        contributorsHtml = `
+          <h4 style="margin:16px 0 6px;font-size:13px;color:#0D2B4E;">Additional Contributors</h4>
+          <table class="mini-table">
+            <thead><tr><th>Name</th><th>Email</th><th>Section(s)</th></tr></thead>
+            <tbody>
+              ${Object.values(byPerson).map(p => `
+                <tr>
+                  <td>${escapeHtml(p.name)}</td>
+                  <td>${escapeHtml(p.email)}</td>
+                  <td>${p.sections.join(', ')}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        `;
       }
 
-      soapListContent.innerHTML = `
-        <div class="school-card" style="display:flex;flex-direction:column;gap:2px;">
-          ${schools.map(s => {
-            const guessed = guessCurrentPeriod(bySchool(periodsRes.data, s.id));
-            return `
-            <div style="padding:16px 20px;border-bottom:1px solid #DCE3EA;">
-              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
-                <div>
-                  <div class="school-name">${s.name}</div>
-                  <div class="school-meta">${s.phase || '—'} · ${s.academic_year || '—'}</div>
-                </div>
-                <a href="soap-page.html?school_id=${s.id}" target="_blank" style="color:#0D7377;font-weight:700;font-size:13px;text-decoration:none;">View live SOAP →</a>
-              </div>
-              <div style="background:#F0F4F8;border:1px solid #DCE3EA;border-radius:8px;padding:12px 14px;">
-                <div style="font-size:12px;color:#5A6B80;margin-bottom:8px;">Publish period — auto-guessed <strong>${guessed}</strong> from today's date, change if you're finishing off a previous term's data</div>
-                <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
-                  <select id="adminPublishPeriod-${s.id}" style="flex:1;min-width:160px;padding:8px;border:1px solid #DCE3EA;border-radius:6px;font-size:13px;">
-                    ${Object.values(PERIOD_DISPLAY_SOAP).map(label => `<option${label === guessed ? ' selected' : ''}>${label}</option>`).join('')}
-                  </select>
-                  <button type="button" class="save-amend-btn" style="padding:8px 16px;" onclick="adminPublishSoap('${s.id}', '${s.name.replace(/'/g, "\\'")}')" id="adminPublishBtn-${s.id}">Publish SOAP</button>
-                </div>
-                <div id="adminPublishNote-${s.id}" style="font-size:12px;font-weight:700;margin-top:8px;"></div>
-              </div>
-            </div>
-          `;
-          }).join('')}
-        </div>
-        <iframe id="adminPublishFrame" style="display:none;width:1px;height:1px;"></iframe>
-      `;
+      return membersHtml + contributorsHtml;
     }
 
-    const dashboardListContent = document.getElementById('dashboardListContent');
-    if (!schools.length) {
-      dashboardListContent.innerHTML = '<div class="status-msg">No schools yet.</div>';
-    } else {
-      dashboardListContent.innerHTML = `
-        <div class="school-card">
-          ${schools.map(s => `
-            <a href="soap-dashboard.html?school_id=${s.id}" target="_blank" style="display:flex;justify-content:space-between;align-items:center;padding:14px 20px;text-decoration:none;color:inherit;border-bottom:1px solid #DCE3EA;">
-              <div>
-                <div class="school-name">${s.name}</div>
-                <div class="school-meta">${s.phase || '—'} · ${s.academic_year || '—'} · ${s.package_tier || '—'}</div>
-              </div>
-              <div style="color:#0D7377;font-weight:700;font-size:13px;">View Dashboard →</div>
-            </a>
-          `).join('')}
-        </div>
-      `;
-    }
-
-    // IDSR SOAP and IDSR Dashboard are now genuinely separate pages, sharing
-    // the same underlying idsr_uploads row/status — publishing from either
-    // section flips the one shared status, so both sections update together.
-    function renderIdsrList(containerId, pageFile, publishFn, iframeId) {
-      const container = document.getElementById(containerId);
-      if (!schools.length) {
-        container.innerHTML = '<div class="status-msg">No schools yet.</div>';
-        return;
-      }
-      container.innerHTML = `
-        <div class="school-card" style="display:flex;flex-direction:column;gap:2px;">
-          ${schools.map(s => {
-            const upload = idsrUploadFor(s.id);
-            let statusHtml, actionsHtml;
-            if (!upload) {
-              statusHtml = '<span style="color:#5A6B80;">No IDSR uploaded yet.</span>';
-              actionsHtml = '';
-            } else if (upload.status === 'pending') {
-              statusHtml = `<strong>${upload.file_name || 'IDSR'}</strong> uploaded ${new Date(upload.uploaded_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })} — awaiting review.`;
-              actionsHtml = `
-                <a href="${pageFile}?school_id=${s.id}" target="_blank" style="color:#0D7377;font-weight:700;font-size:13px;text-decoration:none;">Preview →</a>
-                <button type="button" class="save-amend-btn" style="padding:8px 16px;" onclick="${publishFn}('${s.id}', '${s.name.replace(/'/g, "\\'")}')" id="adminIdsrPublishBtn-${iframeId}-${s.id}">Publish to school</button>
-              `;
-            } else {
-              statusHtml = `<strong>${upload.file_name || 'IDSR'}</strong> published ${new Date(upload.published_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}.`;
-              actionsHtml = `<a href="${pageFile}?school_id=${s.id}" target="_blank" style="color:#0D7377;font-weight:700;font-size:13px;text-decoration:none;">View →</a>`;
-            }
-            return `
-            <div style="padding:16px 20px;border-bottom:1px solid #DCE3EA;">
-              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-                <div>
-                  <div class="school-name">${s.name}</div>
-                  <div class="school-meta">${s.phase || '—'} · ${s.academic_year || '—'} · ${s.package_tier || '—'}</div>
-                </div>
-              </div>
-              <div style="background:#F0F4F8;border:1px solid #DCE3EA;border-radius:8px;padding:12px 14px;">
-                <div style="font-size:13px;color:#1B2A4A;margin-bottom:8px;">${statusHtml}</div>
-                <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:center;">${actionsHtml}</div>
-                <div id="adminIdsrNote-${iframeId}-${s.id}" style="font-size:12px;font-weight:700;margin-top:8px;"></div>
-              </div>
-            </div>`;
-          }).join('')}
-        </div>
-        <iframe id="${iframeId}" style="display:none;width:1px;height:1px;"></iframe>
-      `;
-    }
-    renderIdsrList('idsrSoapListContent', 'idsr-soap.html', 'adminPublishIdsrSoap', 'adminIdsrSoapFrame');
-    renderIdsrList('idsrDashListContent', 'idsr-dashboard.html', 'adminPublishIdsr', 'adminIdsrFrame');
     renderInviteSchoolOptions(schools);
-
-    const AMEND_PACKAGE_OPTIONS_LIST = ['IDSR Intelligence Summary', 'IDSR Intelligence Summary + Dashboard', 'SOAP Performance Summary', 'SOAP Performance Suite'];
-    const packageListContent = document.getElementById('packageListContent');
-    if (!schools.length) {
-      packageListContent.innerHTML = '<div class="status-msg">No schools yet.</div>';
-    } else {
-      packageListContent.innerHTML = `
-        <div class="school-card">
-          ${schools.map(s => `
-            <div style="display:flex;justify-content:space-between;align-items:center;padding:14px 20px;border-bottom:1px solid #DCE3EA;gap:16px;">
-              <div>
-                <div class="school-name">${s.name}</div>
-                <div class="school-meta">${s.phase || '—'} · ${s.academic_year || '—'}</div>
-              </div>
-              <div style="display:flex;align-items:center;gap:10px;">
-                <select id="packageSelect-${s.id}" style="font-family:Arial,Helvetica,sans-serif;font-size:13px;padding:8px 10px;border:1px solid #DCE3EA;border-radius:6px;min-width:260px;">
-                  ${AMEND_PACKAGE_OPTIONS_LIST.map(o => `<option${o === s.package_tier ? ' selected' : ''}>${o}</option>`).join('')}
-                </select>
-                <button type="button" class="save-amend-btn" onclick="savePackageTier('${s.id}')" id="packageSaveBtn-${s.id}">Save</button>
-              </div>
-            </div>
-          `).join('')}
-        </div>
-      `;
-    }
 
     await loadResources();
 
@@ -923,23 +971,35 @@
           <div class="chevron">▶</div>
         </div>
         <div class="school-detail">
+          <div class="tab-bar" id="groups-${s.id}" style="margin-bottom:8px;">
+            <button type="button" class="tab-btn active" onclick="switchGroup(event,'${s.id}','setup')">School Setup</button>
+            <button type="button" class="tab-btn" onclick="switchGroup(event,'${s.id}','soapdata')">SOAP Data</button>
+            <button type="button" class="tab-btn" onclick="switchGroup(event,'${s.id}','soapidsr')">SOAP & IDSR</button>
+            <button type="button" class="tab-btn" onclick="switchGroup(event,'${s.id}','admingroup')">Admin</button>
+            <button type="button" class="tab-btn" style="color:#0D7377;" onclick="switchGroup(event,'${s.id}','amendgroup')">✎ Amend Data</button>
+          </div>
           <div class="tab-bar" id="tabs-${s.id}">
-            <button type="button" class="tab-btn active" onclick="switchTab(event,'${s.id}','info')">School Information (${infoC.pct}%)</button>
-            <button type="button" class="tab-btn" onclick="switchTab(event,'${s.id}','contacts')">Key Contacts (${contactsC.pct}%)</button>
-            <button type="button" class="tab-btn" onclick="switchTab(event,'${s.id}','ofsted')">Ofsted Judgements (${ofstedC.pct}%)</button>
-            <button type="button" class="tab-btn" onclick="switchTab(event,'${s.id}','periods')">Reporting Periods (${periodsC.pct}%)</button>
-            <button type="button" class="tab-btn" onclick="switchTab(event,'${s.id}','assess')">Assessment Setup (${assessC.pct}%)</button>
-            <button type="button" class="tab-btn" onclick="switchTab(event,'${s.id}','tracker')">Completion Tracker (${trackerC.pct}%)</button>
-            <button type="button" class="tab-btn" onclick="switchTab(event,'${s.id}','context')">Context (${contextCompletionResult.pct}%)</button>
-            <button type="button" class="tab-btn" onclick="switchTab(event,'${s.id}','safeguarding')">Safeguarding (${safeguardingC.pct}%)</button>
-            <button type="button" class="tab-btn" onclick="switchTab(event,'${s.id}','inclusion')">Inclusion (${inclusionC.pct}%)</button>
-            <button type="button" class="tab-btn" onclick="switchTab(event,'${s.id}','attendance')">Attendance & Behaviour (${attendanceC.pct}%)</button>
-            <button type="button" class="tab-btn" onclick="switchTab(event,'${s.id}','curriculum')">Curriculum & Teaching (${curriculumC.pct}%)</button>
-            <button type="button" class="tab-btn" onclick="switchTab(event,'${s.id}','achievement')">Achievement (${achievementC.pct}%)</button>
-            <button type="button" class="tab-btn" onclick="switchTab(event,'${s.id}','pdw')">PDW (${pdwC.pct}%)</button>
-            <button type="button" class="tab-btn" onclick="switchTab(event,'${s.id}','leadership')">Leadership & Governance (${leadershipC.pct}%)</button>
-            <button type="button" class="tab-btn" onclick="switchTab(event,'${s.id}','finance')">Finance & Resources (${financeC.pct}%)</button>
-            <button type="button" class="tab-btn" style="color:#0D7377;" onclick="switchTab(event,'${s.id}','amend')">✎ Amend Data</button>
+            <button type="button" class="tab-btn active" data-group="setup" onclick="switchTab(event,'${s.id}','info')">School Information (${infoC.pct}%)</button>
+            <button type="button" class="tab-btn" data-group="setup" onclick="switchTab(event,'${s.id}','contacts')">Key Contacts (${contactsC.pct}%)</button>
+            <button type="button" class="tab-btn" data-group="setup" onclick="switchTab(event,'${s.id}','ofsted')">Ofsted Judgements (${ofstedC.pct}%)</button>
+            <button type="button" class="tab-btn" data-group="setup" onclick="switchTab(event,'${s.id}','periods')">Reporting Periods (${periodsC.pct}%)</button>
+            <button type="button" class="tab-btn" data-group="setup" onclick="switchTab(event,'${s.id}','assess')">Assessment Setup (${assessC.pct}%)</button>
+            <button type="button" class="tab-btn" data-group="setup" onclick="switchTab(event,'${s.id}','tracker')">Completion Tracker (${trackerC.pct}%)</button>
+            <button type="button" class="tab-btn" data-group="soapdata" style="display:none;" onclick="switchTab(event,'${s.id}','context')">Context (${contextCompletionResult.pct}%)</button>
+            <button type="button" class="tab-btn" data-group="soapdata" style="display:none;" onclick="switchTab(event,'${s.id}','safeguarding')">Safeguarding (${safeguardingC.pct}%)</button>
+            <button type="button" class="tab-btn" data-group="soapdata" style="display:none;" onclick="switchTab(event,'${s.id}','inclusion')">Inclusion (${inclusionC.pct}%)</button>
+            <button type="button" class="tab-btn" data-group="soapdata" style="display:none;" onclick="switchTab(event,'${s.id}','attendance')">Attendance & Behaviour (${attendanceC.pct}%)</button>
+            <button type="button" class="tab-btn" data-group="soapdata" style="display:none;" onclick="switchTab(event,'${s.id}','curriculum')">Curriculum & Teaching (${curriculumC.pct}%)</button>
+            <button type="button" class="tab-btn" data-group="soapdata" style="display:none;" onclick="switchTab(event,'${s.id}','achievement')">Achievement (${achievementC.pct}%)</button>
+            <button type="button" class="tab-btn" data-group="soapdata" style="display:none;" onclick="switchTab(event,'${s.id}','pdw')">PDW (${pdwC.pct}%)</button>
+            <button type="button" class="tab-btn" data-group="soapdata" style="display:none;" onclick="switchTab(event,'${s.id}','leadership')">Leadership & Governance (${leadershipC.pct}%)</button>
+            <button type="button" class="tab-btn" data-group="soapdata" style="display:none;" onclick="switchTab(event,'${s.id}','finance')">Finance & Resources (${financeC.pct}%)</button>
+            <button type="button" class="tab-btn" data-group="soapidsr" style="display:none;" onclick="switchTab(event,'${s.id}','soap')">SOAP</button>
+            <button type="button" class="tab-btn" data-group="soapidsr" style="display:none;" onclick="switchTab(event,'${s.id}','idsrsoap')">IDSR SOAP</button>
+            <button type="button" class="tab-btn" data-group="soapidsr" style="display:none;" onclick="switchTab(event,'${s.id}','idsrdash')">IDSR Dashboard</button>
+            <button type="button" class="tab-btn" data-group="admingroup" style="display:none;" onclick="switchTab(event,'${s.id}','package')">Package</button>
+            <button type="button" class="tab-btn" data-group="admingroup" style="display:none;" onclick="switchTab(event,'${s.id}','users')">Users & Access</button>
+            <button type="button" class="tab-btn" data-group="amendgroup" style="display:none;color:#0D7377;" onclick="switchTab(event,'${s.id}','amend')">✎ Amend Data</button>
           </div>
 
           <div class="tab-panel active" id="panel-${s.id}-info">
@@ -1033,6 +1093,36 @@
             <div class="detail-section" style="margin-top:0;">
               <h4>Finance & Resources — ${financeC.pct}% complete (${financeC.filled} of ${financeC.total} available fields)</h4>
               ${renderMiniTable(['Category', 'Metric', 'Period', 'Value'], financeRows.map(c => [c.category, c.metric, c.period, c.value]))}
+            </div>
+          </div>
+          <div class="tab-panel" id="panel-${s.id}-soap">
+            <div class="detail-section" style="margin-top:0;">
+              <h4>SOAP & SOAP Dashboard</h4>
+              ${renderSoapFragment(s)}
+            </div>
+          </div>
+          <div class="tab-panel" id="panel-${s.id}-idsrsoap">
+            <div class="detail-section" style="margin-top:0;">
+              <h4>IDSR SOAP</h4>
+              ${renderIdsrFragment(s, 'idsr-soap.html', 'adminPublishIdsrSoap', 'adminIdsrSoapFrame')}
+            </div>
+          </div>
+          <div class="tab-panel" id="panel-${s.id}-idsrdash">
+            <div class="detail-section" style="margin-top:0;">
+              <h4>IDSR Dashboard</h4>
+              ${renderIdsrFragment(s, 'idsr-dashboard.html', 'adminPublishIdsr', 'adminIdsrFrame')}
+            </div>
+          </div>
+          <div class="tab-panel" id="panel-${s.id}-package">
+            <div class="detail-section" style="margin-top:0;">
+              <h4>Package</h4>
+              ${renderPackageFragment(s)}
+            </div>
+          </div>
+          <div class="tab-panel" id="panel-${s.id}-users">
+            <div class="detail-section" style="margin-top:0;">
+              <h4>Users & Access</h4>
+              ${renderUsersAccessFragment(s)}
             </div>
           </div>
           <div class="tab-panel" id="panel-${s.id}-amend">
@@ -1381,8 +1471,13 @@
         upload.status = 'published';
         upload.published_at = new Date().toISOString();
       }
-      renderIdsrList('idsrSoapListContent', 'idsr-soap.html', 'adminPublishIdsrSoap', 'adminIdsrSoapFrame');
-      renderIdsrList('idsrDashListContent', 'idsr-dashboard.html', 'adminPublishIdsr', 'adminIdsrFrame');
+      const publishedSchool = schools.find(sc => sc.id === schoolId);
+      if (publishedSchool) {
+        const soapPanel = document.getElementById(`panel-${schoolId}-idsrsoap`);
+        const dashPanel = document.getElementById(`panel-${schoolId}-idsrdash`);
+        if (soapPanel) soapPanel.innerHTML = renderIdsrFragment(publishedSchool, 'idsr-soap.html', 'adminPublishIdsrSoap', 'adminIdsrSoapFrame');
+        if (dashPanel) dashPanel.innerHTML = renderIdsrFragment(publishedSchool, 'idsr-dashboard.html', 'adminPublishIdsr', 'adminIdsrFrame');
+      }
 
       note.style.color = '#0D7377';
       note.textContent = `Published for ${schoolName} — now visible in their Headteacher's IDSR sections.`;

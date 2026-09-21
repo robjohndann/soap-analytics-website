@@ -95,6 +95,7 @@
   <div class="ribbon-left">
     <a href="index.html"><img src="images/logo-navy.png" alt="SOAP Analytics" style="height:36px;width:auto;border-radius:6px;display:block;"></a>
     <a href="admin.html" id="adminLink" class="admin-link" style="display:none;">Admin Dashboard →</a>
+    <a href="portal.html" id="switchSchoolLink" class="admin-link" style="display:none;">Switch School →</a>
   </div>
   <a href="#" class="logout-link" onclick="logout(event);">Log out</a>
 </header>
@@ -385,19 +386,24 @@
     window.location.href = 'login.html';
   }
 
+  const FULL_ACCESS_ROLES = ['Headteacher', 'Executive Headteacher', 'CEO', 'School Improvement Director'];
+  const FULL_ACCESS_FORMS = [
+    { label: 'School Setup', href: 'school-setup-form.html', key: 'schoolSetup' },
+    { label: 'Context', href: 'context-form.html', key: 'context' },
+    { label: 'Safeguarding', href: 'safeguarding-form.html', key: 'safeguarding' },
+    { label: 'Inclusion', href: 'inclusion-form.html', key: 'inclusion' },
+    { label: 'Attendance & Behaviour', href: 'attendance-form.html', key: 'attendance' },
+    { label: 'Curriculum & Teaching', href: 'curriculum-form.html', key: 'curriculum' },
+    { label: 'Achievement', href: 'achievement-form.html', key: 'achievement' },
+    { label: 'PDW', href: 'pdw-form.html', key: 'pdw' },
+    { label: 'Leadership & Governance', href: 'leadership-form.html', key: 'leadership' },
+    { label: 'Finance & Resources', href: 'finance-form.html', key: 'finance' }
+  ];
   const FORM_ACCESS = {
-    'Headteacher': [
-      { label: 'School Setup', href: 'school-setup-form.html', key: 'schoolSetup' },
-      { label: 'Context', href: 'context-form.html', key: 'context' },
-      { label: 'Safeguarding', href: 'safeguarding-form.html', key: 'safeguarding' },
-      { label: 'Inclusion', href: 'inclusion-form.html', key: 'inclusion' },
-      { label: 'Attendance & Behaviour', href: 'attendance-form.html', key: 'attendance' },
-      { label: 'Curriculum & Teaching', href: 'curriculum-form.html', key: 'curriculum' },
-      { label: 'Achievement', href: 'achievement-form.html', key: 'achievement' },
-      { label: 'PDW', href: 'pdw-form.html', key: 'pdw' },
-      { label: 'Leadership & Governance', href: 'leadership-form.html', key: 'leadership' },
-      { label: 'Finance & Resources', href: 'finance-form.html', key: 'finance' }
-    ],
+    'Headteacher': FULL_ACCESS_FORMS,
+    'Executive Headteacher': FULL_ACCESS_FORMS,
+    'CEO': FULL_ACCESS_FORMS,
+    'School Improvement Director': FULL_ACCESS_FORMS,
     'Context': [{ label: 'Context', href: 'context-form.html', key: 'context' }],
     'Safeguarding': [{ label: 'Safeguarding', href: 'safeguarding-form.html', key: 'safeguarding' }],
     'Inclusion': [{ label: 'Inclusion', href: 'inclusion-form.html', key: 'inclusion' }],
@@ -480,7 +486,32 @@
       return;
     }
 
-    const availableForms = FORM_ACCESS[linkRow.role] || [];
+    if (linkRows.length > 1) {
+      document.getElementById('switchSchoolLink').style.display = '';
+    }
+
+    // V60 (revised): section_access grants AUGMENT whatever the person's
+    // school_users.role already provides — they never replace it. This
+    // matters because the Edge Function deliberately preserves an existing
+    // departmental role when granting an additional section (e.g. someone
+    // with role='Achievement' later granted Attendance & Behaviour access
+    // keeps both). A pure 'Contributor' still ends up with only their
+    // granted sections, since FORM_ACCESS has no entry for that role and
+    // contributes nothing on its own. Leadership roles are unaffected —
+    // they already get every form from FORM_ACCESS, and the union below
+    // just adds nothing new. Grants are always queried scoped to THIS
+    // specific school, so they never leak across schools.
+    const roleBasedForms = FORM_ACCESS[linkRow.role] || [];
+    const { data: myGrants } = await sb.from('section_access')
+      .select('section')
+      .eq('auth_user_id', session.user.id)
+      .eq('school_id', linkRow.school_id);
+    const grantedSections = (myGrants || []).map(g => g.section);
+    const grantedForms = FULL_ACCESS_FORMS.filter(f => grantedSections.includes(f.label));
+
+    const availableFormsByKey = new Map();
+    [...roleBasedForms, ...grantedForms].forEach(f => availableFormsByKey.set(f.key, f));
+    const availableForms = Array.from(availableFormsByKey.values());
 
     const [
       schoolRes, periodsRes, contextRes, safeguardingRes, inclusionRes, curriculumRes,
@@ -519,7 +550,7 @@
       finance: financeCompletion(financeRes.data)
     };
 
-    const isHeadteacher = linkRow.role === 'Headteacher';
+    const isHeadteacher = FULL_ACCESS_ROLES.includes(linkRow.role);
     const publishedSoaps = publishedRes.data || [];
     const idsrUpload = idsrRes.data || null;
 
