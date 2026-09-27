@@ -555,7 +555,12 @@
   let CONTRIBUTOR_GRANTS = [];
 
   async function loadContributors(schoolId) {
-    const { data, error } = await sb.from('section_access').select('*').eq('school_id', schoolId);
+    // V61 fix: only rows with is_additional = true are Additional Contributor
+    // grants. Without this filter, Responsible-Person-only rows would show
+    // as Contributor chips, and a chip whose Additional provenance was just
+    // removed (but survives because is_responsible is still true) would
+    // wrongly reappear on the next reload.
+    const { data, error } = await sb.from('section_access').select('*').eq('school_id', schoolId).eq('is_additional', true);
     if (error) {
       console.error('Could not load contributors:', error);
       CONTRIBUTOR_GRANTS = [];
@@ -652,12 +657,30 @@
 
   async function removeContributor(schoolId, section, authUserId) {
     if (!confirm('Remove this contributor\'s access to ' + section + '?')) return;
-    const { error } = await sb.from('section_access').delete()
-      .eq('school_id', schoolId).eq('section', section).eq('auth_user_id', authUserId);
-    if (error) {
-      alert('Could not remove access: ' + error.message);
+
+    // V61 (second correction): calls the atomic revoke_additional_contributor_access
+    // Postgres function (SECURITY DEFINER) instead of a separate UPDATE
+    // then DELETE from the browser. Those were two independent database
+    // operations — if the UPDATE succeeded and the DELETE failed (lost
+    // connection, closed tab, transient error), a row could be left with
+    // BOTH flags false while still existing, which every existing RLS
+    // policy and the 9 department forms treat as "access exists". The
+    // function performs the clear-then-conditional-delete as one atomic
+    // transaction, so that partial-failure window no longer exists. The
+    // function has its own internal authorisation check (mirroring the
+    // existing section_access RLS policy), so this is no less safe than
+    // the direct table access it replaces.
+    const { error: revokeErr } = await sb.rpc('revoke_additional_contributor_access', {
+      p_auth_user_id: authUserId,
+      p_school_id: schoolId,
+      p_section: section,
+    });
+
+    if (revokeErr) {
+      alert('Could not remove access: ' + revokeErr.message);
       return;
     }
+
     await loadContributors(schoolId);
   }
 
@@ -684,6 +707,65 @@
 
       if (!existingSchoolId) throw new Error('No authorised school selected. Return to the portal and choose a school.');
       const schoolId = existingSchoolId;
+
+      // V61: fetch the CURRENT completion_tracker state before it gets
+      // replaced below, so we can tell which sections' Responsible Person
+      // actually changed. Without this, there is no way to know who the
+      // PREVIOUS Responsible Person was in order to revoke their access.
+      // The error is now explicitly checked and aborts the save — silently
+      // treating a failed read as "no prior state" would make every
+      // section look brand new, risking unnecessary sync calls.
+      const { data: priorTracker, error: priorTrackerErr } = await sb
+        .from('completion_tracker')
+        .select('section, responsible_person, email, access_sync_pending, access_sync_previous_email')
+        .eq('school_id', schoolId);
+      if (priorTrackerErr) throw new Error('Could not read the current Completion Tracker state: ' + priorTrackerErr.message);
+      const priorEmailBySection = {};
+      const priorPendingBySection = {};
+      const priorPreviousEmailBySection = {};
+      (priorTracker || []).forEach(t => {
+        priorEmailBySection[t.section] = t.email || null;
+        priorPendingBySection[t.section] = !!t.access_sync_pending;
+        priorPreviousEmailBySection[t.section] = t.access_sync_previous_email || null;
+      });
+
+      // V61 (third correction): if a section's Responsible Person sync is
+      // still pending from an earlier save, block changing that section's
+      // Responsible Person AGAIN until the pending reconciliation has
+      // actually succeeded. Without this, a further change (e.g.
+      // John -> David, while Sarah -> John is still unresolved) would
+      // carry forward only the ORIGINAL previous email (Sarah) and never
+      // reconsider the CURRENT one (John) — and John may have already
+      // received Responsible-Person access from the earlier attempt's
+      // uncertain partial completion, since an Edge Function can fail
+      // after some of its work has already taken effect. Rather than track
+      // every intermediate identity a section passed through while
+      // pending (a queue/history system, deliberately avoided here), this
+      // simply requires resolving one pending change before starting
+      // another — a small, easily understood restriction. Checked BEFORE
+      // any writes begin, so a blocked section stops the whole save with a
+      // clear explanation rather than silently discarding the edit.
+      const blockedPendingSections = [];
+      document.querySelectorAll('#trackerBody tr').forEach(tr => {
+        const section = tr.dataset.section;
+        if (!priorPendingBySection[section]) return;
+        const currentFormEmail = tr.querySelector('input[type="email"]').value || null;
+        if (currentFormEmail !== priorEmailBySection[section]) {
+          blockedPendingSections.push(section);
+        }
+      });
+      if (blockedPendingSections.length) {
+        showToast(
+          `⚠ Cannot change the Responsible Person for ${blockedPendingSections.join(', ')} right now — ` +
+          `a previous access update for ${blockedPendingSections.length === 1 ? 'that section' : 'those sections'} ` +
+          `hasn't been confirmed yet. Please save once WITHOUT changing ${blockedPendingSections.length === 1 ? 'it' : 'them'} ` +
+          `first to retry that update, then make your change afterwards.`,
+          true
+        );
+        btn.disabled = false;
+        btn.textContent = 'Save';
+        return;
+      }
 
       const schoolPayload = {
         id: schoolId,
@@ -768,20 +850,115 @@
         if (error) throw error;
       }
 
-      const tracker = Array.from(document.querySelectorAll('#trackerBody tr')).map(tr => {
+      // V61 (second correction): access_sync_previous_email preserves the
+      // ACTUAL email that still needs revoking, independently of whatever
+      // the tracker's "current" email says — access_sync_pending alone was
+      // not sufficient, since once the tracker is overwritten with the new
+      // person, a naive retry would diff the current value against itself
+      // and silently skip revoking the old one. The value is set once, when
+      // a genuine change is first detected, and carried forward UNCHANGED
+      // across any number of failed retries (wasPending case below) — only
+      // ever cleared once the full old-revoke + new-grant reconciliation
+      // for that section actually succeeds.
+      const allTrackerRows = Array.from(document.querySelectorAll('#trackerBody tr')).map(tr => {
         const texts = tr.querySelectorAll('input[type="text"]');
         const email = tr.querySelector('input[type="email"]');
+        const section = tr.dataset.section;
+        const newEmail = email.value || null;
+        const priorEmail = priorEmailBySection[section] || null;
+        const emailChanged = priorEmail !== newEmail;
+        const wasPending = !!priorPendingBySection[section];
+        const emailToRevoke = wasPending ? priorPreviousEmailBySection[section] : priorEmail;
         return {
           school_id: schoolId,
-          section: tr.dataset.section,
+          section,
           responsible_person: texts[0].value || null,
           job_title: texts[1].value || null,
-          email: email.value || null
+          email: newEmail,
+          access_sync_pending: emailChanged || wasPending,
+          access_sync_previous_email: (emailChanged || wasPending) ? emailToRevoke : null,
         };
-      }).filter(t => t.responsible_person || t.job_title || t.email);
+      });
+      const tracker = allTrackerRows.filter(t => t.responsible_person || t.job_title || t.email || t.access_sync_pending);
       if (tracker.length) {
         const { error } = await sb.from('completion_tracker').insert(tracker);
         if (error) throw error;
+      }
+
+      // Sync Responsible Person access for every section marked pending
+      // above — this now covers BOTH a genuine change this save AND a
+      // retry of a section whose sync failed on a previous save, even if
+      // nothing in the form changed again this time.
+      const responsiblePersonSyncErrors = [];
+      for (const t of allTrackerRows) {
+        if (!t.access_sync_pending) continue; // nothing to do for this section
+
+        const newEmail = t.email || null;
+
+        try {
+          const { data, error } = await sb.functions.invoke('sync-responsible-person-access', {
+            body: {
+              school_id: schoolId,
+              section: t.section,
+              new_name: t.responsible_person || null,
+              new_email: newEmail,
+              // The email actually pending revocation — NOT necessarily
+              // this save's "before" value, since a retry must keep
+              // targeting the original previous person until the whole
+              // reconciliation succeeds.
+              old_email: t.access_sync_previous_email,
+            }
+          });
+          if (error) {
+            let detail = error.message || 'Unknown error';
+            try {
+              if (error.context && typeof error.context.json === 'function') {
+                const errBody = await error.context.json();
+                if (errBody && errBody.error) detail = errBody.error;
+              }
+            } catch (_) { /* fall back to error.message above */ }
+            throw new Error(detail);
+          }
+          if (data && data.error) throw new Error(data.error);
+
+          // Sync confirmed successful — clear BOTH the pending flag and
+          // the preserved previous-email for this section, since the full
+          // old-revoke + new-grant reconciliation has now genuinely
+          // completed. The tracker filter above ensures a row exists to
+          // update here even for a cleared section, as long as it was
+          // pending.
+          const { error: clearPendingErr } = await sb
+            .from('completion_tracker')
+            .update({ access_sync_pending: false, access_sync_previous_email: null })
+            .eq('school_id', schoolId)
+            .eq('section', t.section);
+          if (clearPendingErr) {
+            // Non-fatal: the access change itself succeeded; at worst
+            // this section gets one harmless extra sync attempt next
+            // save (the sync function is idempotent either way).
+            console.error(`Could not clear access_sync_pending for ${t.section}:`, clearPendingErr);
+          }
+        } catch (syncErr) {
+          console.error(`Responsible Person access sync failed for ${t.section}:`, syncErr);
+          responsiblePersonSyncErrors.push(`${t.section}: ${syncErr.message}`);
+          // Deliberately left access_sync_pending = true and
+          // access_sync_previous_email unchanged (their values from the
+          // insert above) — this is what makes the failure retryable on
+          // the next save, targeting the CORRECT original person, even
+          // without the field changing again and regardless of whether
+          // this attempt failed before or after the old person was
+          // actually revoked (the revoke step and the grant step are both
+          // independently idempotent, so retrying the whole pair is safe).
+        }
+      }
+
+      if (responsiblePersonSyncErrors.length) {
+        // The core School Setup save already succeeded at this point — a
+        // sync issue is reported as a warning, not treated as blocking the
+        // whole save, so a transient problem granting access can't prevent
+        // someone from saving their basic School Setup data at all.
+        showToast('⚠ Saved, but Responsible Person access update failed for: ' + responsiblePersonSyncErrors.join('; '), true);
+        return;
       }
 
       showToast('✓ School Setup saved to the database');

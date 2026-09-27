@@ -170,14 +170,15 @@
       showMsg('Type your email address above first, then click this link.', true);
       return;
     }
-    const { error } = await sb.auth.resetPasswordForEmail(email, {
+    // Deliberately ignore the result and always show the same neutral
+    // message — resetPasswordForEmail can return a distinguishing
+    // rate-limit error for emails that genuinely exist (a real Supabase
+    // behaviour, confirmed via their own issue tracker), which would
+    // otherwise leak registration status through the error message.
+    await sb.auth.resetPasswordForEmail(email, {
       redirectTo: window.location.origin + '/set-password.html'
     });
-    if (error) {
-      showMsg('Something went wrong: ' + error.message, true);
-    } else {
-      showMsg('Check your inbox — click the link we sent to set your password.', false);
-    }
+    showMsg("If that email is registered, we've sent a link to reset your password. Check your inbox.", false);
   }
 </script>
 
