@@ -88,6 +88,22 @@
   table.grid-table input:focus, table.grid-table select:focus { outline: none; border-color: #0D7377; box-shadow: 0 0 0 3px rgba(13,115,119,0.12); }
   table.grid-table input.calculated-cell { background: #E8F4F4; color: #1A7A6E; font-weight: 700; cursor: default; }
 
+  /* Amend Data → Completion Tracker — layout-only widening. Scoped
+     specifically to .amend-tracker-table (via the compound selector below,
+     which outranks the shared table.grid-table input rule above by
+     specificity regardless of source order) so no other table sharing
+     .grid-table elsewhere in Admin is affected. Email Address gets
+     priority width, per the reported issue. */
+  table.grid-table.amend-tracker-table input[type="text"],
+  table.grid-table.amend-tracker-table input[type="email"] {
+    width: 100%;
+    box-sizing: border-box;
+  }
+  table.amend-tracker-table th:nth-child(1), table.amend-tracker-table td:nth-child(1) { width: 15%; }
+  table.amend-tracker-table th:nth-child(2), table.amend-tracker-table td:nth-child(2) { width: 21%; }
+  table.amend-tracker-table th:nth-child(3), table.amend-tracker-table td:nth-child(3) { width: 17%; }
+  table.amend-tracker-table th:nth-child(4), table.amend-tracker-table td:nth-child(4) { width: 47%; }
+
   table.grid-table.year-table { min-width: 0; }
   table.grid-table.year-table th { padding: 6px 5px; font-size: 10px; }
   table.grid-table.year-table td { padding: 4px 4px; }
@@ -1773,7 +1789,7 @@
   function buildAmendTracker(schoolId) {
     const tracker = SCHOOL_AMEND_DATA[schoolId].tracker;
     const find = section => (tracker || []).find(t => t.section === section) || {};
-    let html = '<div class="card"><div class="card-head">Completion Tracker</div><div class="card-body"><table class="grid-table"><thead><tr><th>Section</th><th>Responsible Person</th><th>Job Title</th><th>Email Address</th></tr></thead><tbody>';
+    let html = '<div class="card"><div class="card-head">Completion Tracker</div><div class="card-body"><table class="grid-table amend-tracker-table"><thead><tr><th>Section</th><th>Responsible Person</th><th>Job Title</th><th>Email Address</th></tr></thead><tbody>';
     AMEND_TRACKER_SECTIONS.forEach(section => {
       const t = find(section);
       html += `<tr data-section="${section}"><td class="label-cell">${section}</td>`;
