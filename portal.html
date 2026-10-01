@@ -303,7 +303,7 @@
     }
     btn.disabled = true;
     btn.textContent = 'Sending…';
-    const { error } = await sb.from('support_messages').insert({ school_id: schoolId, role, message });
+    const { error } = await sb.rpc('msg_contributor_submit', { p_school_id: schoolId, p_message: message });
     if (error) {
       console.error(error);
       note.style.color = '#F3B8B8';
@@ -315,6 +315,178 @@
     }
     btn.disabled = false;
     btn.textContent = 'Send to support';
+  }
+
+  function escapeHtml(str) {
+    if (str === null || str === undefined) return '';
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  // ----------------------------------------------------------------------
+  // V63 Messaging — Leadership UX (portal.html). Reads message_threads/
+  // support_messages already fetched for this school in checkLogin()'s
+  // batch (RLS: has_school_role() already restricts these to this school
+  // for a leadership caller). Every mutation goes exclusively through the
+  // hardened msg_leadership_* RPCs — no raw insert/update/delete.
+  // ----------------------------------------------------------------------
+
+  async function refreshMessagingData() {
+    const [threadsRes, messagesRes] = await Promise.all([
+      sb.from('message_threads').select('*').eq('school_id', MSG_SCHOOL_ID),
+      sb.from('support_messages').select('*').eq('school_id', MSG_SCHOOL_ID)
+    ]);
+    MSG_THREADS = threadsRes.data || [];
+    MSG_ALL_MESSAGES = messagesRes.data || [];
+  }
+
+  function renderLeadershipSupportPanel() {
+    const area = document.getElementById('supportLeadershipArea');
+    if (!area) return;
+
+    if (MSG_COMPOSE_MODE) { renderLeadershipCompose(); return; }
+    if (MSG_ACTIVE_THREAD_ID) { renderLeadershipThreadDetail(); return; }
+
+    const startBtn = `<div style="margin-bottom:12px;"><button type="button" onclick="msgLeadershipStartNew()" style="background:#3DCFB8;color:#0D2B4E;border:none;border-radius:6px;padding:10px 18px;font-size:13px;font-weight:700;cursor:pointer;">Start New Conversation</button></div>`;
+
+    if (!MSG_THREADS.length) {
+      area.innerHTML = startBtn + `<div style="font-size:13px;color:rgba(255,255,255,0.6);">No conversations yet.</div>`;
+      return;
+    }
+
+    const sorted = [...MSG_THREADS].sort((a, b) => new Date(b.last_message_at) - new Date(a.last_message_at));
+    area.innerHTML = startBtn + sorted.map(t => {
+      const firstMsg = MSG_ALL_MESSAGES.find(m => m.thread_id === t.id);
+      const preview = t.subject || (firstMsg ? (firstMsg.message.length > 50 ? firstMsg.message.slice(0, 50) + '…' : firstMsg.message) : '—');
+      const unreadDot = t.unread_by_school ? '<span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:#3DCFB8;margin-right:7px;flex-shrink:0;"></span>' : '';
+      const statusTag = t.status === 'resolved' ? '<span style="color:rgba(255,255,255,0.45);font-size:11px;">Resolved</span>' : '<span style="color:#3DCFB8;font-size:11px;font-weight:700;">Open</span>';
+      return `
+        <a class="form-row" href="#" onclick="msgLeadershipOpenThread('${t.id}'); return false;" style="cursor:pointer;align-items:center;">
+          <span class="name" style="display:flex;align-items:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${unreadDot}${escapeHtml(preview)}</span>
+          <span style="flex-shrink:0;margin-left:10px;">${statusTag}</span>
+        </a>`;
+    }).join('');
+  }
+
+  function renderLeadershipThreadDetail() {
+    const area = document.getElementById('supportLeadershipArea');
+    const thread = MSG_THREADS.find(t => t.id === MSG_ACTIVE_THREAD_ID);
+    if (!thread) { MSG_ACTIVE_THREAD_ID = null; renderLeadershipSupportPanel(); return; }
+    const msgs = MSG_ALL_MESSAGES.filter(m => m.thread_id === thread.id)
+      .sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+    const isResolved = thread.status === 'resolved';
+
+    const composerOrPrompt = isResolved
+      ? `<div style="background:rgba(255,255,255,0.06);border-radius:6px;padding:12px 14px;font-size:13px;color:rgba(255,255,255,0.7);">
+           This conversation is resolved.
+           <a href="#" onclick="msgLeadershipStartNew(); return false;" style="color:#3DCFB8;font-weight:700;text-decoration:none;">Start a new conversation →</a>
+         </div>`
+      : `<textarea id="msgLeadershipReplyInput" rows="3" placeholder="Type a reply…" style="width:100%;padding:10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#0D2B4E;color:#fff;font-family:inherit;font-size:14px;resize:vertical;box-sizing:border-box;"></textarea>
+         <div style="margin-top:8px;display:flex;justify-content:space-between;align-items:center;">
+           <div id="msgLeadershipReplyNote" style="font-size:12px;font-weight:700;"></div>
+           <button type="button" onclick="msgLeadershipSendReply('${thread.id}')" style="background:#3DCFB8;color:#0D2B4E;border:none;border-radius:6px;padding:9px 18px;font-size:13px;font-weight:700;cursor:pointer;">Send Reply</button>
+         </div>`;
+
+    area.innerHTML = `
+      <div style="margin-bottom:12px;"><a href="#" onclick="msgLeadershipBackToList(); return false;" style="color:#3DCFB8;font-weight:700;text-decoration:none;font-size:13px;">← Back to conversations</a></div>
+      <div style="font-size:13px;color:rgba(255,255,255,0.6);margin-bottom:10px;">${escapeHtml(thread.subject || 'Support conversation')} ${isResolved ? '· <span style="color:rgba(255,255,255,0.45);">Resolved</span>' : ''}</div>
+      <div style="display:flex;flex-direction:column;gap:10px;margin-bottom:14px;max-height:340px;overflow-y:auto;">
+        ${msgs.map(m => `
+          <div style="align-self:${m.sender_is_admin ? 'flex-start' : 'flex-end'};max-width:80%;background:${m.sender_is_admin ? 'rgba(61,207,184,0.14)' : '#0D2B4E'};border-radius:8px;padding:8px 12px;">
+            <div style="font-size:10px;font-weight:700;color:rgba(255,255,255,0.5);margin-bottom:3px;">${m.sender_is_admin ? 'SOAP Admin' : escapeHtml(m.role || 'You')} · ${m.created_at ? new Date(m.created_at).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : ''}</div>
+            <div style="font-size:13px;color:#fff;line-height:1.5;white-space:pre-wrap;">${escapeHtml(m.message || '')}</div>
+          </div>`).join('')}
+      </div>
+      ${composerOrPrompt}
+    `;
+  }
+
+  function renderLeadershipCompose() {
+    const area = document.getElementById('supportLeadershipArea');
+    area.innerHTML = `
+      <div style="margin-bottom:12px;"><a href="#" onclick="msgLeadershipCancelCompose(); return false;" style="color:#3DCFB8;font-weight:700;text-decoration:none;font-size:13px;">← Back to conversations</a></div>
+      <label style="font-size:11px;font-weight:700;color:rgba(255,255,255,0.5);text-transform:uppercase;">Subject (optional)</label>
+      <input type="text" id="msgLeadershipComposeSubject" style="width:100%;padding:9px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#0D2B4E;color:#fff;margin:6px 0 12px;box-sizing:border-box;font-family:inherit;">
+      <label style="font-size:11px;font-weight:700;color:rgba(255,255,255,0.5);text-transform:uppercase;">Message</label>
+      <textarea id="msgLeadershipComposeMessage" rows="4" style="width:100%;padding:9px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#0D2B4E;color:#fff;margin:6px 0 12px;box-sizing:border-box;font-family:inherit;font-size:14px;resize:vertical;"></textarea>
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <div id="msgLeadershipComposeNote" style="font-size:12px;font-weight:700;"></div>
+        <button type="button" onclick="msgLeadershipSendNewThread()" style="background:#3DCFB8;color:#0D2B4E;border:none;border-radius:6px;padding:9px 18px;font-size:13px;font-weight:700;cursor:pointer;">Send</button>
+      </div>
+    `;
+  }
+
+  function msgLeadershipStartNew() {
+    MSG_ACTIVE_THREAD_ID = null;
+    MSG_COMPOSE_MODE = true;
+    renderLeadershipSupportPanel();
+  }
+
+  function msgLeadershipCancelCompose() {
+    MSG_COMPOSE_MODE = false;
+    renderLeadershipSupportPanel();
+  }
+
+  async function msgLeadershipOpenThread(threadId) {
+    MSG_COMPOSE_MODE = false;
+    MSG_ACTIVE_THREAD_ID = threadId;
+    renderLeadershipSupportPanel();
+    const { error } = await sb.rpc('msg_leadership_mark_read', { p_thread_id: threadId });
+    if (error) { console.error(error); return; }
+    const t = MSG_THREADS.find(x => x.id === threadId);
+    if (t) t.unread_by_school = false;
+  }
+
+  function msgLeadershipBackToList() {
+    MSG_ACTIVE_THREAD_ID = null;
+    MSG_COMPOSE_MODE = false;
+    renderLeadershipSupportPanel();
+  }
+
+  async function msgLeadershipSendReply(threadId) {
+    const input = document.getElementById('msgLeadershipReplyInput');
+    const note = document.getElementById('msgLeadershipReplyNote');
+    const message = input.value.trim();
+    if (!message) { note.style.color = '#F3B8B8'; note.textContent = 'Type a reply first.'; return; }
+    note.style.color = '#3DCFB8';
+    note.textContent = 'Sending…';
+    const { error } = await sb.rpc('msg_leadership_reply', { p_thread_id: threadId, p_message: message });
+    if (error) {
+      console.error(error);
+      note.style.color = '#F3B8B8';
+      note.textContent = 'Failed to send — please try again.';
+      return;
+    }
+    await refreshMessagingData();
+    renderLeadershipSupportPanel();
+  }
+
+  async function msgLeadershipSendNewThread() {
+    const subjectEl = document.getElementById('msgLeadershipComposeSubject');
+    const messageEl = document.getElementById('msgLeadershipComposeMessage');
+    const note = document.getElementById('msgLeadershipComposeNote');
+    const message = messageEl.value.trim();
+    if (!message) { note.style.color = '#F3B8B8'; note.textContent = 'Type a message first.'; return; }
+    note.style.color = '#3DCFB8';
+    note.textContent = 'Sending…';
+    const { error } = await sb.rpc('msg_leadership_create_thread', {
+      p_school_id: MSG_SCHOOL_ID,
+      p_message: message,
+      p_subject: subjectEl.value.trim() ? subjectEl.value.trim() : null
+    });
+    if (error) {
+      console.error(error);
+      note.style.color = '#F3B8B8';
+      note.textContent = 'Failed to send — please try again.';
+      return;
+    }
+    MSG_COMPOSE_MODE = false;
+    await refreshMessagingData();
+    renderLeadershipSupportPanel();
   }
 
   async function uploadIdsr(schoolId) {
@@ -387,6 +559,13 @@
   }
 
   const FULL_ACCESS_ROLES = ['Headteacher', 'Executive Headteacher', 'CEO', 'School Improvement Director'];
+  // V63 messaging state (leadership thread view only — Contributor's panel
+  // stays a single stateless textarea, no fetch, no state needed for it).
+  let MSG_THREADS = [];
+  let MSG_ALL_MESSAGES = [];
+  let MSG_SCHOOL_ID = null;
+  let MSG_ACTIVE_THREAD_ID = null;
+  let MSG_COMPOSE_MODE = false;
   const FULL_ACCESS_FORMS = [
     { label: 'School Setup', href: 'school-setup-form.html', key: 'schoolSetup' },
     { label: 'Context', href: 'context-form.html', key: 'context' },
@@ -515,7 +694,8 @@
 
     const [
       schoolRes, periodsRes, contextRes, safeguardingRes, inclusionRes, curriculumRes,
-      achievementRes, assessRes, attendanceRes, pdwRes, leadershipRes, financeRes, publishedRes, idsrRes
+      achievementRes, assessRes, attendanceRes, pdwRes, leadershipRes, financeRes, publishedRes, idsrRes,
+      threadsRes, messagesRes
     ] = await Promise.all([
       sb.from('schools').select('*').eq('id', linkRow.school_id).maybeSingle(),
       sb.from('reporting_periods').select('*').eq('school_id', linkRow.school_id),
@@ -530,7 +710,9 @@
       sb.from('leadership_governance_data').select('*').eq('school_id', linkRow.school_id),
       sb.from('finance_data').select('*').eq('school_id', linkRow.school_id),
       sb.from('published_soaps').select('*').eq('school_id', linkRow.school_id).order('published_at', { ascending: false }),
-      sb.from('idsr_uploads').select('*').eq('school_id', linkRow.school_id).maybeSingle()
+      sb.from('idsr_uploads').select('*').eq('school_id', linkRow.school_id).maybeSingle(),
+      sb.from('message_threads').select('*').eq('school_id', linkRow.school_id),
+      sb.from('support_messages').select('*').eq('school_id', linkRow.school_id)
     ]);
 
     const school = schoolRes.data || {};
@@ -578,10 +760,12 @@
           <span class="bar-right"><i class="chev" id="chev-support">▾</i></span>
         </button>
         <div class="panel" id="panel-support">
+          ${isHeadteacher ? `<div id="supportLeadershipArea"><div style="font-size:13px;color:rgba(255,255,255,0.6);">Loading conversations…</div></div>` : `
           <div style="font-size:13px;color:rgba(255,255,255,0.7);margin-bottom:10px;">Having an issue or a question? Type it below and it'll come straight through to us.</div>
           <textarea id="supportMessageInput" rows="4" placeholder="Describe the issue you're having..." style="width:100%;padding:10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#0D2B4E;color:#fff;font-family:inherit;font-size:14px;resize:vertical;"></textarea>
           <button type="button" onclick="submitSupportMessage('${linkRow.school_id}', '${linkRow.role}')" id="supportSubmitBtn" style="margin-top:10px;background:#3DCFB8;color:#0D2B4E;border:none;border-radius:6px;padding:10px 20px;font-weight:700;font-size:14px;cursor:pointer;">Send to support</button>
           <div id="supportNote" style="font-size:12px;font-weight:700;margin-top:8px;"></div>
+          `}
         </div>
       </div>`;
 
@@ -702,6 +886,13 @@
       <div class="greeting">${school.name || 'Your school'} — <strong>${linkRow.role}</strong></div>
       <div class="accordion">${accordionHtml}</div>
     `;
+
+    if (isHeadteacher) {
+      MSG_SCHOOL_ID = linkRow.school_id;
+      MSG_THREADS = threadsRes.data || [];
+      MSG_ALL_MESSAGES = messagesRes.data || [];
+      renderLeadershipSupportPanel();
+    }
   }
 
   checkLogin();
