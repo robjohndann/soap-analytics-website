@@ -506,6 +506,7 @@
   let MSG_ACTIVE_THREAD_ID = null;
   let MSG_COMPOSE_SCHOOL_ID = null;
   let MSG_COMPOSE_RECIPIENTS = [];
+  let MSG_COMPOSE_ERROR = null;
   const NATAVG_A_LEVEL_GRADE_OPTIONS = ['A*+', 'A*', 'A*-', 'A+', 'A', 'A-', 'B+', 'B', 'B-', 'C+', 'C', 'C-', 'D+', 'D', 'D-', 'E+', 'E', 'E-', 'U'];
   const NATAVG_APPLIED_GENERAL_GRADE_OPTIONS = ['Dist+', 'Dist', 'Dist-', 'Merit+', 'Merit', 'Merit-', 'Pass+', 'Pass', 'Pass-', 'U'];
   const NATAVG_YEARS = ['2022/23', '2023/24', '2024/25', '2025/26'];
@@ -1666,6 +1667,9 @@
     const recipientOptions = MSG_COMPOSE_RECIPIENTS.length
       ? MSG_COMPOSE_RECIPIENTS.map(r => `<option value="${r.auth_user_id}">${escapeHtml(r.email)} (${escapeHtml(r.role)})</option>`).join('')
       : '<option value="">No registered leadership users found for this school</option>';
+    const recipientErrorBanner = MSG_COMPOSE_ERROR
+      ? `<div style="background:#F3B8B8;color:#7A1F1F;border-radius:6px;padding:8px 12px;font-size:12px;font-weight:700;margin:6px 0 14px;">Lookup failed: ${escapeHtml(MSG_COMPOSE_ERROR)}</div>`
+      : '';
 
     supportContent.innerHTML = `
       <div style="margin-bottom:14px;"><button type="button" onclick="msgAdminCancelCompose()" style="background:none;border:none;color:#0D7377;font-weight:700;cursor:pointer;padding:0;">← Back to conversations</button></div>
@@ -1677,6 +1681,7 @@
           ${schoolOptions}
         </select>
         ${MSG_COMPOSE_SCHOOL_ID ? `
+        ${recipientErrorBanner}
         <label style="font-size:12px;font-weight:700;color:#5a6e7c;">Recipient</label>
         <select id="msgAdminComposeRecipient" style="width:100%;padding:8px;border-radius:6px;border:1px solid #D9E7EB;margin:6px 0 14px;box-sizing:border-box;">
           ${recipientOptions}
@@ -1695,23 +1700,32 @@
   function msgAdminStartNew() {
     MSG_COMPOSE_SCHOOL_ID = '';
     MSG_COMPOSE_RECIPIENTS = [];
+    MSG_COMPOSE_ERROR = null;
     renderSupportContent();
   }
 
   function msgAdminCancelCompose() {
     MSG_COMPOSE_SCHOOL_ID = null;
     MSG_COMPOSE_RECIPIENTS = [];
+    MSG_COMPOSE_ERROR = null;
     renderSupportContent();
   }
 
   async function msgAdminSelectComposeSchool(schoolId) {
     MSG_COMPOSE_SCHOOL_ID = schoolId || '';
     MSG_COMPOSE_RECIPIENTS = [];
+    MSG_COMPOSE_ERROR = null;
     renderSupportContent();
     if (!schoolId) return;
     const { data, error } = await sb.rpc('msg_admin_list_school_leadership', { p_school_id: schoolId });
-    MSG_COMPOSE_RECIPIENTS = error ? [] : (data || []);
-    if (error) console.error(error);
+    if (error) {
+      console.error(error);
+      MSG_COMPOSE_RECIPIENTS = [];
+      MSG_COMPOSE_ERROR = error.message || 'Lookup failed — see browser console.';
+    } else {
+      MSG_COMPOSE_RECIPIENTS = data || [];
+      MSG_COMPOSE_ERROR = null;
+    }
     renderSupportContent();
   }
 
