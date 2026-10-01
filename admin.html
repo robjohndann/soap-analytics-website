@@ -190,7 +190,7 @@
   </div>
 
   <div class="page-title">Support Messages</div>
-  <div class="page-sub">Issues raised by schools via their portal, most recent first, across every school.</div>
+  <div class="page-sub">Conversations with schools, most recent activity first, across every school.</div>
   <div id="supportContent" style="margin-bottom:40px;">
     <div class="status-msg">Checking your access…</div>
   </div>
@@ -497,6 +497,15 @@
 
   let NATAVG_DATA = [];
   let natAvgSectionKey = 'attendance';
+  // V63 messaging state — populated by loadAdmin()'s batch fetch and by
+  // fetchMessagingData() after any mutation; read by renderSupportContent()
+  // and the msgAdmin* action functions below.
+  let MSG_THREADS = [];
+  let MSG_ALL_MESSAGES = [];
+  let MSG_SCHOOLS_REF = [];
+  let MSG_ACTIVE_THREAD_ID = null;
+  let MSG_COMPOSE_SCHOOL_ID = null;
+  let MSG_COMPOSE_RECIPIENTS = [];
   const NATAVG_A_LEVEL_GRADE_OPTIONS = ['A*+', 'A*', 'A*-', 'A+', 'A', 'A-', 'B+', 'B', 'B-', 'C+', 'C', 'C-', 'D+', 'D', 'D-', 'E+', 'E', 'E-', 'U'];
   const NATAVG_APPLIED_GENERAL_GRADE_OPTIONS = ['Dist+', 'Dist', 'Dist-', 'Merit+', 'Merit', 'Merit-', 'Pass+', 'Pass', 'Pass-', 'U'];
   const NATAVG_YEARS = ['2022/23', '2023/24', '2024/25', '2025/26'];
@@ -685,6 +694,16 @@
     await loadResources();
   }
 
+  function escapeHtml(str) {
+    if (str === null || str === undefined) return '';
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
   async function loadAdmin() {
     const content = document.getElementById('content');
     const { data: { session } } = await sb.auth.getSession();
@@ -702,7 +721,7 @@
       return;
     }
 
-    const [schoolsRes, contactsRes, ofstedRes, periodsRes, assessRes, trackerRes, contextRes, safeguardingRes, inclusionRes, curriculumRes, achievementRes, attendanceRes, pdwRes, leadershipRes, financeRes, supportRes, idsrUploadsRes, schoolUsersRes, sectionAccessRes] = await Promise.all([
+    const [schoolsRes, contactsRes, ofstedRes, periodsRes, assessRes, trackerRes, contextRes, safeguardingRes, inclusionRes, curriculumRes, achievementRes, attendanceRes, pdwRes, leadershipRes, financeRes, supportRes, idsrUploadsRes, schoolUsersRes, sectionAccessRes, threadsRes] = await Promise.all([
       sb.from('schools').select('*').order('created_at', { ascending: false }),
       sb.from('key_contacts').select('*'),
       sb.from('ofsted_judgements').select('*'),
@@ -721,7 +740,8 @@
       sb.from('support_messages').select('*').order('created_at', { ascending: false }),
       sb.from('idsr_uploads').select('*'),
       sb.from('school_users').select('*'),
-      sb.from('section_access').select('*')
+      sb.from('section_access').select('*'),
+      sb.from('message_threads').select('*')
     ]);
 
     const schools = schoolsRes.data || [];
@@ -731,7 +751,13 @@
     const schoolUsers = schoolUsersRes.data || [];
     const sectionAccessRows = sectionAccessRes.data || [];
 
-    const supportMsgs = supportRes.data || [];
+    MSG_SCHOOLS_REF = schools;
+    MSG_THREADS = threadsRes.data || [];
+    MSG_ALL_MESSAGES = supportRes.data || [];
+    renderSupportContent();
+
+    // Users & Access: shows role and how long each membership has existed.
+
     const AMEND_PACKAGE_OPTIONS_LIST = ['IDSR Intelligence Summary', 'IDSR Intelligence Summary + Dashboard', 'SOAP Performance Summary', 'SOAP Performance Suite'];
 
     const PERIOD_TO_REPORTING_NAME_SOAP = {
@@ -823,38 +849,6 @@
       `;
     }
 
-    // Support Messages is a GLOBAL admin section (not per-school) — shows
-    // every school's messages together with the school clearly identified,
-    // matching how it worked before the per-school tab redesign.
-    const supportContent = document.getElementById('supportContent');
-    if (!supportMsgs.length) {
-      supportContent.innerHTML = '<div class="status-msg">No support messages yet.</div>';
-    } else {
-      supportContent.innerHTML = `
-        <div class="school-card" style="padding:16px 20px;overflow-x:auto;">
-          <table class="mini-table">
-            <thead><tr>
-              <th>School</th><th>Role</th><th>Message</th><th>Submitted</th><th>Resolved</th><th></th>
-            </tr></thead>
-            <tbody>
-              ${supportMsgs.map(m => {
-                const school = schools.find(sc => sc.id === m.school_id);
-                return `
-                <tr id="support-row-${m.id}">
-                  <td>${school ? school.name : '—'}</td>
-                  <td>${m.role ?? '—'}</td>
-                  <td>${m.message ?? '—'}</td>
-                  <td>${m.created_at ? new Date(m.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '—'}</td>
-                  <td style="text-align:center;"><input type="checkbox" ${m.resolved ? 'checked' : ''} onchange="toggleSupportResolved('${m.id}', this.checked)"></td>
-                  <td><button type="button" onclick="deleteSupportMessage('${m.id}')" style="background:#F3B8B8;color:#7A1F1F;border:none;border-radius:6px;padding:6px 12px;font-size:12px;font-weight:700;cursor:pointer;">Delete</button></td>
-                </tr>
-              `;
-              }).join('')}
-            </tbody>
-          </table>
-        </div>`;
-    }
-
     // Users & Access: shows role and how long each membership has existed.
     // NOTE — a genuine limitation, not an oversight: school_users has no
     // email column, and there is no existing safe way to resolve
@@ -862,15 +856,6 @@
     // get_user_id_by_email, is deliberately locked to service_role/the Edge
     // Function only). Showing email here would need a new admin-only RPC,
     // which is new backend surface — not built without being asked for.
-    function escapeHtml(str) {
-      if (str === null || str === undefined) return '';
-      return String(str)
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;');
-    }
 
     function renderUsersAccessFragment(s) {
       const members = schoolUsers.filter(u => u.school_id === s.id);
@@ -1583,24 +1568,226 @@
     }
   }
 
-  async function toggleSupportResolved(msgId, checked) {
-    const { error } = await sb.from('support_messages').update({ resolved: checked }).eq('id', msgId);
-    if (error) {
-      console.error(error);
-      alert('Failed to save — see browser console.');
-    }
+  // ----------------------------------------------------------------------
+  // V63 Messaging — Admin UX. Reads message_threads/support_messages
+  // directly (RLS: is_admin() grants full SELECT on both); every mutation
+  // goes exclusively through the hardened msg_admin_* RPCs — no raw
+  // insert/update/delete against either table (none are grantable to
+  // authenticated anymore; see the V63 migration).
+  // ----------------------------------------------------------------------
+
+  async function fetchMessagingData() {
+    const [threadsRes, msgsRes] = await Promise.all([
+      sb.from('message_threads').select('*'),
+      sb.from('support_messages').select('*')
+    ]);
+    MSG_THREADS = threadsRes.data || [];
+    MSG_ALL_MESSAGES = msgsRes.data || [];
   }
 
-  async function deleteSupportMessage(msgId) {
-    if (!confirm('Delete this support message? This removes it permanently from the database — it cannot be undone.')) return;
-    const { error } = await sb.from('support_messages').delete().eq('id', msgId);
-    if (error) {
-      console.error(error);
-      alert('Delete failed — see browser console.');
+  function msgSchoolName(schoolId) {
+    const s = MSG_SCHOOLS_REF.find(sc => sc.id === schoolId);
+    return s ? s.name : '—';
+  }
+
+  function renderSupportContent() {
+    if (MSG_COMPOSE_SCHOOL_ID !== null) { renderComposeView(); return; }
+    if (MSG_ACTIVE_THREAD_ID) { renderThreadDetailView(); return; }
+
+    const supportContent = document.getElementById('supportContent');
+    const startBtn = `<div style="margin-bottom:14px;"><button type="button" onclick="msgAdminStartNew()" style="background:#3DCFB8;color:#0D2B4E;border:none;border-radius:6px;padding:10px 18px;font-size:13px;font-weight:700;cursor:pointer;">Start New Conversation</button></div>`;
+
+    if (!MSG_THREADS.length) {
+      supportContent.innerHTML = startBtn + '<div class="status-msg">No conversations yet.</div>';
       return;
     }
-    const row = document.getElementById(`support-row-${msgId}`);
-    if (row) row.remove();
+
+    const sorted = [...MSG_THREADS].sort((a, b) => new Date(b.last_message_at) - new Date(a.last_message_at));
+    supportContent.innerHTML = startBtn + `
+      <div class="school-card" style="padding:16px 20px;overflow-x:auto;">
+        <table class="mini-table">
+          <thead><tr><th>School</th><th>Subject</th><th>Status</th><th>Last Activity</th><th></th></tr></thead>
+          <tbody>
+            ${sorted.map(t => {
+              const firstMsg = MSG_ALL_MESSAGES.find(m => m.thread_id === t.id);
+              const preview = t.subject || (firstMsg ? (firstMsg.message.length > 60 ? firstMsg.message.slice(0, 60) + '…' : firstMsg.message) : '—');
+              const unreadDot = t.unread_by_admin ? '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#3DCFB8;margin-right:6px;"></span>' : '';
+              const statusBadge = t.status === 'resolved' ? '<span style="color:#5a6e7c;">Resolved</span>' : '<span style="color:#0D7377;font-weight:700;">Open</span>';
+              return `
+              <tr>
+                <td>${unreadDot}${escapeHtml(msgSchoolName(t.school_id))}</td>
+                <td>${escapeHtml(preview)}</td>
+                <td>${statusBadge}</td>
+                <td>${t.last_message_at ? new Date(t.last_message_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '—'}</td>
+                <td><button type="button" onclick="msgAdminOpenThread('${t.id}')" style="background:#0D2B4E;color:#fff;border:none;border-radius:6px;padding:6px 14px;font-size:12px;font-weight:700;cursor:pointer;">Open</button></td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>`;
+  }
+
+  function renderThreadDetailView() {
+    const supportContent = document.getElementById('supportContent');
+    const thread = MSG_THREADS.find(t => t.id === MSG_ACTIVE_THREAD_ID);
+    if (!thread) { MSG_ACTIVE_THREAD_ID = null; renderSupportContent(); return; }
+    const msgs = MSG_ALL_MESSAGES.filter(m => m.thread_id === thread.id)
+      .sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+    const isResolved = thread.status === 'resolved';
+
+    supportContent.innerHTML = `
+      <div style="margin-bottom:14px;"><button type="button" onclick="msgAdminBackToList()" style="background:none;border:none;color:#0D7377;font-weight:700;cursor:pointer;padding:0;">← Back to conversations</button></div>
+      <div class="school-card" style="padding:20px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+          <div>
+            <div style="font-size:16px;font-weight:700;color:#0D2B4E;">${escapeHtml(msgSchoolName(thread.school_id))}</div>
+            <div style="font-size:13px;color:#5a6e7c;">${escapeHtml(thread.subject || 'Support conversation')}</div>
+          </div>
+          <button type="button" onclick="msgAdminSetStatus('${thread.id}', '${isResolved ? 'open' : 'resolved'}')" style="background:${isResolved ? '#3DCFB8' : '#F3B8B8'};color:${isResolved ? '#0D2B4E' : '#7A1F1F'};border:none;border-radius:6px;padding:8px 16px;font-size:12px;font-weight:700;cursor:pointer;">${isResolved ? 'Reopen' : 'Mark Resolved'}</button>
+        </div>
+        <div style="max-height:420px;overflow-y:auto;display:flex;flex-direction:column;gap:12px;margin-bottom:18px;">
+          ${msgs.map(m => `
+            <div style="align-self:${m.sender_is_admin ? 'flex-end' : 'flex-start'};max-width:75%;background:${m.sender_is_admin ? '#0D2B4E' : '#F3FBFA'};color:${m.sender_is_admin ? '#fff' : '#0D2B4E'};border-radius:10px;padding:10px 14px;">
+              <div style="font-size:11px;font-weight:700;opacity:0.7;margin-bottom:4px;">${m.sender_is_admin ? 'SOAP Admin' : escapeHtml(m.role || 'School')} · ${m.created_at ? new Date(m.created_at).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : ''}</div>
+              <div style="font-size:14px;line-height:1.5;white-space:pre-wrap;">${escapeHtml(m.message || '')}</div>
+            </div>`).join('')}
+        </div>
+        <textarea id="msgAdminReplyInput" rows="3" placeholder="Type a reply…" style="width:100%;padding:10px;border-radius:6px;border:1px solid #D9E7EB;font-family:inherit;font-size:14px;box-sizing:border-box;"></textarea>
+        <div style="margin-top:10px;display:flex;justify-content:space-between;align-items:center;">
+          <div id="msgAdminReplyNote" style="font-size:12px;font-weight:700;"></div>
+          <button type="button" onclick="msgAdminSendReply('${thread.id}')" style="background:#3DCFB8;color:#0D2B4E;border:none;border-radius:6px;padding:10px 20px;font-size:13px;font-weight:700;cursor:pointer;">Send Reply</button>
+        </div>
+      </div>`;
+  }
+
+  function renderComposeView() {
+    const supportContent = document.getElementById('supportContent');
+    const schoolOptions = MSG_SCHOOLS_REF.map(s => `<option value="${s.id}" ${MSG_COMPOSE_SCHOOL_ID === s.id ? 'selected' : ''}>${escapeHtml(s.name)}</option>`).join('');
+    const recipientOptions = MSG_COMPOSE_RECIPIENTS.length
+      ? MSG_COMPOSE_RECIPIENTS.map(r => `<option value="${r.auth_user_id}">${escapeHtml(r.email)} (${escapeHtml(r.role)})</option>`).join('')
+      : '<option value="">No registered leadership users found for this school</option>';
+
+    supportContent.innerHTML = `
+      <div style="margin-bottom:14px;"><button type="button" onclick="msgAdminCancelCompose()" style="background:none;border:none;color:#0D7377;font-weight:700;cursor:pointer;padding:0;">← Back to conversations</button></div>
+      <div class="school-card" style="padding:20px;max-width:520px;">
+        <div style="font-size:16px;font-weight:700;color:#0D2B4E;margin-bottom:16px;">Start New Conversation</div>
+        <label style="font-size:12px;font-weight:700;color:#5a6e7c;">School</label>
+        <select id="msgAdminComposeSchool" onchange="msgAdminSelectComposeSchool(this.value)" style="width:100%;padding:8px;border-radius:6px;border:1px solid #D9E7EB;margin:6px 0 14px;box-sizing:border-box;">
+          <option value="">Select a school…</option>
+          ${schoolOptions}
+        </select>
+        ${MSG_COMPOSE_SCHOOL_ID ? `
+        <label style="font-size:12px;font-weight:700;color:#5a6e7c;">Recipient</label>
+        <select id="msgAdminComposeRecipient" style="width:100%;padding:8px;border-radius:6px;border:1px solid #D9E7EB;margin:6px 0 14px;box-sizing:border-box;">
+          ${recipientOptions}
+        </select>
+        <label style="font-size:12px;font-weight:700;color:#5a6e7c;">Subject (optional)</label>
+        <input type="text" id="msgAdminComposeSubject" style="width:100%;padding:8px;border-radius:6px;border:1px solid #D9E7EB;margin:6px 0 14px;box-sizing:border-box;">
+        <label style="font-size:12px;font-weight:700;color:#5a6e7c;">Message</label>
+        <textarea id="msgAdminComposeMessage" rows="4" style="width:100%;padding:8px;border-radius:6px;border:1px solid #D9E7EB;margin:6px 0 14px;box-sizing:border-box;font-family:inherit;"></textarea>
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <div id="msgAdminComposeNote" style="font-size:12px;font-weight:700;"></div>
+          <button type="button" onclick="msgAdminSendNewThread()" style="background:#3DCFB8;color:#0D2B4E;border:none;border-radius:6px;padding:10px 20px;font-size:13px;font-weight:700;cursor:pointer;">Send</button>
+        </div>` : ''}
+      </div>`;
+  }
+
+  function msgAdminStartNew() {
+    MSG_COMPOSE_SCHOOL_ID = '';
+    MSG_COMPOSE_RECIPIENTS = [];
+    renderSupportContent();
+  }
+
+  function msgAdminCancelCompose() {
+    MSG_COMPOSE_SCHOOL_ID = null;
+    MSG_COMPOSE_RECIPIENTS = [];
+    renderSupportContent();
+  }
+
+  async function msgAdminSelectComposeSchool(schoolId) {
+    MSG_COMPOSE_SCHOOL_ID = schoolId || '';
+    MSG_COMPOSE_RECIPIENTS = [];
+    renderSupportContent();
+    if (!schoolId) return;
+    const { data, error } = await sb.rpc('msg_admin_list_school_leadership', { p_school_id: schoolId });
+    MSG_COMPOSE_RECIPIENTS = error ? [] : (data || []);
+    if (error) console.error(error);
+    renderSupportContent();
+  }
+
+  async function msgAdminSendNewThread() {
+    const schoolId = MSG_COMPOSE_SCHOOL_ID;
+    const recipientEl = document.getElementById('msgAdminComposeRecipient');
+    const subjectEl = document.getElementById('msgAdminComposeSubject');
+    const messageEl = document.getElementById('msgAdminComposeMessage');
+    const note = document.getElementById('msgAdminComposeNote');
+    const recipientId = recipientEl ? recipientEl.value : '';
+    const message = messageEl ? messageEl.value.trim() : '';
+
+    if (!recipientId) { note.style.color = '#F3B8B8'; note.textContent = 'Select a recipient.'; return; }
+    if (!message) { note.style.color = '#F3B8B8'; note.textContent = 'Type a message first.'; return; }
+
+    note.style.color = '#0D7377';
+    note.textContent = 'Sending…';
+    const { error } = await sb.rpc('msg_admin_create_thread', {
+      p_school_id: schoolId,
+      p_notify_user_id: recipientId,
+      p_message: message,
+      p_subject: subjectEl && subjectEl.value.trim() ? subjectEl.value.trim() : null
+    });
+    if (error) {
+      console.error(error);
+      note.style.color = '#F3B8B8';
+      note.textContent = 'Failed to send — see browser console.';
+      return;
+    }
+    MSG_COMPOSE_SCHOOL_ID = null;
+    MSG_COMPOSE_RECIPIENTS = [];
+    await fetchMessagingData();
+    renderSupportContent();
+  }
+
+  async function msgAdminOpenThread(threadId) {
+    MSG_ACTIVE_THREAD_ID = threadId;
+    renderSupportContent();
+    const { error } = await sb.rpc('msg_admin_mark_read', { p_thread_id: threadId });
+    if (error) { console.error(error); return; }
+    const t = MSG_THREADS.find(x => x.id === threadId);
+    if (t) t.unread_by_admin = false;
+  }
+
+  function msgAdminBackToList() {
+    MSG_ACTIVE_THREAD_ID = null;
+    renderSupportContent();
+  }
+
+  async function msgAdminSendReply(threadId) {
+    const input = document.getElementById('msgAdminReplyInput');
+    const note = document.getElementById('msgAdminReplyNote');
+    const message = input.value.trim();
+    if (!message) { note.style.color = '#F3B8B8'; note.textContent = 'Type a reply first.'; return; }
+    note.style.color = '#0D7377';
+    note.textContent = 'Sending…';
+    const { error } = await sb.rpc('msg_admin_reply', { p_thread_id: threadId, p_message: message });
+    if (error) {
+      console.error(error);
+      note.style.color = '#F3B8B8';
+      note.textContent = 'Failed to send — see browser console.';
+      return;
+    }
+    await fetchMessagingData();
+    renderSupportContent();
+  }
+
+  async function msgAdminSetStatus(threadId, newStatus) {
+    const { error } = await sb.rpc('msg_admin_set_status', { p_thread_id: threadId, p_status: newStatus });
+    if (error) {
+      console.error(error);
+      alert('Failed to update status — see browser console.');
+      return;
+    }
+    await fetchMessagingData();
+    renderSupportContent();
   }
 
   async function savePackageTier(schoolId) {
