@@ -932,14 +932,6 @@
     }
 
     let html = '';
-    // Canonical 9-section list — moved here (from its original position,
-    // further down near buildAmendTracker, its only other user) purely so
-    // the read-only Contributor Tracker summary below can reference the
-    // same single source of truth instead of a second, duplicate list.
-    // No change to the values themselves, and buildAmendTracker's own
-    // reference to it is unaffected since it only runs later, on demand.
-    const AMEND_TRACKER_SECTIONS = ['Context', 'Safeguarding', 'Inclusion', 'Curriculum & Teaching', 'Achievement', 'Attendance & Behaviour', 'PDW', 'Leadership & Governance', 'Finance & Resources'];
-
     schools.forEach(s => {
       const contacts = bySchool(contactsRes.data, s.id);
       const ofsted = bySchool(ofstedRes.data, s.id);
@@ -1380,6 +1372,13 @@
     { label: 'Post 16 (if applicable)', options: RATING_OPTIONS_5 },
     { label: 'Leadership & Governance', options: RATING_OPTIONS_5 }
   ];
+  // Canonical 9-section list — a plain top-level const (like every other
+  // AMEND_* list in this file), so it's reachable both from inside
+  // loadAdmin()'s nested renderer and from the separate top-level
+  // buildAmendTracker() function. Declaration position relative to either
+  // doesn't matter: both only ever run after the whole script has executed
+  // once, by which point this is already initialised.
+  const AMEND_TRACKER_SECTIONS = ['Context', 'Safeguarding', 'Inclusion', 'Curriculum & Teaching', 'Achievement', 'Attendance & Behaviour', 'PDW', 'Leadership & Governance', 'Finance & Resources'];
   const AMEND_REPORTING_PERIOD_ROWS = ['Autumn 1', 'Autumn 2', 'Spring 1', 'Spring 2', 'Summer 1', 'Summer 2'];
   const AMEND_ASSESSMENT_ROWS = ['Year 11 PPE 1', 'Year 11 PPE 2', 'Year 13 PPE 1', 'Year 13 PPE 2'];
   const AMEND_ALL_YEAR_GROUPS = ['EYFS', 'Y1', 'Y2', 'Y3', 'Y4', 'Y5', 'Y6', 'Y7', 'Y8', 'Y9', 'Y10', 'Y11', 'Y12', 'Y13'];
