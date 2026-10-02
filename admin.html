@@ -2110,6 +2110,7 @@
     }
     if (SCHOOL_AMEND_DATA[schoolId]) SCHOOL_AMEND_DATA[schoolId].tracker = rows;
     showAmendToast('✓ Contributor Tracker saved');
+    await loadAdmin();
   }
 
   function buildAmendContext(schoolId) {
