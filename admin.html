@@ -932,12 +932,21 @@
     }
 
     let html = '';
+    // Canonical 9-section list — moved here (from its original position,
+    // further down near buildAmendTracker, its only other user) purely so
+    // the read-only Contributor Tracker summary below can reference the
+    // same single source of truth instead of a second, duplicate list.
+    // No change to the values themselves, and buildAmendTracker's own
+    // reference to it is unaffected since it only runs later, on demand.
+    const AMEND_TRACKER_SECTIONS = ['Context', 'Safeguarding', 'Inclusion', 'Curriculum & Teaching', 'Achievement', 'Attendance & Behaviour', 'PDW', 'Leadership & Governance', 'Finance & Resources'];
+
     schools.forEach(s => {
       const contacts = bySchool(contactsRes.data, s.id);
       const ofsted = bySchool(ofstedRes.data, s.id);
       const periods = bySchool(periodsRes.data, s.id);
       const assess = bySchool(assessRes.data, s.id);
       const trackerRows = bySchool(trackerRes.data, s.id);
+      const trackerSchoolAccessRows = sectionAccessRows.filter(g => g.school_id === s.id);
       const contextRows = bySchool(contextRes.data, s.id);
       const contextCompletionResult = contextCompletion(s, periods, contextRows);
       const safeguardingRows = bySchool(safeguardingRes.data, s.id);
@@ -1042,7 +1051,41 @@
           <div class="tab-panel" id="panel-${s.id}-tracker">
             <div class="detail-section" style="margin-top:0;">
               <h4>Contributor Tracker — Responsible Person assigned: ${trackerC.filled} of ${trackerC.total} sections</h4>
-              ${renderMiniTable(['Section', 'Responsible', 'Job Title', 'Email'], trackerRows.map(t => [t.section, t.responsible_person, t.job_title, t.email]))}
+              ${(() => {
+                // Always the canonical 9 sections — not derived from whichever
+                // rows happen to exist — so a section with neither a
+                // nomination nor any contributor access still appears.
+                const rows = AMEND_TRACKER_SECTIONS.map(section => {
+                  const t = trackerRows.find(r => r.section === section) || {};
+
+                  // Responsible Person access status: does a live
+                  // is_responsible=true grant exist for this section, with
+                  // its email matching the CURRENT nomination? (Matching on
+                  // email, not just section, because sync-responsible-
+                  // person-access revokes the old email's access and grants
+                  // the new one on change — a stale leftover row from a
+                  // prior nominee would have a different email and must not
+                  // read as "access granted" for today's nomination.)
+                  let accessStatus = '';
+                  if (t.email) {
+                    if (t.access_sync_pending) {
+                      accessStatus = 'Sync pending';
+                    } else {
+                      const live = trackerSchoolAccessRows.some(g =>
+                        g.section === section && g.is_responsible && g.contributor_email === t.email);
+                      accessStatus = live ? 'Access granted' : 'No access on record';
+                    }
+                  }
+
+                  const additional = trackerSchoolAccessRows
+                    .filter(g => g.section === section && g.is_additional)
+                    .map(g => `${g.contributor_name || '—'} (${g.contributor_email || 'no email on file'})`)
+                    .join('<br>');
+
+                  return [section, t.responsible_person, t.job_title, t.email, accessStatus || null, additional || null];
+                });
+                return renderMiniTable(['Section', 'Responsible', 'Job Title', 'Email', 'RP Access', 'Additional Contributor(s)'], rows);
+              })()}
             </div>
           </div>
           <div class="tab-panel" id="panel-${s.id}-context">
@@ -1339,7 +1382,6 @@
   ];
   const AMEND_REPORTING_PERIOD_ROWS = ['Autumn 1', 'Autumn 2', 'Spring 1', 'Spring 2', 'Summer 1', 'Summer 2'];
   const AMEND_ASSESSMENT_ROWS = ['Year 11 PPE 1', 'Year 11 PPE 2', 'Year 13 PPE 1', 'Year 13 PPE 2'];
-  const AMEND_TRACKER_SECTIONS = ['Context', 'Safeguarding', 'Inclusion', 'Curriculum & Teaching', 'Achievement', 'Attendance & Behaviour', 'PDW', 'Leadership & Governance', 'Finance & Resources'];
   const AMEND_ALL_YEAR_GROUPS = ['EYFS', 'Y1', 'Y2', 'Y3', 'Y4', 'Y5', 'Y6', 'Y7', 'Y8', 'Y9', 'Y10', 'Y11', 'Y12', 'Y13'];
   const AMEND_PHASE_YEAR_GROUPS = {
     'Primary': ['EYFS', 'Y1', 'Y2', 'Y3', 'Y4', 'Y5', 'Y6'],
