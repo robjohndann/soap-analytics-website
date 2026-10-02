@@ -88,7 +88,8 @@
   table.grid-table input:focus, table.grid-table select:focus { outline: none; border-color: #0D7377; box-shadow: 0 0 0 3px rgba(13,115,119,0.12); }
   table.grid-table input.calculated-cell { background: #E8F4F4; color: #1A7A6E; font-weight: 700; cursor: default; }
 
-  /* Amend Data → Completion Tracker — layout-only widening. Scoped
+  /* Amend Data → Contributor Tracker (formerly "Completion Tracker") —
+     layout-only widening, unrelated to the V64 rename. Scoped
      specifically to .amend-tracker-table (via the compound selector below,
      which outranks the shared table.grid-table input rule above by
      specificity regardless of source order) so no other table sharing
@@ -987,7 +988,7 @@
             <button type="button" class="tab-btn" data-group="setup" onclick="switchTab(event,'${s.id}','ofsted')">Ofsted Judgements (${ofstedC.pct}%)</button>
             <button type="button" class="tab-btn" data-group="setup" onclick="switchTab(event,'${s.id}','periods')">Reporting Periods (${periodsC.pct}%)</button>
             <button type="button" class="tab-btn" data-group="setup" onclick="switchTab(event,'${s.id}','assess')">Assessment Setup (${assessC.pct}%)</button>
-            <button type="button" class="tab-btn" data-group="setup" onclick="switchTab(event,'${s.id}','tracker')">Completion Tracker (${trackerC.pct}%)</button>
+            <button type="button" class="tab-btn" data-group="setup" onclick="switchTab(event,'${s.id}','tracker')">Contributor Tracker (${trackerC.filled}/${trackerC.total})</button>
             <button type="button" class="tab-btn" data-group="soapdata" style="display:none;" onclick="switchTab(event,'${s.id}','context')">Context (${contextCompletionResult.pct}%)</button>
             <button type="button" class="tab-btn" data-group="soapdata" style="display:none;" onclick="switchTab(event,'${s.id}','safeguarding')">Safeguarding (${safeguardingC.pct}%)</button>
             <button type="button" class="tab-btn" data-group="soapdata" style="display:none;" onclick="switchTab(event,'${s.id}','inclusion')">Inclusion (${inclusionC.pct}%)</button>
@@ -1040,7 +1041,7 @@
           </div>
           <div class="tab-panel" id="panel-${s.id}-tracker">
             <div class="detail-section" style="margin-top:0;">
-              <h4>Completion Tracker — ${trackerC.pct}% complete (${trackerC.filled} of ${trackerC.total} sections)</h4>
+              <h4>Contributor Tracker — Responsible Person assigned: ${trackerC.filled} of ${trackerC.total} sections</h4>
               ${renderMiniTable(['Section', 'Responsible', 'Job Title', 'Email'], trackerRows.map(t => [t.section, t.responsible_person, t.job_title, t.email]))}
             </div>
           </div>
@@ -1139,7 +1140,7 @@
                 <option value="ofsted">Ofsted Judgements</option>
                 <option value="periods">Reporting Periods</option>
                 <option value="assess">Assessment Setup</option>
-                <option value="tracker">Completion Tracker</option>
+                <option value="tracker">Contributor Tracker</option>
                 <option value="context">Context</option>
                 <option value="safeguarding">Safeguarding</option>
                 <option value="inclusion">Inclusion</option>
@@ -2040,7 +2041,7 @@
   function buildAmendTracker(schoolId) {
     const tracker = SCHOOL_AMEND_DATA[schoolId].tracker;
     const find = section => (tracker || []).find(t => t.section === section) || {};
-    let html = '<div class="card"><div class="card-head">Completion Tracker</div><div class="card-body"><table class="grid-table amend-tracker-table"><thead><tr><th>Section</th><th>Responsible Person</th><th>Job Title</th><th>Email Address</th></tr></thead><tbody>';
+    let html = '<div class="card"><div class="card-head">Contributor Tracker</div><div class="card-body"><table class="grid-table amend-tracker-table"><thead><tr><th>Section</th><th>Responsible Person</th><th>Job Title</th><th>Email Address</th></tr></thead><tbody>';
     AMEND_TRACKER_SECTIONS.forEach(section => {
       const t = find(section);
       html += `<tr data-section="${section}"><td class="label-cell">${section}</td>`;
@@ -2049,7 +2050,7 @@
       html += `<td><input type="email" value="${t.email || ''}"></td></tr>`;
     });
     html += '</tbody></table></div></div>';
-    html += `<div><button type="button" class="save-amend-btn" onclick="saveAmendTracker('${schoolId}')">Save Completion Tracker Changes</button></div>`;
+    html += `<div><button type="button" class="save-amend-btn" onclick="saveAmendTracker('${schoolId}')">Save Contributor Tracker Changes</button></div>`;
     return html;
   }
 
@@ -2067,7 +2068,7 @@
       if (error) { showAmendToast('⚠ Save failed — see browser console', true); console.error(error); return; }
     }
     if (SCHOOL_AMEND_DATA[schoolId]) SCHOOL_AMEND_DATA[schoolId].tracker = rows;
-    showAmendToast('✓ Completion Tracker saved');
+    showAmendToast('✓ Contributor Tracker saved');
   }
 
   function buildAmendContext(schoolId) {
