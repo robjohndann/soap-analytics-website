@@ -553,9 +553,39 @@
   // not even in a comment — the HTML parser ends the script element there.
   const PUBLISHED_SOAP_HTML = {};
 
+  // V64 final — published SOAP snapshots were captured from the Admin preview and
+  // carry its "Back to Admin Dashboard" link, which is meaningless in the
+  // read-only published view. This hides it at RENDER time only: the stored
+  // snapshot (PUBLISHED_SOAP_HTML / published_soaps.html_content) is never
+  // modified — a copy with one extra script is what the sandboxed iframe gets.
+  // The link is found by its text, so it does not depend on the snapshot's
+  // markup. Anything whose text also mentions "print" is never removed, so
+  // Print / Save as PDF is untouched.
+  function stripAdminBackLink(html) {
+    if (typeof html !== 'string') return html;
+    const code = "(function(){"
+      + "var RE=/back\\s+to\\s+admin\\s+dashboard/i,PR=/print/i;"
+      + "function clean(){"
+      + "var all=document.body?document.body.querySelectorAll('*'):[];"
+      + "for(var i=0;i<all.length;i++){var el=all[i];"
+      + "if(!el.parentNode||el.tagName==='SCRIPT'||el.tagName==='STYLE')continue;"
+      + "var t=el.textContent||'';if(!RE.test(t)||PR.test(t))continue;"
+      + "var deeper=false;for(var c=el.firstElementChild;c;c=c.nextElementSibling){if(RE.test(c.textContent||'')){deeper=true;break;}}"
+      + "if(deeper)continue;"
+      + "var tg=el.closest('a,button')||el;if(PR.test(tg.textContent||''))continue;"
+      + "tg.parentNode.removeChild(tg);}}"
+      + "function run(){try{clean();}catch(e){}}"
+      + "run();document.addEventListener('DOMContentLoaded',run);window.addEventListener('load',run);"
+      + "try{var mo=new MutationObserver(run);mo.observe(document.documentElement,{childList:true,subtree:true});setTimeout(function(){mo.disconnect();},3000);}catch(e){}"
+      + "})();";
+    const tag = '<script>' + code + '<' + '/script>';
+    const idx = html.toLowerCase().lastIndexOf('</body>');
+    return idx === -1 ? html + tag : html.slice(0, idx) + tag + html.slice(idx);
+  }
+
   function openSoapModal(title, htmlContent) {
     document.getElementById('soapModalTitle').textContent = title;
-    document.getElementById('soapModalFrame').srcdoc = htmlContent;
+    document.getElementById('soapModalFrame').srcdoc = stripAdminBackLink(htmlContent);
     document.getElementById('soapModal').classList.add('open');
   }
   function closeSoapModal() {
