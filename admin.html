@@ -464,6 +464,7 @@
     const card = document.getElementById('card-' + schoolId);
     card.querySelectorAll('.tab-panel').forEach(panel => panel.classList.remove('active'));
     document.getElementById('panel-' + schoolId + '-' + tabKey).classList.add('active');
+    if (tabKey === 'users') ensureViewersLoaded(schoolId); // V64 Stage 5 — lazy-load Viewers on first open
   }
 
   // Groups the 22 existing tabs into 5 top-level headings (School Setup,
@@ -518,6 +519,11 @@
   let MSG_COMPOSE_SCHOOL_ID = null;
   let MSG_COMPOSE_RECIPIENTS = [];
   let MSG_COMPOSE_ERROR = null;
+  // V64 Stage 5 — (re)assigned by loadAdmin() every time it runs. Lets the
+  // top-level Viewer Tracker functions refresh ONE school's membership list,
+  // because renderUsersAccessFragment() and the schoolUsers array are local
+  // to loadAdmin() and can't be reached from top-level handlers otherwise.
+  let USERS_ACCESS_HOOKS = null;
   const NATAVG_A_LEVEL_GRADE_OPTIONS = ['A*+', 'A*', 'A*-', 'A+', 'A', 'A-', 'B+', 'B', 'B-', 'C+', 'C', 'C-', 'D+', 'D', 'D-', 'E+', 'E', 'E-', 'U'];
   const NATAVG_APPLIED_GENERAL_GRADE_OPTIONS = ['Dist+', 'Dist', 'Dist-', 'Merit+', 'Merit', 'Merit-', 'Pass+', 'Pass', 'Pass-', 'U'];
   const NATAVG_YEARS = ['2022/23', '2023/24', '2024/25', '2025/26'];
@@ -919,8 +925,18 @@
         `;
       }
 
-      return membersHtml + contributorsHtml;
+      // V64 Stage 5: the membership block is wrapped in an id'd container so it
+      // can be refreshed on its own after a Viewer is added/removed, and the
+      // Viewer Tracker is appended below the existing content. membersHtml and
+      // contributorsHtml themselves are unchanged.
+      return `<div id="users-members-${s.id}">${membersHtml}</div>` + contributorsHtml + viewerTrackerShellHtml(s.id);
     }
+
+    // V64 Stage 5 — publish what the top-level Viewer Tracker functions need
+    // to refresh a single school's membership block. Re-assigned on every
+    // loadAdmin() run (including the post-save re-run), so it always points at
+    // the current closure's schoolUsers array.
+    USERS_ACCESS_HOOKS = { schools, schoolUsers, renderFragment: renderUsersAccessFragment };
 
     renderInviteSchoolOptions(schools);
 
@@ -1894,6 +1910,200 @@
     MSG_ACTIVE_THREAD_ID = null;
     await fetchMessagingData();
     renderSupportContent();
+  }
+
+  // ----------------------------------------------------------------------
+  // V64 Stage 5 — Admin Viewer management, inside each school's Users &
+  // Access tab. Viewers are school_users rows with role = 'Viewer'. Emails
+  // can't be read from school_users (no email column) or auth.users (not
+  // from the browser), so the list comes from list_school_viewers. Grants go
+  // through the existing grant-viewer-access Edge Function; removals through
+  // revoke_viewer_access (which can only ever delete a 'Viewer' row). The ONLY
+  // direct school_users access below is the read-only SELECT in
+  // refreshSchoolMembership(). All element ids are per-school
+  // (viewer-*-<schoolId>) because every school shares this one page.
+  // ----------------------------------------------------------------------
+
+  function viewerTrackerShellHtml(schoolId) {
+    return `
+      <div id="viewer-tracker-${schoolId}" data-viewer-loaded="0" style="margin-top:24px;padding-top:16px;border-top:1px solid #DCE3EA;">
+        <h4 style="margin:0 0 6px;font-size:13px;color:#0D2B4E;">Viewer Tracker</h4>
+        <div style="font-size:12px;color:#5A6B80;margin-bottom:10px;">Viewers can log in to view this school's published SOAPs only. They are separate from Leadership, Contributors and the Contributor Tracker.</div>
+        <div id="viewer-list-${schoolId}"><div class="school-meta">Loading Viewers…</div></div>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:12px;">
+          <input type="email" id="viewer-email-${schoolId}" placeholder="Viewer's email address" autocomplete="off" style="flex:1 1 240px;min-width:0;padding:8px 10px;border:1px solid #DCE3EA;border-radius:6px;font-size:13px;box-sizing:border-box;" onkeydown="if (event.key === 'Enter') { event.preventDefault(); viewerAdd('${schoolId}'); }">
+          <button type="button" id="viewer-add-btn-${schoolId}" onclick="viewerAdd('${schoolId}')" style="background:#3DCFB8;color:#0D2B4E;border:none;border-radius:6px;padding:9px 16px;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap;">+ Add Viewer</button>
+        </div>
+        <div id="viewer-msg-${schoolId}" style="font-size:12px;font-weight:700;margin-top:8px;min-height:16px;"></div>
+      </div>`;
+  }
+
+  function viewerMsg(schoolId, text, kind) {
+    const el = document.getElementById('viewer-msg-' + schoolId);
+    if (!el) return;
+    el.style.color = kind === 'error' ? '#B3261E' : kind === 'ok' ? '#1A7A6E' : kind === 'warn' ? '#8A5A00' : '#5A6B80';
+    el.textContent = text;
+  }
+
+  // Called by switchTab the first time a school's Users & Access tab is shown.
+  // The "loaded" flag lives on the DOM node, not in a module variable: a
+  // loadAdmin() re-run (e.g. the post-save refresh) rebuilds that node, which
+  // resets the flag automatically instead of leaving a stale "already loaded".
+  function ensureViewersLoaded(schoolId) {
+    const box = document.getElementById('viewer-tracker-' + schoolId);
+    if (!box || box.dataset.viewerLoaded !== '0') return; // already loaded, or loading
+    box.dataset.viewerLoaded = 'loading';
+    loadViewers(schoolId).then(ok => {
+      box.dataset.viewerLoaded = ok ? '1' : '0'; // failure => next open (or Retry) tries again
+    });
+  }
+
+  function viewerRetry(schoolId) {
+    const box = document.getElementById('viewer-tracker-' + schoolId);
+    const list = document.getElementById('viewer-list-' + schoolId);
+    if (list) list.innerHTML = '<div class="school-meta">Loading Viewers…</div>';
+    if (box) box.dataset.viewerLoaded = '0';
+    ensureViewersLoaded(schoolId);
+  }
+
+  // Never rejects; returns true on success, false on failure. Renders into the
+  // list node captured BEFORE the await, so a response that lands after a
+  // loadAdmin() rebuild can only touch the old, detached node.
+  async function loadViewers(schoolId) {
+    const list = document.getElementById('viewer-list-' + schoolId);
+    if (!list) return false;
+    try {
+      const { data, error } = await sb.rpc('list_school_viewers', { p_school_id: schoolId });
+      if (error) throw error;
+      const viewers = (data || []).slice().sort((a, b) => String(a.email || '').localeCompare(String(b.email || '')));
+      if (!viewers.length) {
+        list.innerHTML = '<div class="school-meta">No Viewers have been added for this school yet.</div>';
+        return true;
+      }
+      list.innerHTML = viewers.map(v => `
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px solid #DCE3EA;">
+          <span style="font-size:13px;color:#0D2B4E;word-break:break-all;">${escapeHtml(v.email || '(email unavailable)')}</span>
+          <button type="button" data-user-id="${escapeHtml(v.auth_user_id)}" data-email="${escapeHtml(v.email || '')}" onclick="viewerRemove(this, '${schoolId}')" style="background:#F3B8B8;color:#7A1F1F;border:none;border-radius:6px;padding:5px 12px;font-size:12px;font-weight:700;cursor:pointer;flex-shrink:0;" aria-label="Remove Viewer ${escapeHtml(v.email || '')}">Remove</button>
+        </div>`).join('');
+      return true;
+    } catch (err) {
+      console.error('Could not load Viewers:', err);
+      list.innerHTML = `<div style="font-size:13px;color:#B3261E;font-weight:700;">Could not load Viewers: ${escapeHtml(err.message || 'unknown error')} <button type="button" onclick="viewerRetry('${schoolId}')" style="margin-left:8px;background:#EFF3F6;color:#0D2B4E;border:none;border-radius:6px;padding:4px 10px;font-size:12px;font-weight:700;cursor:pointer;">Retry</button></div>`;
+      return false;
+    }
+  }
+
+  // READ-ONLY — the single direct school_users access in Stage 5. Re-reads this
+  // one school's memberships, updates the live array in place (it is a const in
+  // loadAdmin()'s closure), then re-renders just the membership block by running
+  // the real renderUsersAccessFragment() on a detached node and copying that
+  // block across. The refreshed display is therefore exactly what the original
+  // renderer produces, with no second copy of its markup to keep in sync.
+  async function refreshSchoolMembership(schoolId) {
+    const hooks = USERS_ACCESS_HOOKS;
+    if (!hooks) throw new Error('Admin page not initialised');
+    const { data, error } = await sb.from('school_users').select('*').eq('school_id', schoolId);
+    if (error) throw error;
+    const arr = hooks.schoolUsers;
+    for (let i = arr.length - 1; i >= 0; i--) if (arr[i].school_id === schoolId) arr.splice(i, 1);
+    (data || []).forEach(r => arr.push(r));
+    const school = hooks.schools.find(x => x.id === schoolId);
+    const target = document.getElementById('users-members-' + schoolId);
+    if (!school || !target) return;
+    const tmp = document.createElement('div');
+    tmp.innerHTML = hooks.renderFragment(school);
+    const fresh = tmp.querySelector('#users-members-' + schoolId);
+    if (fresh) target.innerHTML = fresh.innerHTML;
+  }
+
+  // After a SUCCESSFUL add/remove: refresh the Viewer list and this school's
+  // membership block. Resolves true only if both refreshes worked.
+  async function refreshViewerAndMembership(schoolId) {
+    const [listOk, memberErr] = await Promise.all([
+      loadViewers(schoolId),
+      refreshSchoolMembership(schoolId).then(() => null, e => e)
+    ]);
+    if (memberErr) console.error('Could not refresh membership list:', memberErr);
+    return listOk && !memberErr;
+  }
+
+  async function viewerAdd(schoolId) {
+    const input = document.getElementById('viewer-email-' + schoolId);
+    const btn = document.getElementById('viewer-add-btn-' + schoolId);
+    if (!input || !btn) return;
+    const email = input.value.trim();
+    if (!email || !email.includes('@')) {
+      viewerMsg(schoolId, 'A valid email is required.', 'error');
+      return;
+    }
+
+    btn.disabled = true;
+    btn.textContent = 'Adding…';
+    viewerMsg(schoolId, 'Granting Viewer access…', 'info');
+
+    let successText = null;
+    try {
+      // Body is exactly what grant-viewer-access reads: { email, school_id }.
+      const { data, error } = await sb.functions.invoke('grant-viewer-access', {
+        body: { email, school_id: schoolId }
+      });
+      if (error) {
+        // supabase-js buries the function's own JSON error body (e.g. the 409
+        // existing-role conflict) inside error.context for non-2xx responses —
+        // unpack it so the specific backend message reaches the screen.
+        let detail = error.message || 'Unknown error';
+        try {
+          if (error.context && typeof error.context.json === 'function') {
+            const errBody = await error.context.json();
+            if (errBody && errBody.error) detail = errBody.error;
+          }
+        } catch (_) { /* fall back to error.message above */ }
+        throw new Error(detail);
+      }
+      if (data && data.error) throw new Error(data.error);
+
+      input.value = '';
+      successText = (data && data.note)
+        ? email + ' — ' + data.note + '.'
+        : 'Viewer access granted to ' + email + '. If they are new to SOAP Analytics, an invitation email has been sent.';
+    } catch (err) {
+      console.error(err);
+      viewerMsg(schoolId, 'Could not add Viewer: ' + err.message, 'error');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '+ Add Viewer';
+    }
+
+    if (successText === null) return; // failure: no success feedback and no refresh
+    viewerMsg(schoolId, successText, 'ok');
+    if (!(await refreshViewerAndMembership(schoolId))) {
+      viewerMsg(schoolId, successText + ' However, the display could not be fully refreshed — reload the page to see the current state.', 'warn');
+    }
+  }
+
+  async function viewerRemove(btn, schoolId) {
+    const userId = btn.dataset.userId;
+    const email = btn.dataset.email || 'this Viewer';
+    if (!userId) return;
+    const school = USERS_ACCESS_HOOKS && USERS_ACCESS_HOOKS.schools.find(x => x.id === schoolId);
+    if (!confirm('Remove Viewer access for ' + email + ' from ' + (school ? school.name : 'this school') + '? They will no longer be able to view its published SOAPs.')) return;
+
+    btn.disabled = true;
+    try {
+      const { error } = await sb.rpc('revoke_viewer_access', { p_school_id: schoolId, p_user_id: userId });
+      if (error) throw error;
+    } catch (err) {
+      console.error(err);
+      btn.disabled = false;
+      viewerMsg(schoolId, 'Could not remove Viewer: ' + (err.message || 'unknown error'), 'error');
+      return; // failure: no success feedback and no refresh
+    }
+
+    const successText = 'Viewer access removed for ' + email + '.';
+    viewerMsg(schoolId, successText, 'ok');
+    if (!(await refreshViewerAndMembership(schoolId))) {
+      viewerMsg(schoolId, successText + ' However, the display could not be fully refreshed — reload the page to see the current state.', 'warn');
+    }
   }
 
   async function savePackageTier(schoolId) {
