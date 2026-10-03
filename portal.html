@@ -828,11 +828,11 @@
       }
     }
 
-    // V64 Stage 6 — everything from here to the end of this block stays
-    // Leadership-only (SOAP Dashboard, IDSR SOAP incl. upload controls, IDSR
-    // Dashboard). This block's original closing brace is unchanged; it now closes
-    // this `if` rather than the shared one above.
-    if (isHeadteacher) {
+    // V64 Stage 7 — SOAP Dashboard, IDSR SOAP and IDSR Dashboard are finished
+    // outputs, so Viewer gets them read-only alongside View My SOAP. Package
+    // gating is unchanged. IDSR upload controls stay Leadership-only (see the
+    // isViewer branch inside the IDSR SOAP panel below).
+    if (isHeadteacher || isViewer) {
       // SOAP Dashboard
       if (features.soapDashboard) {
         accordionHtml += `
@@ -852,7 +852,16 @@
       // IDSR SOAP
       if (features.idsrSoap) {
         let idsrPanelBody;
-        if (!idsrUpload) {
+        if (isViewer) {
+          // V64 Stage 7 — Viewer: read-only. No upload input/button, ever.
+          idsrPanelBody = (idsrUpload && idsrUpload.status === 'published')
+            ? `
+            <div class="form-row" style="flex-direction:column; align-items:flex-start; gap:6px;">
+              <p style="margin:0; color:#fff;">Published ${new Date(idsrUpload.published_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}.</p>
+              <a href="idsr-soap.html?school_id=${linkRow.school_id}" target="_blank" style="color:#3DCFB8;font-weight:700;font-size:13px;text-decoration:none;">Open IDSR SOAP →</a>
+            </div>`
+            : `<div class="empty-note">Your school's IDSR SOAP will appear here once it has been published.</div>`;
+        } else if (!idsrUpload) {
           idsrPanelBody = `
             <div class="form-row" style="flex-direction:column; align-items:flex-start; gap:10px;">
               <p style="margin:0; color:#fff;">Upload your school's raw DfE IDSR HTML export to get started.</p>
@@ -897,7 +906,9 @@
       if (features.idsrDashboard) {
         const idsrDashBody = (idsrUpload && idsrUpload.status === 'published')
           ? `<a class="form-row" href="idsr-dashboard.html?school_id=${linkRow.school_id}" target="_blank"><span class="name">Open IDSR Dashboard</span></a>`
-          : `<div class="empty-note">Your IDSR Dashboard will appear here once your uploaded IDSR has been reviewed and published \u2014 see IDSR SOAP above to upload.</div>`;
+          : (isViewer
+              ? `<div class="empty-note">Your IDSR Dashboard will appear here once your school's IDSR has been published.</div>`
+              : `<div class="empty-note">Your IDSR Dashboard will appear here once your uploaded IDSR has been reviewed and published \u2014 see IDSR SOAP above to upload.</div>`);
         accordionHtml += `
         <div>
           <button type="button" class="bar" id="bar-idsrdash" onclick="toggleAccordion('idsrdash');">

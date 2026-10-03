@@ -651,9 +651,11 @@ async function boot() {
       window.idsrSoapReady = true;
       return;
     }
-    // V64 Stage 7 — Leadership roles only (Contributor/Viewer are rejected).
-    if (!FULL_ACCESS_ROLES.includes(linkRow.role)) {
-      showEmptyState('Access denied', 'This page is available to school Leadership only.');
+    // V64 Stage 7 — Leadership roles, or a read-only Viewer (explicit, not part
+    // of FULL_ACCESS_ROLES). Contributors are rejected. The published-status
+    // rule below still applies to every non-admin, Viewer included.
+    if (!(FULL_ACCESS_ROLES.includes(linkRow.role) || linkRow.role === 'Viewer')) {
+      showEmptyState('Access denied', 'Your account does not have access to this page.');
       window.idsrSoapReady = true;
       return;
     }
