@@ -569,6 +569,7 @@ const SUPABASE_URL = 'https://caopycszjzrmwhxxvtpx.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_2CTGR0PKyRPpSk59lcr3sA_hvvUDX97';
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
+const FULL_ACCESS_ROLES = ['Headteacher', 'Executive Headteacher', 'CEO', 'School Improvement Director'];
 let VIEW_SCHOOL_ID = null;
 let VIEW_IS_ADMIN = false;
 let UPLOAD_ROW = null;
@@ -647,6 +648,12 @@ async function boot() {
     const linkRow = paramSchoolId ? linkRows.find(r => r.school_id === paramSchoolId) : linkRows[0];
     if (!linkRow) {
       showEmptyState('Access denied', 'This school is not linked to your account.');
+      window.idsrSoapReady = true;
+      return;
+    }
+    // V64 Stage 7 — Leadership roles only (Contributor/Viewer are rejected).
+    if (!FULL_ACCESS_ROLES.includes(linkRow.role)) {
+      showEmptyState('Access denied', 'This page is available to school Leadership only.');
       window.idsrSoapReady = true;
       return;
     }

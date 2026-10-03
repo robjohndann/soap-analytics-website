@@ -167,6 +167,20 @@
       return;
     }
 
+    // V64 Stage 7 — direct-URL access guard. Runs BEFORE any school data is
+    // fetched. Admins pass as before; everyone else must be linked to THIS
+    // school with a full Leadership role (Contributor/Viewer are rejected).
+    const FULL_ACCESS_ROLES = ['Headteacher', 'Executive Headteacher', 'CEO', 'School Improvement Director'];
+    const { data: guardAdminRow } = await sb.from('admins').select('auth_user_id').eq('auth_user_id', session.user.id).maybeSingle();
+    if (!guardAdminRow) {
+      const { data: guardLinkRows, error: guardLinkError } = await sb.from('school_users').select('school_id, role').eq('auth_user_id', session.user.id);
+      const guardLinkRow = (!guardLinkError && guardLinkRows) ? guardLinkRows.find(r => r.school_id === schoolId) : null;
+      if (!guardLinkRow || !FULL_ACCESS_ROLES.includes(guardLinkRow.role)) {
+        statusArea.innerHTML = '<div class="empty-msg">Access denied — this page is available to school Leadership only.</div>';
+        return;
+      }
+    }
+
     const [schoolRes, attendanceRes, resourceStatsRes] = await Promise.all([
       sb.from('schools').select('*').eq('id', schoolId).maybeSingle(),
       sb.from('attendance_data').select('*').eq('school_id', schoolId),
