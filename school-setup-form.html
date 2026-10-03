@@ -386,6 +386,28 @@
       </div>
     </div>
 
+    <!-- V64 — Viewer Tracker. Independent of Save School Setup: adding or
+         removing a Viewer takes effect immediately via the grant-viewer-access
+         Edge Function / revoke_viewer_access RPC; nothing here is read by
+         saveForm(). All buttons are type="button" so nothing in this card can
+         submit the surrounding form. -->
+    <div class="card" id="viewerTrackerCard">
+      <div class="card-head">Viewer Tracker</div>
+      <div class="card-body">
+        <p style="font-size:12px;color:var(--muted);margin:0 0 14px;">
+          Viewers can log in to view this school's published SOAPs. They cannot enter or edit data, and are separate from the Responsible Persons and Additional Contributors above. Adding or removing a Viewer takes effect immediately &mdash; it does not depend on Save School Setup.
+        </p>
+        <div id="viewersList">
+          <div style="font-size:13px;color:var(--muted);">Loading Viewers&hellip;</div>
+        </div>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:16px;">
+          <input type="email" id="viewerEmailInput" placeholder="Viewer's email address" autocomplete="off" style="flex:1 1 260px;min-width:0;" onkeydown="if (event.key === 'Enter') { event.preventDefault(); addViewer(); }">
+          <button type="button" id="addViewerBtn" onclick="addViewer()" style="background:#3DCFB8;color:#0D2B4E;border:none;border-radius:6px;padding:9px 16px;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap;">+ Add Viewer</button>
+        </div>
+        <div id="viewerMsg" style="font-size:12px;font-weight:700;margin-top:8px;min-height:16px;"></div>
+      </div>
+    </div>
+
   </form>
 </div>
 
@@ -478,6 +500,7 @@
     existingSchoolId = linkRow.school_id;
     banner.textContent = `Logged in as ${session.user.email}. You're editing the selected school's record.`;
     await prefillForm(existingSchoolId);
+    loadViewers(existingSchoolId); // V64 — not awaited; catches its own errors, so it can never block the form
     document.getElementById('setupForm').style.display = '';
     document.getElementById('submitBar').style.display = '';
   }
@@ -682,6 +705,125 @@
     }
 
     await loadContributors(schoolId);
+  }
+
+  // ============================================================================
+  // V64 — Viewer Tracker. Viewers are school_users rows with role = 'Viewer'.
+  // Reads go through list_school_viewers (the browser cannot read auth.users,
+  // and school_users has no email column); grants go through the
+  // grant-viewer-access Edge Function (which owns lookup/invite and rejects an
+  // existing different role rather than overwriting it); removals go through
+  // revoke_viewer_access (which can only ever delete a 'Viewer' row). Nothing
+  // here writes school_users directly, and none of it touches completion_tracker
+  // or section_access. Always acts on existingSchoolId — the school selected for
+  // this page load — so multi-school Leadership behaves exactly as for the rest
+  // of this form.
+  // ============================================================================
+
+  const VIEWER_REMOVE_BTN_STYLE = 'background:#F3B8B8;color:#7A1F1F;border:none;border-radius:6px;padding:5px 12px;font-size:12px;font-weight:700;cursor:pointer;flex-shrink:0;';
+
+  function setViewerMsg(text, kind) {
+    const msg = document.getElementById('viewerMsg');
+    if (!msg) return;
+    msg.style.color = kind === 'error' ? 'var(--bad)' : (kind === 'ok' ? 'var(--good)' : 'var(--muted)');
+    msg.textContent = text;
+  }
+
+  // Never throws: any failure is shown inside the card, so this can safely be
+  // called without await from requireLogin().
+  async function loadViewers(schoolId) {
+    const list = document.getElementById('viewersList');
+    if (!list) return;
+    try {
+      const { data, error } = await sb.rpc('list_school_viewers', { p_school_id: schoolId });
+      if (error) throw error;
+      const viewers = (data || []).slice().sort((a, b) => String(a.email || '').localeCompare(String(b.email || '')));
+      if (!viewers.length) {
+        list.innerHTML = '<div style="font-size:13px;color:var(--muted);">No Viewers have been added for this school yet.</div>';
+        return;
+      }
+      list.innerHTML = viewers.map(v => `
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 0;border-bottom:1px solid var(--border);">
+          <span style="font-size:13px;color:var(--text);word-break:break-all;">${escapeHtml(v.email || '(email unavailable)')}</span>
+          <button type="button" data-user-id="${escapeHtml(v.auth_user_id)}" data-email="${escapeHtml(v.email || '')}" onclick="removeViewer(this)" style="${VIEWER_REMOVE_BTN_STYLE}" aria-label="Remove Viewer ${escapeHtml(v.email || '')}">Remove</button>
+        </div>
+      `).join('');
+    } catch (err) {
+      console.error('Could not load Viewers:', err);
+      list.innerHTML = '<div style="font-size:13px;color:var(--bad);font-weight:700;">Could not load Viewers: ' + escapeHtml(err.message || 'unknown error') + '</div>';
+    }
+  }
+
+  async function addViewer() {
+    const schoolId = existingSchoolId;
+    if (!schoolId) return;
+    const input = document.getElementById('viewerEmailInput');
+    const btn = document.getElementById('addViewerBtn');
+    const email = input.value.trim();
+
+    if (!email || !email.includes('@')) {
+      setViewerMsg('A valid email is required.', 'error');
+      return;
+    }
+
+    btn.disabled = true;
+    btn.textContent = 'Adding…';
+    setViewerMsg('Granting Viewer access…', 'info');
+
+    try {
+      // Request body is exactly what grant-viewer-access reads: { email, school_id }.
+      const { data, error } = await sb.functions.invoke('grant-viewer-access', {
+        body: { email, school_id: schoolId }
+      });
+      if (error) {
+        // supabase-js hides the function's own JSON error body inside
+        // error.context for non-2xx responses (e.g. the 409 existing-role
+        // conflict) — unpack it so the real message reaches the user.
+        let detail = error.message || 'Unknown error';
+        try {
+          if (error.context && typeof error.context.json === 'function') {
+            const errBody = await error.context.json();
+            if (errBody && errBody.error) detail = errBody.error;
+          }
+        } catch (_) { /* fall back to error.message above */ }
+        throw new Error(detail);
+      }
+      if (data && data.error) throw new Error(data.error);
+
+      input.value = '';
+      if (data && data.note) {
+        setViewerMsg(email + ' — ' + data.note + '.', 'ok');
+      } else {
+        setViewerMsg('Viewer access granted to ' + email + '. If they are new to SOAP Analytics, an invitation email has been sent.', 'ok');
+      }
+      await loadViewers(schoolId);
+    } catch (err) {
+      console.error(err);
+      setViewerMsg('Could not add Viewer: ' + err.message, 'error');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '+ Add Viewer';
+    }
+  }
+
+  async function removeViewer(btn) {
+    const schoolId = existingSchoolId;
+    const userId = btn.dataset.userId;
+    const email = btn.dataset.email || 'this Viewer';
+    if (!schoolId || !userId) return;
+    if (!confirm('Remove Viewer access for ' + email + '? They will no longer be able to view this school\'s published SOAPs.')) return;
+
+    btn.disabled = true;
+    try {
+      const { error } = await sb.rpc('revoke_viewer_access', { p_school_id: schoolId, p_user_id: userId });
+      if (error) throw error;
+      setViewerMsg('Viewer access removed for ' + email + '.', 'ok');
+      await loadViewers(schoolId);
+    } catch (err) {
+      console.error(err);
+      btn.disabled = false;
+      setViewerMsg('Could not remove Viewer: ' + (err.message || 'unknown error'), 'error');
+    }
   }
 
   requireLogin();
