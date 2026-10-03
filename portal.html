@@ -112,7 +112,7 @@
       <span id="soapModalTitle">SOAP</span>
       <button type="button" class="modal-close" onclick="closeSoapModal();">×</button>
     </div>
-    <iframe id="soapModalFrame"></iframe>
+    <iframe id="soapModalFrame" sandbox="allow-scripts allow-modals"></iframe>
   </div>
 </div>
 
@@ -542,6 +542,17 @@
     await checkLogin();
   }
 
+  // Published SOAP snapshots, keyed by published_soaps.id. Held in memory rather
+  // than embedded in the DOM: a snapshot is a COMPLETE HTML document, and its own
+  // closing script tags used to be backslash-escaped so they could sit inside a
+  // text/plain script holder. That escaping was never reversed, so the iframe
+  // received a mangled closing tag, its parser swallowed the rest of the
+  // document, and the modal rendered blank. With no text round-trip there is
+  // nothing to escape or unescape.
+  // NOTE: never write a literal closing script tag inside this inline script,
+  // not even in a comment — the HTML parser ends the script element there.
+  const PUBLISHED_SOAP_HTML = {};
+
   function openSoapModal(title, htmlContent) {
     document.getElementById('soapModalTitle').textContent = title;
     document.getElementById('soapModalFrame').srcdoc = htmlContent;
@@ -787,6 +798,7 @@
     if (isHeadteacher || isViewer) {
       // View My SOAP
       if (features.soap) {
+        publishedSoaps.forEach(p => { PUBLISHED_SOAP_HTML[p.id] = p.html_content; });
         accordionHtml += `
         <div>
           <button type="button" class="bar" id="bar-soap" onclick="toggleAccordion('soap');">
@@ -799,14 +811,13 @@
           <div class="panel" id="panel-soap">
             ${publishedSoaps.length
               ? publishedSoaps.map((p, idx) => `
-                <div class="form-row soap-row" onclick='openSoapModal(${JSON.stringify(p.period_label)}, document.getElementById("soap-html-${p.id}").textContent)'>
+                <div class="form-row soap-row" onclick='openSoapModal(${JSON.stringify(p.period_label)}, PUBLISHED_SOAP_HTML["${p.id}"])'>
                   <span>
                     <span class="soap-name">${p.period_label}</span>
                     <span class="soap-date">Published ${new Date(p.published_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</span>
                   </span>
                   ${idx === 0 ? '<span class="badge live">Latest</span>' : ''}
                 </div>
-                <script type="text/plain" id="soap-html-${p.id}">${p.html_content.replace(/<\/script>/g, '<\\/script>')}<\/script>
               `).join('')
               : '<div class="empty-note">No SOAPs have been published for your school yet.</div>'
             }
