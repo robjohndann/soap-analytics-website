@@ -733,10 +733,21 @@
     };
 
     const isHeadteacher = FULL_ACCESS_ROLES.includes(linkRow.role);
+    // V64 Stage 6 — deliberately NOT part of FULL_ACCESS_ROLES. Derived from
+    // linkRow.role, i.e. the role at the school selected for THIS page load, so
+    // someone who is Headteacher at one school and Viewer at another gets the
+    // full portal at the first and the narrow one at the second. Never account-wide.
+    const isViewer = linkRow.role === 'Viewer';
     const publishedSoaps = publishedRes.data || [];
     const idsrUpload = idsrRes.data || null;
 
-    let accordionHtml = `
+    // V64 Stage 6 — a Viewer gets NEITHER the Data Entry Forms accordion NOR the
+    // Support accordion: the whole initial string is '' for them, so nothing is
+    // rendered (not an empty panel). This is an explicit role check on purpose:
+    // availableForms is built from section_access for ANY role, so a Viewer with a
+    // stale/erroneous grant would otherwise get Data Entry. No FORM_ACCESS entry
+    // for 'Viewer' exists or is added.
+    let accordionHtml = isViewer ? '' : `
       <div>
         <button type="button" class="bar" id="bar-forms" onclick="toggleAccordion('forms');">
           <span class="bar-label">Data Entry Forms</span>
@@ -769,7 +780,11 @@
         </div>
       </div>`;
 
-    if (isHeadteacher) {
+    // V64 Stage 6 — View My SOAP is the ONE panel Leadership and Viewer share.
+    // Package behaviour is unchanged: features.soap → the published list as before;
+    // otherwise the existing locked bar. The published_soaps query and the
+    // SOAP rendering/modal are untouched.
+    if (isHeadteacher || isViewer) {
       // View My SOAP
       if (features.soap) {
         accordionHtml += `
@@ -800,7 +815,13 @@
       } else {
         accordionHtml += lockedBar('soap', 'View My SOAP');
       }
+    }
 
+    // V64 Stage 6 — everything from here to the end of this block stays
+    // Leadership-only (SOAP Dashboard, IDSR SOAP incl. upload controls, IDSR
+    // Dashboard). This block's original closing brace is unchanged; it now closes
+    // this `if` rather than the shared one above.
+    if (isHeadteacher) {
       // SOAP Dashboard
       if (features.soapDashboard) {
         accordionHtml += `
