@@ -200,7 +200,7 @@
     <div class="status-msg">Checking your access…</div>
   </div>
 
-  <div class="page-title">Support Messages</div>
+  <div class="page-title">School Messages</div>
   <div class="page-sub">Conversations with schools, most recent activity first, across every school.</div>
   <div id="supportContent" style="margin-bottom:40px;">
     <div class="status-msg">Checking your access…</div>
@@ -519,6 +519,20 @@
   let MSG_COMPOSE_SCHOOL_ID = null;
   let MSG_COMPOSE_RECIPIENTS = [];
   let MSG_COMPOSE_ERROR = null;
+  // V65 Request #2 — multi-school compose state (separate from the single-school
+  // MSG_COMPOSE_* state above, which is unchanged).
+  let MSG_BULK_MODE = false;
+  let MSG_BULK_SELECTED = {};   // schoolId -> true
+  let MSG_BULK_LEADERS = {};    // schoolId -> { status: loading|ready|error, users: [], chosen: '' }
+  let MSG_BULK_DONE = {};       // schoolId -> true once its conversation has been created
+  let MSG_BULK_SUBJECT = '';
+  let MSG_BULK_MESSAGE = '';
+  let MSG_BULK_FILTER = '';
+  let MSG_BULK_SENDING = false;
+  let MSG_BULK_CONFIRM = false;
+  let MSG_BULK_RESULTS = null;
+  let MSG_BULK_NOTE = '';
+  const MSG_BULK_MAX = 50;      // matches the server-side cap
   // V64 Stage 5 — (re)assigned by loadAdmin() every time it runs. Lets the
   // top-level Viewer Tracker functions refresh ONE school's membership list,
   // because renderUsersAccessFragment() and the schoolUsers array are local
@@ -1660,11 +1674,12 @@
   }
 
   function renderSupportContent() {
+    if (MSG_BULK_MODE) { renderBulkComposeView(); return; }
     if (MSG_COMPOSE_SCHOOL_ID !== null) { renderComposeView(); return; }
     if (MSG_ACTIVE_THREAD_ID) { renderThreadDetailView(); return; }
 
     const supportContent = document.getElementById('supportContent');
-    const startBtn = `<div style="margin-bottom:14px;"><button type="button" onclick="msgAdminStartNew()" style="background:#3DCFB8;color:#0D2B4E;border:none;border-radius:6px;padding:10px 18px;font-size:13px;font-weight:700;cursor:pointer;">Start New Conversation</button></div>`;
+    const startBtn = `<div style="margin-bottom:14px;"><button type="button" onclick="msgAdminStartNew()" style="background:#3DCFB8;color:#0D2B4E;border:none;border-radius:6px;padding:10px 18px;font-size:13px;font-weight:700;cursor:pointer;">Start New Conversation</button> <button type="button" onclick="msgAdminStartBulk()" style="background:#0D2B4E;color:#fff;border:none;border-radius:6px;padding:10px 18px;font-size:13px;font-weight:700;cursor:pointer;margin-left:8px;">Message Multiple Schools</button></div>`;
 
     if (!MSG_THREADS.length) {
       supportContent.innerHTML = startBtn + '<div class="status-msg">No conversations yet.</div>';
@@ -1830,6 +1845,390 @@
     MSG_COMPOSE_RECIPIENTS = [];
     await fetchMessagingData();
     renderSupportContent();
+  }
+
+  // ----------------------------------------------------------------------
+  // V65 Request #2 — Admin multi-school messaging.
+  // Admin ticks several schools, writes ONE subject + message, sends once.
+  // Server side: msg_admin_create_threads_bulk creates a completely separate
+  // normal conversation per school (it calls msg_admin_create_thread for each).
+  // Visibility is unchanged and school-based (existing RLS): every Leadership
+  // user linked to a school sees that school's conversation. The "reply
+  // contact" sent as notify_user_id is NOT a visibility restriction.
+  // No role hierarchy: a school with exactly one Leadership user uses that user;
+  // with several, Admin must choose. Single-school compose above is untouched.
+  // ----------------------------------------------------------------------
+
+  function msgBulkReset() {
+    MSG_BULK_SELECTED = {};
+    MSG_BULK_LEADERS = {};
+    MSG_BULK_DONE = {};
+    MSG_BULK_SUBJECT = '';
+    MSG_BULK_MESSAGE = '';
+    MSG_BULK_FILTER = '';
+    MSG_BULK_SENDING = false;
+    MSG_BULK_CONFIRM = false;
+    MSG_BULK_RESULTS = null;
+    MSG_BULK_NOTE = '';
+  }
+
+  function msgAdminStartBulk() {
+    msgBulkReset();
+    MSG_BULK_MODE = true;
+    renderSupportContent();
+    msgBulkLoadAllLeaders();
+  }
+
+  function msgAdminCancelBulk() {
+    if (MSG_BULK_SENDING) return;
+    MSG_BULK_MODE = false;
+    msgBulkReset();
+    renderSupportContent();
+  }
+
+  function msgBulkSelectedIds() {
+    return MSG_SCHOOLS_REF.filter(s => MSG_BULK_SELECTED[s.id]).map(s => s.id);
+  }
+
+  // Eligible = lookup finished, at least one registered Leadership user, not already sent in this session.
+  function msgBulkEligible(schoolId) {
+    const st = MSG_BULK_LEADERS[schoolId];
+    return !!(st && st.status === 'ready' && st.users.length > 0 && !MSG_BULK_DONE[schoolId]);
+  }
+
+  function msgBulkNeedsContact(schoolId) {
+    const st = MSG_BULK_LEADERS[schoolId];
+    return !!(MSG_BULK_SELECTED[schoolId] && st && st.status === 'ready' && st.users.length > 0 && !st.chosen);
+  }
+
+  function msgBulkChosenUser(schoolId) {
+    const st = MSG_BULK_LEADERS[schoolId];
+    if (!st || !st.chosen) return null;
+    return st.users.find(u => u.auth_user_id === st.chosen) || null;
+  }
+
+  function msgBulkRowHtml(s) {
+    const st = MSG_BULK_LEADERS[s.id];
+    const done = !!MSG_BULK_DONE[s.id];
+    const eligible = msgBulkEligible(s.id);
+    const locked = MSG_BULK_SENDING;
+    const hidden = MSG_BULK_FILTER && !(String(s.name || '').toLowerCase().includes(MSG_BULK_FILTER.toLowerCase()));
+    let contact;
+    if (done) {
+      contact = '<span style="color:#0D7377;font-weight:700;">Sent ✓</span>';
+    } else if (!st || st.status === 'loading') {
+      contact = '<span style="color:#5a6e7c;">Checking Leadership accounts…</span>';
+    } else if (st.status === 'error') {
+      contact = `<span style="color:#7A1F1F;">Lookup failed.</span> <button type="button" onclick="msgBulkRetryLookup('${s.id}')" style="background:none;border:none;color:#0D7377;font-weight:700;cursor:pointer;padding:0;">Retry</button>`;
+    } else if (!st.users.length) {
+      contact = '<span style="color:#5a6e7c;">No registered Leadership account — will be skipped</span>';
+    } else if (st.users.length === 1) {
+      contact = `<span style="color:#0D2B4E;">Reply contact: ${escapeHtml(st.users[0].email)} (${escapeHtml(st.users[0].role)})</span>`;
+    } else {
+      contact = `<select ${locked ? 'disabled' : ''} onchange="msgBulkChooseContact('${s.id}', this.value)" style="padding:5px;border-radius:6px;border:1px solid #D9E7EB;max-width:320px;">
+          <option value="">Choose reply contact…</option>
+          ${st.users.map(u => `<option value="${u.auth_user_id}" ${st.chosen === u.auth_user_id ? 'selected' : ''}>${escapeHtml(u.email)} (${escapeHtml(u.role)})</option>`).join('')}
+        </select>${msgBulkNeedsContact(s.id) ? '<span style="color:#7A1F1F;font-size:11px;font-weight:700;margin-left:8px;">Choose a contact to send</span>' : ''}`;
+    }
+    return `<div id="msgBulkRow_${s.id}" data-name="${escapeHtml(String(s.name || '').toLowerCase())}" style="display:${hidden ? 'none' : 'flex'};align-items:center;gap:12px;padding:8px 4px;border-bottom:1px solid #EEF3F5;flex-wrap:wrap;">
+        <input type="checkbox" ${MSG_BULK_SELECTED[s.id] ? 'checked' : ''} ${eligible && !locked ? '' : 'disabled'} onchange="msgBulkToggle('${s.id}', this.checked)">
+        <span style="font-weight:700;color:#0D2B4E;min-width:200px;">${escapeHtml(s.name)}</span>
+        <span style="font-size:12px;">${contact}</span>
+      </div>`;
+  }
+
+  function msgBulkUpdateRow(schoolId) {
+    if (!MSG_BULK_MODE || MSG_BULK_RESULTS) return;
+    const el = document.getElementById('msgBulkRow_' + schoolId);
+    const s = MSG_SCHOOLS_REF.find(x => x.id === schoolId);
+    if (el && s) el.outerHTML = msgBulkRowHtml(s);
+    msgBulkUpdateFooter();
+  }
+
+  function msgBulkUpdateAllRows() {
+    if (!MSG_BULK_MODE || MSG_BULK_RESULTS) return;
+    const list = document.getElementById('msgBulkList');
+    if (list) list.innerHTML = MSG_SCHOOLS_REF.map(msgBulkRowHtml).join('');
+    msgBulkUpdateFooter();
+  }
+
+  // Returns '' when sending is allowed, otherwise the reason it is not.
+  function msgBulkBlocker() {
+    const ids = msgBulkSelectedIds();
+    if (!ids.length) return 'Tick at least one school.';
+    const needContact = ids.filter(msgBulkNeedsContact).length;
+    if (needContact) return `${needContact} selected school${needContact === 1 ? ' still needs' : 's still need'} a reply contact.`;
+    if (!MSG_BULK_SUBJECT.trim()) return 'Enter a subject.';
+    if (!MSG_BULK_MESSAGE.trim()) return 'Type a message.';
+    return '';
+  }
+
+  function msgBulkFooterHtml() {
+    const ids = msgBulkSelectedIds();
+    const blocker = msgBulkBlocker();
+    const canSend = !blocker && !MSG_BULK_SENDING;
+    return `
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-top:14px;flex-wrap:wrap;">
+        <div style="font-size:12px;font-weight:700;">
+          <span style="color:#0D2B4E;">${ids.length} school${ids.length === 1 ? '' : 's'} selected (max ${MSG_BULK_MAX})</span>
+          ${blocker ? `<span style="color:#7A1F1F;margin-left:10px;">${escapeHtml(blocker)}</span>` : ''}
+          ${MSG_BULK_NOTE ? `<div style="color:#7A1F1F;margin-top:4px;">${escapeHtml(MSG_BULK_NOTE)}</div>` : ''}
+        </div>
+        <button type="button" ${canSend ? '' : 'disabled'} onclick="msgBulkSendClicked()" style="background:#3DCFB8;color:#0D2B4E;border:none;border-radius:6px;padding:10px 20px;font-size:13px;font-weight:700;cursor:${canSend ? 'pointer' : 'not-allowed'};opacity:${canSend ? '1' : '0.5'};">${MSG_BULK_SENDING ? 'Sending…' : 'Send'}</button>
+      </div>`;
+  }
+
+  function msgBulkUpdateFooter() {
+    if (!MSG_BULK_MODE || MSG_BULK_RESULTS) return;
+    const el = document.getElementById('msgBulkFooter');
+    if (el) el.innerHTML = msgBulkFooterHtml();
+    const cf = document.getElementById('msgBulkConfirm');
+    if (cf) cf.innerHTML = MSG_BULK_CONFIRM ? msgBulkConfirmHtml() : '';
+  }
+
+  function msgBulkConfirmHtml() {
+    const ids = msgBulkSelectedIds();
+    const rows = ids.map(id => {
+      const u = msgBulkChosenUser(id);
+      return `<li style="margin:3px 0;"><strong>${escapeHtml(msgSchoolName(id))}</strong> — reply contact ${u ? escapeHtml(u.email) : '—'}</li>`;
+    }).join('');
+    return `
+      <div style="margin-top:14px;border:1px solid #D9E7EB;background:#F4FAFA;border-radius:8px;padding:14px 16px;">
+        <div style="font-size:13px;font-weight:700;color:#0D2B4E;margin-bottom:6px;">Send separate conversations to ${ids.length} school${ids.length === 1 ? '' : 's'}?</div>
+        <div style="font-size:12px;color:#5a6e7c;margin-bottom:8px;">Subject: <strong>${escapeHtml(MSG_BULK_SUBJECT.trim())}</strong>. Each school gets its own conversation; they cannot see one another's.</div>
+        <ul style="margin:0 0 12px 18px;padding:0;font-size:12px;color:#0D2B4E;">${rows}</ul>
+        <button type="button" ${MSG_BULK_SENDING ? 'disabled' : ''} onclick="msgBulkConfirmSend()" style="background:#0D2B4E;color:#fff;border:none;border-radius:6px;padding:9px 18px;font-size:13px;font-weight:700;cursor:pointer;">${MSG_BULK_SENDING ? 'Sending…' : `Confirm and send to ${ids.length}`}</button>
+        <button type="button" ${MSG_BULK_SENDING ? 'disabled' : ''} onclick="msgBulkCancelConfirm()" style="background:none;border:none;color:#0D7377;font-weight:700;cursor:pointer;margin-left:10px;">Back</button>
+      </div>`;
+  }
+
+  function renderBulkComposeView() {
+    if (MSG_BULK_RESULTS) { renderBulkResults(); return; }
+    const supportContent = document.getElementById('supportContent');
+    const lbl = 'font-size:12px;font-weight:700;color:#5a6e7c;';
+    const inp = 'width:100%;padding:8px;border-radius:6px;border:1px solid #D9E7EB;margin:6px 0 14px;box-sizing:border-box;font-family:inherit;';
+    supportContent.innerHTML = `
+      <div style="margin-bottom:14px;"><button type="button" onclick="msgAdminCancelBulk()" style="background:none;border:none;color:#0D7377;font-weight:700;cursor:pointer;padding:0;">← Back to conversations</button></div>
+      <div class="school-card" style="padding:20px;max-width:760px;">
+        <div style="font-size:16px;font-weight:700;color:#0D2B4E;margin-bottom:6px;">Message Multiple Schools</div>
+        <div style="font-size:12px;color:#5a6e7c;margin-bottom:16px;">Each ticked school receives its own separate conversation — schools cannot see one another's conversations or replies. All Leadership users linked to a school can see that school's conversation. The same text goes to every school, so keep it general.</div>
+        <label style="${lbl}">Subject</label>
+        <input type="text" id="msgBulkSubject" value="${escapeHtml(MSG_BULK_SUBJECT)}" oninput="msgBulkSetSubject(this.value)" style="${inp}">
+        <label style="${lbl}">Message</label>
+        <textarea id="msgBulkMessage" rows="5" oninput="msgBulkSetMessage(this.value)" style="${inp}">${escapeHtml(MSG_BULK_MESSAGE)}</textarea>
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px;">
+          <label style="${lbl}">Schools</label>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+            <input type="text" placeholder="Filter schools…" value="${escapeHtml(MSG_BULK_FILTER)}" oninput="msgBulkSetFilter(this.value)" style="padding:6px 8px;border-radius:6px;border:1px solid #D9E7EB;font-size:12px;">
+            <button type="button" onclick="msgBulkSelectAllEligible()" style="background:#0D2B4E;color:#fff;border:none;border-radius:6px;padding:6px 12px;font-size:12px;font-weight:700;cursor:pointer;">Select all eligible</button>
+            <button type="button" onclick="msgBulkClearSelection()" style="background:none;border:1px solid #D9E7EB;color:#0D2B4E;border-radius:6px;padding:6px 12px;font-size:12px;font-weight:700;cursor:pointer;">Clear</button>
+          </div>
+        </div>
+        <div id="msgBulkList" style="max-height:340px;overflow-y:auto;border:1px solid #D9E7EB;border-radius:6px;padding:4px 10px;">${MSG_SCHOOLS_REF.map(msgBulkRowHtml).join('')}</div>
+        <div id="msgBulkFooter">${msgBulkFooterHtml()}</div>
+        <div id="msgBulkConfirm">${MSG_BULK_CONFIRM ? msgBulkConfirmHtml() : ''}</div>
+      </div>`;
+  }
+
+  function renderBulkResults() {
+    const supportContent = document.getElementById('supportContent');
+    const rows = MSG_BULK_RESULTS;
+    const created = rows.filter(r => r.result_status === 'created').length;
+    const skipped = rows.filter(r => r.result_status === 'skipped_no_recipient').length;
+    const failed = rows.filter(r => r.result_status === 'error').length;
+    const retryable = skipped + failed;
+    const badge = st => st === 'created'
+      ? '<span style="color:#0D7377;font-weight:700;">Sent</span>'
+      : st === 'skipped_no_recipient'
+        ? '<span style="color:#8a6d00;font-weight:700;">Skipped</span>'
+        : '<span style="color:#7A1F1F;font-weight:700;">Failed</span>';
+    supportContent.innerHTML = `
+      <div class="school-card" style="padding:20px;max-width:760px;">
+        <div style="font-size:16px;font-weight:700;color:#0D2B4E;margin-bottom:6px;">Send results</div>
+        <div style="font-size:13px;color:#0D2B4E;margin-bottom:14px;"><strong>${created}</strong> sent${skipped ? `, <strong>${skipped}</strong> skipped` : ''}${failed ? `, <strong>${failed}</strong> failed` : ''}. Each sent school has its own separate conversation.</div>
+        <table class="mini-table">
+          <thead><tr><th>School</th><th>Result</th><th>Detail</th></tr></thead>
+          <tbody>
+            ${rows.map(r => `<tr>
+              <td>${escapeHtml(r.target_school_id ? msgSchoolName(r.target_school_id) : '—')}</td>
+              <td>${badge(r.result_status)}</td>
+              <td style="font-size:12px;color:#5a6e7c;">${escapeHtml(r.result_detail || '')}</td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+        <div style="display:flex;gap:10px;margin-top:16px;flex-wrap:wrap;">
+          ${retryable ? `<button type="button" onclick="msgBulkRetryFailed()" style="background:#0D2B4E;color:#fff;border:none;border-radius:6px;padding:9px 18px;font-size:13px;font-weight:700;cursor:pointer;">Try the ${retryable} unsent school${retryable === 1 ? '' : 's'} again</button>` : ''}
+          <button type="button" onclick="msgAdminCancelBulk()" style="background:#3DCFB8;color:#0D2B4E;border:none;border-radius:6px;padding:9px 18px;font-size:13px;font-weight:700;cursor:pointer;">Done — back to conversations</button>
+        </div>
+      </div>`;
+  }
+
+  function msgBulkSetSubject(v) { MSG_BULK_SUBJECT = v; MSG_BULK_CONFIRM = false; MSG_BULK_NOTE = ''; msgBulkUpdateFooter(); }
+  function msgBulkSetMessage(v) { MSG_BULK_MESSAGE = v; MSG_BULK_CONFIRM = false; MSG_BULK_NOTE = ''; msgBulkUpdateFooter(); }
+
+  function msgBulkSetFilter(v) {
+    MSG_BULK_FILTER = v || '';
+    const q = MSG_BULK_FILTER.toLowerCase();
+    MSG_SCHOOLS_REF.forEach(s => {
+      const el = document.getElementById('msgBulkRow_' + s.id);
+      if (el) el.style.display = (!q || String(s.name || '').toLowerCase().includes(q)) ? 'flex' : 'none';
+    });
+  }
+
+  function msgBulkToggle(schoolId, checked) {
+    if (MSG_BULK_SENDING) return;
+    MSG_BULK_CONFIRM = false;
+    MSG_BULK_NOTE = '';
+    if (checked) {
+      if (!msgBulkEligible(schoolId)) { msgBulkUpdateRow(schoolId); return; }
+      if (msgBulkSelectedIds().length >= MSG_BULK_MAX) {
+        MSG_BULK_NOTE = `You can select at most ${MSG_BULK_MAX} schools at once.`;
+        msgBulkUpdateRow(schoolId);
+        return;
+      }
+      MSG_BULK_SELECTED[schoolId] = true;
+    } else {
+      delete MSG_BULK_SELECTED[schoolId];
+    }
+    msgBulkUpdateRow(schoolId);
+  }
+
+  function msgBulkChooseContact(schoolId, userId) {
+    const st = MSG_BULK_LEADERS[schoolId];
+    if (!st || MSG_BULK_SENDING) return;
+    st.chosen = userId || '';
+    MSG_BULK_CONFIRM = false;
+    MSG_BULK_NOTE = '';
+    msgBulkUpdateRow(schoolId);
+  }
+
+  function msgBulkSelectAllEligible() {
+    if (MSG_BULK_SENDING) return;
+    const q = MSG_BULK_FILTER.toLowerCase();
+    MSG_BULK_NOTE = '';
+    MSG_BULK_CONFIRM = false;
+    for (const s of MSG_SCHOOLS_REF) {
+      if (MSG_BULK_SELECTED[s.id] || !msgBulkEligible(s.id)) continue;
+      if (q && !String(s.name || '').toLowerCase().includes(q)) continue;
+      if (msgBulkSelectedIds().length >= MSG_BULK_MAX) { MSG_BULK_NOTE = `Stopped at the ${MSG_BULK_MAX}-school limit.`; break; }
+      MSG_BULK_SELECTED[s.id] = true;
+    }
+    msgBulkUpdateAllRows();
+  }
+
+  function msgBulkClearSelection() {
+    if (MSG_BULK_SENDING) return;
+    MSG_BULK_SELECTED = {};
+    MSG_BULK_NOTE = '';
+    MSG_BULK_CONFIRM = false;
+    msgBulkUpdateAllRows();
+  }
+
+  async function msgBulkLoadOne(schoolId) {
+    MSG_BULK_LEADERS[schoolId] = { status: 'loading', users: [], chosen: '' };
+    msgBulkUpdateRow(schoolId);
+    let data = null, error = null;
+    try {
+      const res = await sb.rpc('msg_admin_list_school_leadership', { p_school_id: schoolId });
+      data = res.data; error = res.error;
+    } catch (e) { error = e; }
+    if (error) {
+      console.error(error);
+      MSG_BULK_LEADERS[schoolId] = { status: 'error', users: [], chosen: '' };
+    } else {
+      const seen = {};
+      const users = [];
+      (data || []).forEach(u => {
+        if (u && u.auth_user_id && !seen[u.auth_user_id]) { seen[u.auth_user_id] = true; users.push(u); }
+      });
+      // Exactly one Leadership user -> automatic. Several -> Admin must choose (no ordering assumed).
+      MSG_BULK_LEADERS[schoolId] = { status: 'ready', users, chosen: users.length === 1 ? users[0].auth_user_id : '' };
+    }
+    msgBulkUpdateRow(schoolId);
+  }
+
+  async function msgBulkLoadAllLeaders() {
+    const ids = MSG_SCHOOLS_REF.map(s => s.id);
+    let next = 0;
+    const worker = async () => {
+      while (next < ids.length) {
+        const id = ids[next++];
+        await msgBulkLoadOne(id);
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(5, ids.length) }, worker));
+  }
+
+  function msgBulkRetryLookup(schoolId) { msgBulkLoadOne(schoolId); }
+
+  function msgBulkSendClicked() {
+    if (MSG_BULK_SENDING || msgBulkBlocker()) return;
+    MSG_BULK_CONFIRM = true;
+    MSG_BULK_NOTE = '';
+    msgBulkUpdateFooter();
+  }
+
+  function msgBulkCancelConfirm() {
+    if (MSG_BULK_SENDING) return;
+    MSG_BULK_CONFIRM = false;
+    msgBulkUpdateFooter();
+  }
+
+  async function msgBulkConfirmSend() {
+    if (MSG_BULK_SENDING || msgBulkBlocker()) return;
+    const ids = msgBulkSelectedIds();
+    const targets = ids.map(id => ({ school_id: id, notify_user_id: MSG_BULK_LEADERS[id].chosen }));
+    const subject = MSG_BULK_SUBJECT.trim();
+    const message = MSG_BULK_MESSAGE.trim();
+
+    // In-flight lock: re-render once so every control is disabled while the call runs.
+    MSG_BULK_SENDING = true;
+    MSG_BULK_NOTE = '';
+    renderBulkComposeView();
+
+    let data = null, error = null;
+    try {
+      const res = await sb.rpc('msg_admin_create_threads_bulk', { p_targets: targets, p_message: message, p_subject: subject });
+      data = res.data; error = res.error;
+    } catch (e) { error = e; }
+    MSG_BULK_SENDING = false;
+    MSG_BULK_CONFIRM = false;
+
+    if (error || !Array.isArray(data)) {
+      console.error(error || 'Unexpected bulk response');
+      // A PostgREST error carries a code and means the call was rejected before any thread was created.
+      // Anything else (network drop/timeout) is ambiguous: some or all threads may exist.
+      MSG_BULK_NOTE = (error && error.code)
+        ? 'Nothing was sent — the request was rejected: ' + (error.message || 'see browser console.')
+        : 'The request did not complete, so it is not known whether the conversations were created. Go back to the conversation list and check before sending again.';
+      try { await fetchMessagingData(); } catch (e) { console.error(e); }
+      renderBulkComposeView();
+      return;
+    }
+
+    data.forEach(r => {
+      if (r.result_status === 'created' && r.target_school_id) {
+        MSG_BULK_DONE[r.target_school_id] = true;
+        delete MSG_BULK_SELECTED[r.target_school_id];
+      }
+    });
+    MSG_BULK_RESULTS = data;
+    try { await fetchMessagingData(); } catch (e) { console.error(e); }
+    renderBulkComposeView();
+  }
+
+  // Back to the compose form with ONLY the unsent schools still ticked; sent schools stay locked.
+  function msgBulkRetryFailed() {
+    MSG_BULK_SELECTED = {};
+    (MSG_BULK_RESULTS || []).forEach(r => {
+      if (r.target_school_id && r.result_status !== 'created' && msgBulkEligible(r.target_school_id)) {
+        MSG_BULK_SELECTED[r.target_school_id] = true;
+      }
+    });
+    MSG_BULK_RESULTS = null;
+    MSG_BULK_CONFIRM = false;
+    MSG_BULK_NOTE = '';
+    renderBulkComposeView();
   }
 
   async function msgAdminOpenThread(threadId) {
