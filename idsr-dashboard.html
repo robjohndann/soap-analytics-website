@@ -178,8 +178,33 @@ function byAcademicMap(rows) {
   return byAcademic;
 }
 
+// V66A compatibility aliases: retain legacy IDSR names while accepting the September 2026 format.
+const IDSR_GROUP_ALIASES = {
+  'All pupils': ['All pupils', 'All students'],
+  'All students': ['All students', 'All pupils'],
+};
+const IDSR_MEASURE_ALIASES = {
+  'Mathematics A8': ['Mathematics A8', 'Maths A8'],
+  'Mathematics P8': ['Mathematics P8', 'Maths P8'],
+  'Mathematics grade 4 plus': ['Mathematics grade 4 plus', 'Maths grade 4 plus'],
+  'Mathematics grade 5 plus': ['Mathematics grade 5 plus', 'Maths grade 5 plus'],
+  'English and mathematics grade 4 plus': ['English and mathematics grade 4 plus', 'English and maths grade 4 plus'],
+  'English and mathematics grade 5 plus': ['English and mathematics grade 5 plus', 'English and maths grade 5 plus'],
+};
+function compatibleRows(idsrData, group, measure) {
+  const groups = IDSR_GROUP_ALIASES[group] || [group];
+  const measures = IDSR_MEASURE_ALIASES[measure] || [measure];
+  for (const g of groups) {
+    for (const m of measures) {
+      const rows = idsrData[g + ' - ' + m];
+      if (rows && rows.length) return rows;
+    }
+  }
+  return [];
+}
+
 function getSeries(idsrData, group, measure, yearLabels) {
-  const rows = idsrData[group + ' - ' + measure] || [];
+  const rows = compatibleRows(idsrData, group, measure);
   const byAcademic = byAcademicMap(rows);
   const values = [], natByYear = [], natValsPresent = [];
   for (const yl of yearLabels) {
@@ -194,7 +219,7 @@ function getSeries(idsrData, group, measure, yearLabels) {
 }
 
 function getGapSeries(idsrData, group, measure, yearLabels) {
-  const rows = idsrData[group + ' - ' + measure] || [];
+  const rows = compatibleRows(idsrData, group, measure);
   const byAcademic = byAcademicMap(rows);
   const values = [], natDisByYear = [], natNonDisByYear = [], gapByYear = [], gapTrendByYear = [];
   for (const yl of yearLabels) {
@@ -210,6 +235,41 @@ function getGapSeries(idsrData, group, measure, yearLabels) {
 }
 
 function parsePermanentExclusionsWholeSchool(doc) {
+  // V66A: September 2026 IDSR uses a dedicated #permanent-exclusions panel.
+  // Prefer that structure, but retain the legacy anchor parser as a fallback.
+  const panel = doc.getElementById('permanent-exclusions');
+  if (panel) {
+    const headings = Array.from(panel.querySelectorAll('h3'));
+    const wholeSchoolHeading = headings.find(h => h.textContent.replace(/\s+/g, ' ').trim().toLowerCase() === 'whole school');
+    let tbl = null;
+    if (wholeSchoolHeading) {
+      let cursor = wholeSchoolHeading;
+      while ((cursor = cursor.nextElementSibling)) {
+        if (cursor.tagName === 'H3') break;
+        if (cursor.tagName === 'TABLE') { tbl = cursor; break; }
+        const found = cursor.querySelector && cursor.querySelector('table');
+        if (found) { tbl = found; break; }
+      }
+    }
+    // Some generated reports place the first table immediately before/after the heading.
+    if (!tbl) tbl = panel.querySelector('table.gt_table, table');
+    if (tbl) {
+      const headerCells = Array.from(tbl.querySelectorAll('thead th')).slice(1);
+      const years = headerCells.map(th => th.textContent.replace(/\s+/g, ' ').trim());
+      let schoolCounts = null, natCounts = null;
+      for (const tr of tbl.querySelectorAll('tbody tr')) {
+        const cells = Array.from(tr.querySelectorAll('td,th'));
+        if (cells.length < 2) continue;
+        const label = cells[0].textContent.replace(/\s+/g, ' ').trim().toLowerCase();
+        const vals = cells.slice(1).map(td => toNumber(td.textContent.trim()));
+        if (label.includes('total number') && label.includes('permanent')) schoolCounts = vals;
+        else if (label.includes('national average') && label.includes('permanent')) natCounts = vals;
+      }
+      if (years.length && schoolCounts && natCounts) return { years, schoolCounts, natCounts };
+    }
+  }
+
+  // Legacy pre-September-2026 structure.
   const startAnchor = doc.getElementById('suspensions-and-permanent-exclusions---whole-school');
   const endAnchor = doc.getElementById('suspensions-and-permanent-exclusions---16-18');
   if (!startAnchor) return null;
@@ -233,7 +293,7 @@ function parsePermanentExclusionsWholeSchool(doc) {
   if (years.length === 0) return null;
   let schoolCounts = null, natCounts = null;
   for (const tr of tbl.querySelectorAll('tbody tr')) {
-    const cells = Array.from(tr.querySelectorAll('td'));
+    const cells = Array.from(tr.querySelectorAll('td,th'));
     if (cells.length === 0) continue;
     const label = cells[0].textContent.replace(/\s+/g, ' ').trim().toLowerCase();
     const vals = cells.slice(1).map(td => toNumber(td.textContent.trim()));
@@ -448,13 +508,27 @@ let chartInstance = null;
 function buildYearAxis(idsrData, rowSpecs) {
   const yearSet = new Set();
   for (const spec of rowSpecs) {
-    for (const row of (idsrData[spec.group + ' - ' + spec.measure] || [])) {
+    for (const row of compatibleRows(idsrData, spec.group, spec.measure)) {
       if (!row.datayear) continue;
       if (row.datayear.includes('/')) yearSet.add(row.datayear);
       else if (/^\d+$/.test(row.datayear)) { const y = parseInt(row.datayear, 10); yearSet.add((y - 1) + '/' + String(y).slice(-2)); }
     }
   }
-  return Array.from(yearSet).sort((a, b) => parseInt(a) - parseInt(b));
+  // V66A: where Ofsted publishes more than one attendance period for the
+  // same academic year, keep every period visible but order shorter periods
+  // before longer ones. This makes the longest available period the headline
+  // value instead of allowing DOM/table order to decide it.
+  function periodRank(label) {
+    const halfTerms = label.match(/\((\d+)\s+half\s+terms?\)/i);
+    if (halfTerms) return parseInt(halfTerms[1], 10);
+    const terms = label.match(/\((\d+)\s+terms?\)/i);
+    if (terms) return parseInt(terms[1], 10) * 2;
+    return 99; // legacy/unsuffixed annual values remain the definitive period
+  }
+  return Array.from(yearSet).sort((a, b) => {
+    const yearDiff = parseInt(a, 10) - parseInt(b, 10);
+    return yearDiff || periodRank(a) - periodRank(b);
+  });
 }
 
 function buildAttendanceCard(idsrData, doc) {
@@ -502,7 +576,7 @@ function buildMetricGapCard(idsrData, metrics) {
   const yearSet = new Set();
   for (const m of metrics) {
     for (const cohort of ['All pupils', 'Disadvantaged pupils']) {
-      for (const row of (idsrData[cohort + ' - ' + m.measure] || [])) {
+      for (const row of compatibleRows(idsrData, cohort, m.measure)) {
         if (!row.datayear) continue;
         if (row.datayear.includes('/')) yearSet.add(row.datayear);
         else if (/^\d+$/.test(row.datayear)) { const y = parseInt(row.datayear, 10); yearSet.add((y - 1) + '/' + String(y).slice(-2)); }
