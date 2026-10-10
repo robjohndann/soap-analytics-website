@@ -25,6 +25,22 @@
   .brand span { color: #3DCFB8; }
   .logout-link { color: rgba(255,255,255,0.7); text-decoration: none; font-size: 13px; }
   .logout-link:hover { color: #fff; }
+  /* V67 — unread conversation indicator (teal header link) */
+  .unread-link { color: #3DCFB8; text-decoration: none; font-size: 13px; font-weight: 700; }
+  .unread-link:hover { text-decoration: underline; }
+  /* V67 — Users & Access status badges and Resend button */
+  .acc-badge { display: inline-block; border-radius: 10px; padding: 2px 9px; font-size: 11px; font-weight: 700; white-space: nowrap; }
+  .acc-ok { background: #C7E6C7; color: #1B4D1B; }
+  .acc-pending { background: #FBE1C6; color: #7A4A00; }
+  .acc-unknown { background: #E4E9EE; color: #5A6B80; }
+  .acc-summary { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 12px; color: #5A6B80; margin: 0 0 8px; }
+  .acc-s-ok { color: #1B4D1B; font-weight: 700; } .acc-s-pend { color: #7A4A00; font-weight: 700; }
+  .acc-cat { display: inline-block; border-radius: 4px; padding: 1px 6px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; margin-right: 4px; }
+  .acc-cat-leadership { background: #D6E4F5; color: #0D2B4E; } .acc-cat-contributor { background: #D9F3EF; color: #0D5A52; } .acc-cat-viewer { background: #EDE4F5; color: #4A2B6B; } .acc-cat-other { background: #E4E9EE; color: #5A6B80; }
+  table.acc-table td { vertical-align: top; }
+  .acc-resend-btn { background: #0D7377; color: #fff; border: none; border-radius: 6px; padding: 5px 12px; font-size: 12px; font-weight: 700; cursor: pointer; white-space: nowrap; font-family: Arial, Helvetica, sans-serif; }
+  .acc-resend-btn:hover:not(:disabled) { background: #0a5c5f; }
+  .acc-resend-btn:disabled { opacity: 0.6; cursor: not-allowed; }
 
   .wrap { max-width: 1400px; margin: 40px auto; padding: 0 20px; }
   .page-title { font-size: 22px; color: #fff; margin-bottom: 6px; }
@@ -163,6 +179,7 @@
   <div style="display:flex;align-items:center;gap:14px;">
     <a href="index.html"><img src="images/logo-navy.png" alt="SOAP Analytics" style="height:36px;width:auto;border-radius:6px;display:block;"></a>
     <span style="font-weight:700;font-size:15px;">— Admin</span>
+    <a href="#messagesSection" id="msgUnreadLink" class="unread-link" style="display:none;" onclick="msgUnreadOpen(event); return false;"></a>
   </div>
   <a href="#" class="logout-link" onclick="logout(event);">Log out</a>
 </header>
@@ -200,7 +217,7 @@
     <div class="status-msg">Checking your access…</div>
   </div>
 
-  <div class="page-title">School Messages</div>
+  <div class="page-title" id="messagesSection">School Messages</div>
   <div class="page-sub">Conversations with schools, most recent activity first, across every school.</div>
   <div id="supportContent" style="margin-bottom:40px;">
     <div class="status-msg">Checking your access…</div>
@@ -465,6 +482,7 @@
     card.querySelectorAll('.tab-panel').forEach(panel => panel.classList.remove('active'));
     document.getElementById('panel-' + schoolId + '-' + tabKey).classList.add('active');
     if (tabKey === 'users') ensureViewersLoaded(schoolId); // V64 Stage 5 — lazy-load Viewers on first open
+    if (tabKey === 'users') ensureAccessLoaded(schoolId);  // V67 — lazy-load names/emails/activation status
   }
 
   // Groups the 22 existing tabs into 5 top-level headings (School Setup,
@@ -787,6 +805,8 @@
     MSG_THREADS = threadsRes.data || [];
     MSG_ALL_MESSAGES = supportRes.data || [];
     renderSupportContent();
+    refreshUnreadFromLocal();   // V67 — header unread indicator
+    startUnreadPolling();       // V67 — idempotent; reconciles with the server every 60s
 
     // Users & Access: shows role and how long each membership has existed.
 
@@ -913,6 +933,11 @@
         `;
       }
 
+      // V67 — when the admin-only lookup has loaded, replace the V66 table with
+      // Name / Email / School & role / Status / Resend. Otherwise the V66 table
+      // above is kept exactly as it was (plus a status line explaining why).
+      membersHtml = accessMembersHtml(s, membersHtml);
+
       // V60: Additional Contributors — grouped by person, since the same
       // contributor can hold multiple section grants at this school.
       let contributorsHtml = '';
@@ -923,8 +948,8 @@
           byPerson[g.auth_user_id].sections.push(g.section);
         });
         contributorsHtml = `
-          <h4 style="margin:16px 0 6px;font-size:13px;color:#0D2B4E;">Additional Contributors</h4>
-          <table class="mini-table">
+          <details style="margin-top:14px;"><summary style="cursor:pointer;font-size:13px;font-weight:700;color:#0D2B4E;">Additional Contributors — section grants (detail)</summary>
+          <table class="mini-table" style="margin-top:6px;">
             <thead><tr><th>Name</th><th>Email</th><th>Section(s)</th></tr></thead>
             <tbody>
               ${Object.values(byPerson).map(p => `
@@ -935,7 +960,7 @@
                 </tr>
               `).join('')}
             </tbody>
-          </table>
+          </table></details>
         `;
       }
 
@@ -950,7 +975,7 @@
     // to refresh a single school's membership block. Re-assigned on every
     // loadAdmin() run (including the post-save re-run), so it always points at
     // the current closure's schoolUsers array.
-    USERS_ACCESS_HOOKS = { schools, schoolUsers, renderFragment: renderUsersAccessFragment };
+    USERS_ACCESS_HOOKS = { schools, schoolUsers, sectionAccessRows, renderFragment: renderUsersAccessFragment };
 
     renderInviteSchoolOptions(schools);
 
@@ -1641,6 +1666,7 @@
       msg.style.color = '#0D7377';
       msg.textContent = `Invitation sent — ${email} linked to ${data.school_name || 'the selected school'} as ${data.role || role}.`;
       document.getElementById('inviteEmail').value = '';
+      reloadAccessAfterMembershipChange(school_id); // V67 — new user appears in Users & Access
     } catch (err) {
       console.error(err);
       msg.style.color = '#B3261E';
@@ -1648,6 +1674,255 @@
     } finally {
       btn.disabled = false;
       btn.textContent = 'Send Invitation';
+    }
+  }
+
+  // ----------------------------------------------------------------------
+  // V67 — Users & Access: name, email, school/role, activation status and
+  // Resend Invitation.
+  //
+  // DATA SOURCE. The browser may not read auth.users and school_users has no
+  // email/name/status columns, so this reads ONLY the admin-only RPC
+  // admin_list_school_access(p_school_id) (backend requirement — see
+  // V67_Backend_Requirements.md). Expected row fields: auth_user_id, role,
+  // email, full_name (nullable), is_activated (boolean). If the RPC is not
+  // installed the V66 table is left exactly as it was and no Resend button is
+  // shown (eligibility cannot be known without it) — nothing is guessed.
+  //
+  // RESEND. The ONLY action is sb.functions.invoke('admin-resend-invitation',
+  // { auth_user_id, school_id }). Admin check, school-membership check,
+  // activation check and the 15-minute cooldown are enforced by that function;
+  // none of them is reproduced or bypassed here. The button is shown only when
+  // the RPC says is_activated === false, purely as a convenience.
+  // ----------------------------------------------------------------------
+  const ACCESS_STATE = {};       // schoolId -> { status: loading|ready|unavailable|error, rows: [], error: '' }
+  let ACCESS_RPC_MISSING = false; // set once the RPC is found not to exist, so it is not retried per school
+  const RESEND_INFLIGHT = {};    // 'schoolId:userId' -> true while a request is running
+  const RESEND_DONE = {};        // 'schoolId:userId' -> 'HH:MM' once resent during this page session
+
+  function accessKey(schoolId, userId) { return schoolId + ':' + userId; }
+
+  function accessRpcMissing(err) {
+    return !!err && (err.code === 'PGRST202' || err.code === '42883' ||
+      /could not find the function|does not exist/i.test(String(err.message || '')));
+  }
+
+  function accessBadge(row) {
+    if (row.is_activated === true) return '<span class="acc-badge acc-ok">Activated</span>';
+    if (row.is_activated === false) return '<span class="acc-badge acc-pending">Not activated</span>';
+    return '<span class="acc-badge acc-unknown">Unknown</span>';
+  }
+
+  // V67 (redesign) — one account-management table per school combining
+  // Leadership, Contributors and Viewers. Rows are the school's school_users
+  // links (+ any contributor who only has section grants). Name/email/status
+  // come from the admin-only RPC when installed; otherwise the table still
+  // renders from data this page already loads (section_access names/emails),
+  // with status "Unknown" and no Resend button — nothing is guessed.
+  const ACCESS_LEADERSHIP = ['Headteacher', 'Executive Headteacher', 'CEO', 'School Improvement Director'];
+  function accessCategory(role, hasGrants) {
+    if (ACCESS_LEADERSHIP.indexOf(role) !== -1) return 'Leadership';
+    if (role === 'Viewer') return 'Viewer';
+    if (role === 'Contributor' || hasGrants) return 'Contributor';
+    return 'Other';
+  }
+  const ACCESS_CAT_ORDER = { Leadership: 0, Contributor: 1, Viewer: 2, Other: 3 };
+
+  function accessBuildRows(schoolId, st) {
+    const hooks = USERS_ACCESS_HOOKS || {};
+    const members = (hooks.schoolUsers || []).filter(u => u.school_id === schoolId);
+    const grants = (hooks.sectionAccessRows || []).filter(g => g.school_id === schoolId);
+    const rpc = {};
+    ((st && st.rows) || []).forEach(r => { rpc[r.auth_user_id] = r; });
+    const byId = {};
+    const ensure = id => byId[id] || (byId[id] = { auth_user_id: id, role: null, email: null, full_name: null, is_activated: null, sections: [], fromRpc: false });
+    members.forEach(u => { ensure(u.auth_user_id).role = u.role ?? null; });
+    grants.forEach(g => {
+      const r = ensure(g.auth_user_id);
+      if (g.contributor_name && !r.full_name) r.full_name = g.contributor_name;
+      if (g.contributor_email && !r.email) r.email = g.contributor_email;
+      if (g.section && r.sections.indexOf(g.section) === -1) r.sections.push(g.section);
+    });
+    Object.keys(rpc).forEach(id => {            // RPC (authoritative) overrides / extends
+      const x = rpc[id], r = ensure(id);
+      r.fromRpc = true;
+      if (x.role) r.role = x.role;
+      if (x.email) r.email = x.email;
+      if (x.full_name) r.full_name = x.full_name;
+      r.is_activated = x.is_activated === true ? true : x.is_activated === false ? false : null;
+    });
+    return Object.values(byId).map(r => {
+      r.category = accessCategory(r.role, r.sections.length > 0);
+      return r;
+    }).sort((a, b) => ACCESS_CAT_ORDER[a.category] - ACCESS_CAT_ORDER[b.category] ||
+      String(a.full_name || a.email || '').toLowerCase().localeCompare(String(b.full_name || b.email || '').toLowerCase()));
+  }
+
+  function accessMembersHtml(school, fallbackHtml) {
+    const schoolId = school.id;
+    const st = ACCESS_STATE[schoolId];
+    if (!st) return fallbackHtml;
+    const rows = accessBuildRows(schoolId, st);
+    if (!rows.length) {
+      return '<div class="school-meta">No users linked to this school yet. Use Invite Subscriber below to add one.</div>';
+    }
+    const ready = st.status === 'ready';
+    let note = '';
+    if (st.status === 'loading') note = '<div class="school-meta" style="margin:0 0 8px;">Loading activation status…</div>';
+    else if (st.status === 'unavailable') note = '<div style="font-size:12px;color:#8A5A00;margin:0 0 8px;font-weight:700;">Activation status and Resend Invitation need the admin-only backend function <code>admin_list_school_access</code>, which is not installed yet. Names and emails shown are only those recorded for contributors.</div>';
+    else if (st.status === 'error') note = `<div style="font-size:12px;color:#B3261E;margin:0 0 8px;font-weight:700;">Could not load activation status: ${escapeHtml(st.error || 'unknown error')} <button type="button" onclick="accessRetry('${escapeHtml(schoolId)}')" style="margin-left:8px;background:#EFF3F6;color:#0D2B4E;border:none;border-radius:6px;padding:4px 10px;font-size:12px;font-weight:700;cursor:pointer;">Retry</button></div>`;
+    const n = c => rows.filter(r => r.category === c).length;
+    const act = rows.filter(r => r.is_activated === true).length;
+    const pend = rows.filter(r => r.is_activated === false).length;
+    const summary = `<div class="acc-summary"><span style="color:#0D2B4E;font-weight:700;">${escapeHtml(school.name || 'School')}</span><span><b>${rows.length}</b> account${rows.length === 1 ? '' : 's'}</span><span>${n('Leadership')} leadership</span><span>${n('Contributor')} contributor${n('Contributor') === 1 ? '' : 's'}</span><span>${n('Viewer')} viewer${n('Viewer') === 1 ? '' : 's'}</span>` +
+      (ready ? `<span class="acc-s-ok">${act} activated</span><span class="acc-s-pend">${pend} not activated</span>` : '') + '</div>';
+    const body = rows.map(r => {
+      const key = accessKey(schoolId, r.auth_user_id);
+      const eligible = ready && r.fromRpc && r.is_activated === false && !!r.email;
+      const done = RESEND_DONE[key];
+      const busy = !!RESEND_INFLIGHT[key];
+      let action = '<span style="color:#8FA0B3;">—</span>';
+      if (eligible) {
+        action = `<button type="button" class="acc-resend-btn" data-school-id="${escapeHtml(schoolId)}" data-user-id="${escapeHtml(r.auth_user_id)}" data-email="${escapeHtml(r.email)}" onclick="accessResend(this)" ${(done || busy) ? 'disabled' : ''} aria-label="Resend invitation to ${escapeHtml(r.email)}">${done ? 'Sent ✓' : busy ? 'Sending…' : 'Resend Invitation'}</button>` +
+          `<div id="access-msg-${escapeHtml(schoolId)}-${escapeHtml(r.auth_user_id)}" style="font-size:11px;font-weight:700;margin-top:4px;min-height:14px;${done ? 'color:#1A7A6E;' : ''}">${done ? 'Invitation resent at ' + escapeHtml(done) + '.' : ''}</div>`;
+      } else if (r.category === 'Viewer') {
+        action = '<span style="font-size:11px;color:#5A6B80;">Manage in Viewer Tracker</span>';
+      }
+      const statusCell = ready ? accessBadge(r) : '<span class="acc-badge acc-unknown">' + (st.status === 'loading' ? 'Checking…' : 'Unknown') + '</span>';
+      return `
+        <tr>
+          <td data-label="Name">${r.full_name ? escapeHtml(r.full_name) : '<span style="color:#8FA0B3;">—</span>'}</td>
+          <td data-label="Email" style="word-break:break-all;">${r.email ? escapeHtml(r.email) : '<span style="color:#8FA0B3;">—</span>'}</td>
+          <td data-label="Role"><span class="acc-cat acc-cat-${r.category.toLowerCase()}">${r.category}</span> ${escapeHtml(r.role ?? '—')}${r.sections.length ? `<div style="font-size:11px;color:#5A6B80;margin-top:2px;">${r.sections.map(escapeHtml).join(', ')}</div>` : ''}</td>
+          <td data-label="Status">${statusCell}</td>
+          <td data-label="Actions">${action}</td>
+        </tr>
+        <tr class="acc-id-row"><td colspan="5" style="font-family:monospace;font-size:10px;color:#8FA0B3;padding-top:0;">Account ID: ${escapeHtml(r.auth_user_id)}</td></tr>`;
+    }).join('');
+    return note + summary + `
+      <div style="overflow-x:auto;">
+      <table class="mini-table acc-table">
+        <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Activation status</th><th>Actions</th></tr></thead>
+        <tbody>${body}</tbody>
+      </table></div>
+      <div style="font-size:11px;color:#5A6B80;margin-top:8px;">“Resend Invitation” appears only for accounts that have not yet been activated; the server applies its own permission checks and a 15-minute resend cooldown. Add or remove Viewers in the Viewer Tracker below; invite new users with Invite Subscriber.</div>`;
+  }
+
+  // Re-renders just one school's membership block using the real fragment renderer.
+  function rerenderMembersBlock(schoolId) {
+    const hooks = USERS_ACCESS_HOOKS;
+    if (!hooks) return;
+    const school = hooks.schools.find(x => x.id === schoolId);
+    const target = document.getElementById('users-members-' + schoolId);
+    if (!school || !target) return;
+    const tmp = document.createElement('div');
+    tmp.innerHTML = hooks.renderFragment(school);
+    const fresh = tmp.querySelector('#users-members-' + schoolId);
+    if (fresh) target.innerHTML = fresh.innerHTML;
+  }
+
+  function ensureAccessLoaded(schoolId) {
+    const st = ACCESS_STATE[schoolId];
+    if (st && (st.status === 'loading' || st.status === 'ready' || st.status === 'unavailable')) return;
+    loadSchoolAccess(schoolId);
+  }
+
+  function accessRetry(schoolId) { loadSchoolAccess(schoolId); }
+
+  async function loadSchoolAccess(schoolId) {
+    if (ACCESS_RPC_MISSING) {
+      ACCESS_STATE[schoolId] = { status: 'unavailable', rows: [], error: '' };
+      rerenderMembersBlock(schoolId);
+      return;
+    }
+    ACCESS_STATE[schoolId] = { status: 'loading', rows: [], error: '' };
+    rerenderMembersBlock(schoolId);
+    try {
+      const { data, error } = await sb.rpc('admin_list_school_access', { p_school_id: schoolId });
+      if (error) throw error;
+      ACCESS_STATE[schoolId] = { status: 'ready', rows: Array.isArray(data) ? data : [], error: '' };
+    } catch (err) {
+      if (accessRpcMissing(err)) {
+        ACCESS_RPC_MISSING = true;
+        ACCESS_STATE[schoolId] = { status: 'unavailable', rows: [], error: '' };
+      } else {
+        console.error('Could not load Users & Access details:', err);
+        ACCESS_STATE[schoolId] = { status: 'error', rows: [], error: (err && err.message) || 'unknown error' };
+      }
+    }
+    rerenderMembersBlock(schoolId);
+  }
+
+  // After the V64 membership refresh or a new invitation, the enhanced table must be re-read.
+  function markAccessRefreshing(schoolId) {
+    const st = ACCESS_STATE[schoolId];
+    if (st && st.status === 'ready') ACCESS_STATE[schoolId] = { status: 'loading', rows: [], error: '' };
+  }
+  function reloadAccessAfterMembershipChange(schoolId) {
+    const st = ACCESS_STATE[schoolId];
+    if (st && (st.status === 'ready' || st.status === 'loading')) loadSchoolAccess(schoolId);
+  }
+
+  function setAccessMsg(schoolId, userId, text, kind) {
+    const el = document.getElementById('access-msg-' + schoolId + '-' + userId);
+    if (!el) return;
+    el.style.color = kind === 'error' ? '#B3261E' : kind === 'ok' ? '#1A7A6E' : '#5A6B80';
+    el.textContent = text;
+  }
+
+  // Best available human-readable reason for a failed function call.
+  async function resendErrorDetail(error) {
+    let status = null;
+    let detail = '';
+    try {
+      const ctx = error && error.context;
+      if (ctx) {
+        status = typeof ctx.status === 'number' ? ctx.status : null;
+        if (typeof ctx.json === 'function') {
+          const body = await ctx.json();
+          if (body) {
+            const d = body.error || body.message;
+            if (typeof d === 'string') detail = d;
+          }
+        }
+      }
+    } catch (_) { /* fall through to generic messages */ }
+    if (detail) return detail;
+    if (status === 401 || status === 403) return 'You are not permitted to do this. Please sign in again as an administrator.';
+    if (status === 404) return 'That user or school link was not found.';
+    if (status === 429) return 'A resend was sent recently. Please wait before trying again.';
+    if (status !== null && status >= 500) return 'The server could not send the invitation. Please try again shortly.';
+    if (error && error.name === 'FunctionsFetchError') return 'Network problem — the request may not have reached the server. Please check your connection and try again.';
+    return (error && error.message) || 'Unknown error';
+  }
+
+  async function accessResend(btn) {
+    const schoolId = btn.dataset.schoolId;
+    const userId = btn.dataset.userId;
+    const email = btn.dataset.email || 'this user';
+    const key = accessKey(schoolId, userId);
+    if (RESEND_INFLIGHT[key] || RESEND_DONE[key]) return; // a second click while sending / after sending does nothing
+    RESEND_INFLIGHT[key] = true;
+    btn.disabled = true;
+    btn.textContent = 'Sending…';
+    setAccessMsg(schoolId, userId, 'Sending invitation…', 'info');
+    try {
+      const { data, error } = await sb.functions.invoke('admin-resend-invitation', {
+        body: { auth_user_id: userId, school_id: schoolId }
+      });
+      if (error) throw new Error(await resendErrorDetail(error));
+      if (data && data.error) throw new Error(String(data.error));
+      const when = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      RESEND_DONE[key] = when;
+      btn.textContent = 'Sent ✓';
+      setAccessMsg(schoolId, userId, 'Invitation resent to ' + email + ' at ' + when + '.', 'ok');
+    } catch (err) {
+      console.error(err);
+      btn.disabled = false;
+      btn.textContent = 'Resend Invitation';
+      setAccessMsg(schoolId, userId, 'Could not resend: ' + err.message, 'error');
+    } finally {
+      delete RESEND_INFLIGHT[key];
     }
   }
 
@@ -1666,6 +1941,84 @@
     ]);
     MSG_THREADS = threadsRes.data || [];
     MSG_ALL_MESSAGES = msgsRes.data || [];
+    refreshUnreadFromLocal(); // V67 — header unread indicator follows every refresh
+  }
+
+  // ----------------------------------------------------------------------
+  // V67 — unread conversation indicator (teal link in the header).
+  // Counts message_threads rows where unread_by_admin is true (one per
+  // conversation). Updates instantly from the loaded data whenever the page
+  // reads/refreshes messages, and reconciles with the server every 60s (and when
+  // the tab becomes visible again) using a head-only count query — the same
+  // SELECT permission this page already uses. The poll never re-renders the
+  // message list, so it cannot disturb a draft; a sequence number discards any
+  // poll result that was requested before a later local change.
+  // ----------------------------------------------------------------------
+  const UNREAD_POLL_MS = 60000;
+  let UNREAD_SEQ = 0;
+  let UNREAD_TIMER = null;
+  let UNREAD_RECONCILE = null;
+  let UNREAD_POLL_BUSY = false;
+  let UNREAD_WARNED = false;
+
+  function setUnreadIndicator(n) {
+    const link = document.getElementById('msgUnreadLink');
+    if (!link) return;
+    if (!(n > 0)) { link.style.display = 'none'; link.textContent = ''; link.removeAttribute('aria-label'); return; }
+    link.textContent = 'Messages (' + n + ' unread)';
+    link.setAttribute('aria-label', n + (n === 1 ? ' unread conversation' : ' unread conversations') + ' — open School Messages');
+    link.style.display = '';
+  }
+
+  function refreshUnreadFromLocal() {
+    UNREAD_SEQ++;
+    setUnreadIndicator((MSG_THREADS || []).filter(t => t && t.unread_by_admin).length);
+    if (UNREAD_TIMER !== null) { clearTimeout(UNREAD_RECONCILE); UNREAD_RECONCILE = setTimeout(pollUnread, 800); }
+  }
+
+  async function pollUnread() {
+    if (UNREAD_POLL_BUSY || document.hidden) return;
+    UNREAD_POLL_BUSY = true;
+    const seq = UNREAD_SEQ;
+    try {
+      const { count, error } = await sb.from('message_threads').select('id', { count: 'exact', head: true }).eq('unread_by_admin', true);
+      if (error) throw error;
+      if (seq === UNREAD_SEQ && typeof count === 'number') setUnreadIndicator(count);
+    } catch (err) {
+      if (!UNREAD_WARNED) { UNREAD_WARNED = true; console.warn('Unread count check failed (will keep retrying):', err); }
+    } finally {
+      UNREAD_POLL_BUSY = false;
+    }
+  }
+
+  function startUnreadPolling() {
+    if (UNREAD_TIMER !== null) return;
+    UNREAD_TIMER = setInterval(pollUnread, UNREAD_POLL_MS);
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) pollUnread(); });
+  }
+
+  // Clicking the indicator jumps to School Messages. If the list view is showing
+  // (not composing, not inside a conversation) it is refreshed first so newly
+  // arrived conversations appear; a failed fetch leaves the current list alone.
+  async function msgUnreadOpen(e) {
+    if (e) e.preventDefault();
+    const target = document.getElementById('messagesSection');
+    if (target && typeof target.scrollIntoView === 'function') target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    if (MSG_BULK_MODE || MSG_COMPOSE_SCHOOL_ID !== null || MSG_ACTIVE_THREAD_ID) return;
+    try {
+      const [threadsRes, msgsRes] = await Promise.all([
+        sb.from('message_threads').select('*'),
+        sb.from('support_messages').select('*')
+      ]);
+      if (threadsRes.error || msgsRes.error) throw (threadsRes.error || msgsRes.error);
+      if (MSG_BULK_MODE || MSG_COMPOSE_SCHOOL_ID !== null || MSG_ACTIVE_THREAD_ID) return; // user moved on while loading
+      MSG_THREADS = threadsRes.data || [];
+      MSG_ALL_MESSAGES = msgsRes.data || [];
+      renderSupportContent();
+      refreshUnreadFromLocal();
+    } catch (err) {
+      console.error('Could not refresh messages:', err);
+    }
   }
 
   function msgSchoolName(schoolId) {
@@ -2238,6 +2591,7 @@
     if (error) { console.error(error); return; }
     const t = MSG_THREADS.find(x => x.id === threadId);
     if (t) t.unread_by_admin = false;
+    refreshUnreadFromLocal(); // V67 — header unread indicator
   }
 
   function msgAdminBackToList() {
@@ -2409,10 +2763,12 @@
     const school = hooks.schools.find(x => x.id === schoolId);
     const target = document.getElementById('users-members-' + schoolId);
     if (!school || !target) return;
+    markAccessRefreshing(schoolId); // V67 — never show a stale enhanced table after a membership change
     const tmp = document.createElement('div');
     tmp.innerHTML = hooks.renderFragment(school);
     const fresh = tmp.querySelector('#users-members-' + schoolId);
     if (fresh) target.innerHTML = fresh.innerHTML;
+    reloadAccessAfterMembershipChange(schoolId); // V67
   }
 
   // After a SUCCESSFUL add/remove: refresh the Viewer list and this school's
