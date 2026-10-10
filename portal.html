@@ -27,6 +27,8 @@
   .logout-link { color: rgba(255,255,255,0.7); text-decoration: none; font-size: 13px; }
   .logout-link:hover { color: #fff; }
   .admin-link { color: #3DCFB8; text-decoration: none; font-size: 13px; font-weight: 600; }
+  .admin-link.unread-link { font-weight: 700; }
+  .admin-link.unread-link:hover { text-decoration: underline; }
 
   .wrap { max-width: 560px; margin: 0 auto; padding: 40px 20px 60px; }
   .eyebrow { color: #3DCFB8; font-size: 11px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; text-align: center; margin-bottom: 6px; }
@@ -96,6 +98,7 @@
     <a href="index.html"><img src="images/logo-navy.png" alt="SOAP Analytics" style="height:36px;width:auto;border-radius:6px;display:block;"></a>
     <a href="admin.html" id="adminLink" class="admin-link" style="display:none;">Admin Dashboard →</a>
     <a href="portal.html" id="switchSchoolLink" class="admin-link" style="display:none;">Switch School →</a>
+    <a href="#panel-support" id="msgUnreadLink" class="admin-link unread-link" style="display:none;" onclick="msgUnreadOpen(event); return false;"></a>
   </div>
   <a href="#" class="logout-link" onclick="logout(event);">Log out</a>
 </header>
@@ -342,6 +345,92 @@
     ]);
     MSG_THREADS = threadsRes.data || [];
     MSG_ALL_MESSAGES = messagesRes.data || [];
+    refreshUnreadFromLocal(); // V67 — header unread indicator follows every refresh
+  }
+
+  // ----------------------------------------------------------------------
+  // V67 — unread conversation indicator (teal link in the header). Leadership
+  // only: counts this school's message_threads rows where unread_by_school is
+  // true (one per conversation). Updates instantly from the loaded data and
+  // reconciles with the server every 60s (and when the tab becomes visible)
+  // with a head-only count query scoped to this school — the same SELECT
+  // permission the page already uses. The poll never re-renders the list, so it
+  // cannot disturb a half-written reply; a sequence number discards any poll
+  // result requested before a later local change.
+  // NOTE: unread_by_school is one flag per conversation for the whole school, so
+  // once any leadership user opens a conversation it is read for all of them.
+  // ----------------------------------------------------------------------
+  const UNREAD_POLL_MS = 60000;
+  let UNREAD_SEQ = 0;
+  let UNREAD_TIMER = null;
+  let UNREAD_RECONCILE = null;
+  let UNREAD_POLL_BUSY = false;
+  let UNREAD_WARNED = false;
+
+  function setUnreadIndicator(n) {
+    const link = document.getElementById('msgUnreadLink');
+    if (!link) return;
+    if (!MSG_SCHOOL_ID || !(n > 0)) { link.style.display = 'none'; link.textContent = ''; link.removeAttribute('aria-label'); return; }
+    link.textContent = 'Messages (' + n + ' unread)';
+    link.setAttribute('aria-label', n + (n === 1 ? ' unread conversation' : ' unread conversations') + ' — open Messages & Support');
+    link.style.display = '';
+  }
+
+  function refreshUnreadFromLocal() {
+    if (!MSG_SCHOOL_ID) return; // not a leadership view of a school: no indicator
+    UNREAD_SEQ++;
+    setUnreadIndicator((MSG_THREADS || []).filter(t => t && t.unread_by_school).length);
+    if (UNREAD_TIMER !== null) { clearTimeout(UNREAD_RECONCILE); UNREAD_RECONCILE = setTimeout(pollUnread, 800); }
+  }
+
+  async function pollUnread() {
+    if (!MSG_SCHOOL_ID || UNREAD_POLL_BUSY || document.hidden) return;
+    UNREAD_POLL_BUSY = true;
+    const seq = UNREAD_SEQ;
+    try {
+      const { count, error } = await sb.from('message_threads').select('id', { count: 'exact', head: true })
+        .eq('school_id', MSG_SCHOOL_ID).eq('unread_by_school', true);
+      if (error) throw error;
+      if (seq === UNREAD_SEQ && typeof count === 'number') setUnreadIndicator(count);
+    } catch (err) {
+      if (!UNREAD_WARNED) { UNREAD_WARNED = true; console.warn('Unread count check failed (will keep retrying):', err); }
+    } finally {
+      UNREAD_POLL_BUSY = false;
+    }
+  }
+
+  function startUnreadPolling() {
+    if (UNREAD_TIMER !== null) return;
+    UNREAD_TIMER = setInterval(pollUnread, UNREAD_POLL_MS);
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) pollUnread(); });
+  }
+
+  // Clicking the indicator opens the existing Messages & Support section (without
+  // ever closing it) and scrolls to it. If the conversation list is showing it is
+  // refreshed first so newly arrived conversations appear; a failed fetch leaves
+  // the current list alone.
+  async function msgUnreadOpen(e) {
+    if (e) e.preventDefault();
+    const bar = document.getElementById('bar-support');
+    const panel = document.getElementById('panel-support');
+    if (!bar || !panel) return;
+    if (!panel.classList.contains('open')) toggleAccordion('support');
+    if (typeof bar.scrollIntoView === 'function') bar.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    if (!MSG_SCHOOL_ID || MSG_ACTIVE_THREAD_ID || MSG_COMPOSE_MODE) return;
+    try {
+      const [threadsRes, messagesRes] = await Promise.all([
+        sb.from('message_threads').select('*').eq('school_id', MSG_SCHOOL_ID),
+        sb.from('support_messages').select('*').eq('school_id', MSG_SCHOOL_ID)
+      ]);
+      if (threadsRes.error || messagesRes.error) throw (threadsRes.error || messagesRes.error);
+      if (MSG_ACTIVE_THREAD_ID || MSG_COMPOSE_MODE) return; // user moved on while loading
+      MSG_THREADS = threadsRes.data || [];
+      MSG_ALL_MESSAGES = messagesRes.data || [];
+      renderLeadershipSupportPanel();
+      refreshUnreadFromLocal();
+    } catch (err) {
+      console.error('Could not refresh messages:', err);
+    }
   }
 
   function renderLeadershipSupportPanel() {
@@ -439,6 +528,7 @@
     if (error) { console.error(error); return; }
     const t = MSG_THREADS.find(x => x.id === threadId);
     if (t) t.unread_by_school = false;
+    refreshUnreadFromLocal(); // V67 — header unread indicator
   }
 
   function msgLeadershipBackToList() {
@@ -965,6 +1055,8 @@
       MSG_THREADS = threadsRes.data || [];
       MSG_ALL_MESSAGES = messagesRes.data || [];
       renderLeadershipSupportPanel();
+      refreshUnreadFromLocal();   // V67 — header unread indicator (leadership only)
+      startUnreadPolling();       // V67 — reconciles with the server every 60s
     }
   }
 
