@@ -48,6 +48,7 @@
   }
   .bar.locked { background: #5A6B80; opacity: 0.85; cursor: not-allowed; }
   .bar-label { font-size: 15px; font-weight: 700; }
+  .bar-unread { background: #F5B942; color: #0D2B4E; border-radius: 12px; padding: 3px 11px; font-size: 12px; font-weight: 800; white-space: nowrap; }
   .bar-right { display: flex; align-items: center; gap: 10px; }
   .badge { font-size: 11px; font-weight: 700; padding: 3px 10px; border-radius: 10px; background: rgba(255,255,255,0.18); }
   .badge.live { background: #3DCFB8; color: #0D2B4E; }
@@ -369,6 +370,11 @@
 
   function setUnreadIndicator(n) {
     const link = document.getElementById('msgUnreadLink');
+    const badge = document.getElementById('barUnreadBadge'); // V67 — badge on the Messages & Support accordion bar
+    if (badge) {
+      if (!MSG_SCHOOL_ID || !(n > 0)) { badge.style.display = 'none'; badge.textContent = ''; }
+      else { badge.textContent = n + ' unread'; badge.style.display = ''; }
+    }
     if (!link) return;
     if (!MSG_SCHOOL_ID || !(n > 0)) { link.style.display = 'none'; link.textContent = ''; link.removeAttribute('aria-label'); return; }
     link.textContent = 'Messages (' + n + ' unread)';
@@ -899,7 +905,7 @@
       <div>
         <button type="button" class="bar" id="bar-support" onclick="toggleAccordion('support');">
           <span class="bar-label">Messages &amp; Support</span>
-          <span class="bar-right"><i class="chev" id="chev-support">▾</i></span>
+          <span class="bar-right"><span class="bar-unread" id="barUnreadBadge" style="display:none;" role="status"></span><i class="chev" id="chev-support">▾</i></span>
         </button>
         <div class="panel" id="panel-support">
           ${isHeadteacher ? `<div id="supportLeadershipArea"><div style="font-size:13px;color:rgba(255,255,255,0.6);">Loading conversations…</div></div>` : `
