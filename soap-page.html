@@ -56,6 +56,27 @@
   .subpanel:last-child { margin-bottom: 0; }
   .subpanel-title { background: #1A7A6E; color: #fff; font-size: 8px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.2px; padding: 2px 5px; }
 
+  /* V68 — previous Ofsted grades: deliberately NOT coloured with the rating-scale palette, so the 2019 and 2025 frameworks are never implied to be equivalent */
+  .hist-grade { font-weight: 700; }
+  .hist-grade-outstanding { background: #D8EAF8 !important; color: #174E80 !important; }
+  .hist-grade-good, .hist-grade-effective { background: #C5E7D3 !important; color: #155D39 !important; }
+  .hist-grade-requires-improvement { background: #FFF0C4 !important; color: #805A00 !important; }
+  .hist-grade-inadequate, .hist-grade-not-effective { background: #F8D4D4 !important; color: #8B2525 !important; }
+  table.mini.narrow-labels td.hist-grade { max-width: 72px; white-space: normal; line-height: 1.1; }
+  table.mini.hist-selfeval td:not(.rowlabel) { max-width: 72px; white-space: normal; line-height: 1.1; }
+  .hist-meta { font-size: 8px; color: #FFFFFF; background: #167D77; padding: 4px 8px; border-radius: 4px; margin: 4px auto 6px; text-align: center; font-weight: 700; width: fit-content; max-width: 100%; }
+  .hist-warn { font-size: 7.5px; color: #8A5A00; padding: 1px 4px; text-align: center; }
+  /* V68 Ofsted-only alignment: leave row labels left-aligned. */
+  .ofsted-data-grid table.mini td { vertical-align: middle; }
+  .ofsted-data-grid table.mini td:not(.rowlabel) { text-align: center; }
+  /* Ofsted data only: equal top/bottom padding and stable line box for true vertical centring. */
+  .ofsted-data-grid table.mini td { vertical-align: middle !important; padding-top: 3px; padding-bottom: 3px; line-height: 1.3; }
+  .ofsted-data-grid table.mini td:not(.rowlabel) { text-align: center !important; }
+  .ofsted-modal-date { font-size: 16px; margin-left: 10px; vertical-align: middle; }
+  /* V68: the zoomed badge must override the compact card's 9px date styling. */
+  .panel-modal-header .ofsted-header-date.ofsted-modal-date { font-size: 16px; line-height: 1.2; padding: 3px 7px; vertical-align: middle; }
+  .ofsted-header-date { display:inline-block; margin-right:7px; padding:1px 4px; border-radius:2px; background:#167D77; color:#fff; font-size:9px; font-weight:700; text-transform:none; letter-spacing:0; }
+  .ofsted-header-right { float:right; opacity:0.95; font-size:7px; text-transform:none; letter-spacing:0; }
   table.mini { width: 100%; border-collapse: collapse; font-size: 8px; background: #fff; }
   table.mini th { background: #1B2A4A; color: #fff; padding: 1px 4px; font-weight: 600; white-space: nowrap; text-align: center; }
   table.mini .gcse-divider { border-left: 2px solid #0D7377; }
@@ -384,7 +405,22 @@
     const source = document.getElementById(id);
     if (!source) return;
     document.getElementById('panelModalBody').innerHTML = source.innerHTML;
-    document.getElementById('panelModalTitle').textContent = title || '';
+    const modalTitle = document.getElementById('panelModalTitle');
+    modalTitle.textContent = title || '';
+    // V68: show the inspected date in the zoom header for either Ofsted framework.
+    if (title === 'Ofsted & Self-Evaluation' || title === 'Ofsted &amp; Self-Evaluation' || title === 'Ofsted vs Self-Evaluation') {
+      // The Ofsted source is a sibling of its header inside a .panel,
+      // not inside a .subpanel. Read only the immediately preceding header.
+      const header = source.previousElementSibling;
+      const dateBadge = header && header.classList.contains('subpanel-title')
+        ? header.querySelector('.ofsted-header-date') : null;
+      if (dateBadge) {
+        const dateCopy = dateBadge.cloneNode(true);
+        dateCopy.classList.add('ofsted-modal-date');
+        modalTitle.appendChild(document.createTextNode('  '));
+        modalTitle.appendChild(dateCopy);
+      }
+    }
     const keySection = TITLE_TO_KEY_SECTION[title];
     const keySlot = document.getElementById('panelModalKeySlot');
     keySlot.innerHTML = keySection
@@ -557,7 +593,7 @@
       return;
     }
 
-    const [schoolRes, contextRes, ofstedRes, periodsRes, safeguardingRes, inclusionRes, curriculumRes, achievementRes, assessRes, attendanceRes, pdwRes, leadershipRes, financeRes, resourceStatsRes] = await Promise.all([
+    const [schoolRes, contextRes, ofstedRes, periodsRes, safeguardingRes, inclusionRes, curriculumRes, achievementRes, assessRes, attendanceRes, pdwRes, leadershipRes, financeRes, resourceStatsRes, histOfstedRes] = await Promise.all([
       sb.from('schools').select('*').eq('id', schoolId).maybeSingle(),
       sb.from('context_data').select('*').eq('school_id', schoolId),
       sb.from('ofsted_judgements').select('*').eq('school_id', schoolId),
@@ -571,7 +607,8 @@
       sb.from('pdw_data').select('*').eq('school_id', schoolId),
       sb.from('leadership_governance_data').select('*').eq('school_id', schoolId),
       sb.from('finance_data').select('*').eq('school_id', schoolId),
-      sb.from('resource_stats').select('*')
+      sb.from('resource_stats').select('*'),
+      sb.from('historical_ofsted_judgements').select('*').eq('school_id', schoolId) // V68 — admin-only via RLS; read-only here
     ]);
 
     const school = schoolRes.data;
@@ -588,6 +625,13 @@
     const leadershipData = leadershipRes.data || [];
     const financeData = financeRes.data || [];
     const resourceStats = resourceStatsRes.data || [];
+    // V68 — previous (2019 framework) Ofsted grades. Used ONLY while inspection_type is exactly
+    // "No Inspection Under New Framework"; any other value (including a new-framework inspection) ignores them.
+    const SHOW_HIST_OFSTED = !!school && school.inspection_type === 'No Inspection Under New Framework';
+    const histOfstedRows = (histOfstedRes && histOfstedRes.data) || [];
+    const histOfstedFailed = !!(histOfstedRes && histOfstedRes.error);
+    if (histOfstedFailed) console.error('historical_ofsted_judgements fetch failed:', histOfstedRes.error);
+    const histOfstedDate = (histOfstedRows.find(r => r.inspection_date) || {}).inspection_date || null;
     if (resourceStatsRes.error) console.error('resource_stats fetch failed — check the read-access RLS policy has been run:', resourceStatsRes.error);
     if (!school) { content.innerHTML = '<div class="status-msg">Couldn\'t find that school\'s record.</div>'; return; }
 
@@ -1101,15 +1145,19 @@
           </div>
         </div>
         <div class="sub-header">
-          <div><strong>${school.name || 'Untitled School'}${school.trust ? ' (' + school.trust + ')' : ''}</strong> &nbsp;·&nbsp; <span class="teal-text">Academic Year: ${school.academic_year || '—'}</span> &nbsp;·&nbsp; <span class="teal-text">Number on Roll: ${ctxVal('Whole School','Number on Roll',PERIODS.find(p=>ctxVal('Whole School','Number on Roll',p))) || '—'}</span> &nbsp;·&nbsp; <span class="teal-text">PAN: ${ctxVal('Whole School','PAN',PERIODS.find(p=>ctxVal('Whole School','PAN',p))) || '—'}</span> &nbsp;·&nbsp; <span class="teal-text">Last Ofsted Inspection: ${ukDate(school.last_inspection_date) || '—'}${school.inspection_type ? ' (' + school.inspection_type + ')' : ''}</span> &nbsp;·&nbsp; <span class="teal-text">URN: ${school.urn || '—'}</span></div>
+          <div><strong>${school.name || 'Untitled School'}${school.trust ? ' (' + school.trust + ')' : ''}</strong> &nbsp;·&nbsp; <span class="teal-text">Academic Year: ${school.academic_year || '—'}</span> &nbsp;·&nbsp; <span class="teal-text">Number on Roll: ${ctxVal('Whole School','Number on Roll',PERIODS.find(p=>ctxVal('Whole School','Number on Roll',p))) || '—'}</span> &nbsp;·&nbsp; <span class="teal-text">PAN: ${ctxVal('Whole School','PAN',PERIODS.find(p=>ctxVal('Whole School','PAN',p))) || '—'}</span> &nbsp;·&nbsp; <span class="teal-text">Last Ofsted Inspection: ${ukDate(SHOW_HIST_OFSTED ? histOfstedDate : school.last_inspection_date) || '—'}${school.inspection_type ? ' (' + school.inspection_type + ')' : ''}</span> &nbsp;·&nbsp; <span class="teal-text">URN: ${school.urn || '—'}</span></div>
           <div>Headteacher: ${school.person_responsible || '—'}</div>
         </div>
     `;
 
     // ---------- BAND 1: OFSTED | CONTEXT | LEADERSHIP & GOVERNANCE ----------
     const ofstedRows = ['Safeguarding','Inclusion','Curriculum & Teaching','Achievement','Attendance & Behaviour','PDW','Leadership & Governance'];
+    const currentOfstedDateBadge = school.last_inspection_date ? `<span class="ofsted-header-date">Inspected ${ukDate(school.last_inspection_date)}</span>` : '';
     const ofstedPanel = panel('Ofsted', `
-      ${subpanel('Ofsted vs Self-Evaluation', miniTable(['Ofsted Grade','Self-Evaluation'], ofstedRows, (area, col) => {
+      <div class="ofsted-data-grid">
+      <div class="subpanel-title" style="cursor:zoom-in;" onclick="openPanelModal('ofsted-current-data', event, 'Ofsted vs Self-Evaluation')">Ofsted vs Self-Evaluation <span class="ofsted-header-right">${currentOfstedDateBadge} 🔍 Zoom</span></div>
+      <div id="ofsted-current-data">
+      ${miniTable(['Ofsted Grade','Self-Evaluation'], ofstedRows, (area, col) => {
         if (col === 'Ofsted Grade') return ofstedVal(area);
         if (col === 'Self-Evaluation' && area === 'Safeguarding') return sgVal('Overall Rating', 'Overall Safeguarding SEF Rating', 'Rating');
         if (col === 'Self-Evaluation' && area === 'Inclusion') return incVal('Overall Rating', 'Overall Inclusion SEF Rating', 'Rating');
@@ -1119,8 +1167,63 @@
         if (col === 'Self-Evaluation' && area === 'PDW') return pdwVal('Overall Rating', 'Overall PDW SEF Rating', 'Rating');
         if (col === 'Self-Evaluation' && area === 'Leadership & Governance') return lgVal('Overall Rating', 'Overall Leadership & Governance SEF Rating', 'Rating');
         return null;
-      }, false, (area, col, v) => (col === 'Ofsted Grade' || (col === 'Self-Evaluation' && ['Safeguarding','Inclusion','Attendance & Behaviour','Curriculum & Teaching','Achievement','PDW','Leadership & Governance'].includes(area))) ? ratingClass(v) : '', 'narrow-labels'))}
+      }, false, (area, col, v) => (col === 'Ofsted Grade' || (col === 'Self-Evaluation' && ['Safeguarding','Inclusion','Attendance & Behaviour','Curriculum & Teaching','Achievement','PDW','Leadership & Governance'].includes(area))) ? ratingClass(v) : '', 'narrow-labels')}
+      </div></div>
     `, 0.85);
+    // V68 — historical mode: previous Ofsted grades (2019 framework) on the left, existing current
+    // self-evaluation (2025 framework) on the right. Judgement areas differ between the frameworks, so
+    // they are shown as two separate tables and are never lined up row-for-row.
+    const HIST_ROWS = ['Overall Effectiveness','Quality of Education','Behaviour & Attitudes','Personal Development','Leadership & Management','Early Years','Sixth Form','Safeguarding'];
+    const histLookup = area => { const r = histOfstedRows.find(x => x.area === area); return r ? r.grading : null; };
+    const selfEvalOf = area => {
+      switch (area) {
+        case 'Safeguarding': return sgVal('Overall Rating', 'Overall Safeguarding SEF Rating', 'Rating');
+        case 'Inclusion': return incVal('Overall Rating', 'Overall Inclusion SEF Rating', 'Rating');
+        case 'Attendance & Behaviour': return attVal('Overall Rating', 'Overall Attendance & Behaviour SEF Rating', 'Rating');
+        case 'Curriculum & Teaching': return curVal('Overall Rating', 'Overall Curriculum & Teaching SEF Rating', 'Rating');
+        case 'Achievement': return achVal('Overall Rating', 'Overall Achievement SEF Rating', 'Rating');
+        case 'PDW': return pdwVal('Overall Rating', 'Overall PDW SEF Rating', 'Rating');
+        case 'Leadership & Governance': return lgVal('Overall Rating', 'Overall Leadership & Governance SEF Rating', 'Rating');
+        default: return null;
+      }
+    };
+    // Optional areas (Overall Effectiveness, Early Years, Sixth Form) are omitted when no grade was entered.
+    const histShown = HIST_ROWS.filter(a => histLookup(a) || !['Overall Effectiveness','Early Years','Sixth Form'].includes(a));
+    const histMetaHtml = histOfstedFailed
+      ? '<div class="hist-warn">Previous grades could not be loaded</div>'
+      : (!histOfstedRows.length
+          ? '<div class="hist-warn">No previous grades entered in School Setup</div>'
+          : '');
+    const histGradeClass = (v) => {
+      const classes = {
+        'Outstanding': 'hist-grade-outstanding',
+        'Good': 'hist-grade-good',
+        'Requires Improvement': 'hist-grade-requires-improvement',
+        'Inadequate': 'hist-grade-inadequate',
+        'Effective': 'hist-grade-effective',
+        'Not effective': 'hist-grade-not-effective'
+      };
+      return v ? 'hist-grade ' + (classes[v] || '') : '';
+    };
+    const histZoomId = 'panel-src-' + (panelCounter++);
+    const historicalDateBadge = histOfstedDate ? `<span class="ofsted-header-date">Inspected ${ukDate(histOfstedDate)}</span>` : '';
+    const ofstedPanelHist = panel('Ofsted &amp; Self-Evaluation', `
+      <div class="subpanel-title" style="cursor:zoom-in;" onclick="openPanelModal('${histZoomId}', event, 'Ofsted &amp; Self-Evaluation')">Ofsted &amp; Self-Evaluation <span class="ofsted-header-right">${historicalDateBadge} 🔍 Zoom</span></div>
+      <div id="${histZoomId}" class="ofsted-data-grid">
+      <div class="subpanel-row">
+        <div class="subpanel" style="flex:1;">
+          <div class="subpanel-title-navy">Previous Ofsted · 2019 framework</div>
+          ${histMetaHtml}
+          ${miniTable(['Grade'], histShown, (area) => histLookup(area), false, (area, col, v) => histGradeClass(v), 'narrow-labels')}
+        </div>
+        <div class="subpanel" style="flex:1;">
+          <div class="subpanel-title-navy">Current self-evaluation · 2025 framework</div>
+          ${miniTable(['Rating'], ofstedRows, (area) => selfEvalOf(area), false, (area, col, v) => ratingClass(v), 'narrow-labels hist-selfeval')}
+        </div>
+      </div>
+      </div>
+    `, 0.95);
+
 
     const contextPanel = panel('Context', `
       <div class="subpanel-row">
@@ -1137,7 +1240,7 @@
 
     const lgRows = ['Leadership Capacity','School Improvement','Quality Assurance','Self-Evaluation','Governance','Governor Visits','Governor Skills Audit'];
 
-    html += `<div class="band">${ofstedPanel}${contextPanel}</div>`;
+    html += `<div class="band">${SHOW_HIST_OFSTED ? ofstedPanelHist : ofstedPanel}${contextPanel}</div>`;
 
     // ---------- BAND 2: SAFEGUARDING | INCLUSION ----------
     const safeguardingPanel = panel('Safeguarding', `

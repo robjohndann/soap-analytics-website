@@ -101,6 +101,7 @@
   table.grid-table input[type="date"] { width: auto; min-width: 150px; }
   table.grid-table select[data-period="Status"] { width: auto; min-width: 170px; }
   table.grid-table select.rating-select { width: 100%; min-width: 190px; }
+  table.grid-table.amend-ofsted-table select { width: 205px; max-width: 100%; }
   table.grid-table input:focus, table.grid-table select:focus { outline: none; border-color: #0D7377; box-shadow: 0 0 0 3px rgba(13,115,119,0.12); }
   table.grid-table input.calculated-cell { background: #E8F4F4; color: #1A7A6E; font-weight: 700; cursor: default; }
 
@@ -1416,6 +1417,20 @@
   const AMEND_PACKAGE_OPTIONS = ['IDSR Intelligence Summary', 'IDSR Intelligence Summary + Dashboard', 'SOAP Performance Summary', 'SOAP Performance Suite'];
   const AMEND_INSPECTION_TYPE_OPTIONS = ['Section 5', 'Section 8', 'Monitoring Visit', 'No Inspection Under New Framework'];
   const AMEND_CONTACT_ROLES = ['Headteacher', "Headteacher's PA", 'Data Lead', 'Data Manager', 'DSL', 'SENDCo', 'Business Manager', 'Office Manager', 'Chair of Governors', 'School Improvement Partner'];
+  const AMEND_HIST_TYPE = 'No Inspection Under New Framework';
+  const AMEND_HIST_GRADES = ['Outstanding', 'Good', 'Requires Improvement', 'Inadequate'];
+  const AMEND_HIST_AREAS = [
+    { label: 'Overall Effectiveness', options: AMEND_HIST_GRADES },
+    { label: 'Quality of Education', options: AMEND_HIST_GRADES },
+    { label: 'Behaviour & Attitudes', options: AMEND_HIST_GRADES },
+    { label: 'Personal Development', options: AMEND_HIST_GRADES },
+    { label: 'Leadership & Management', options: AMEND_HIST_GRADES },
+    { label: 'Early Years', options: AMEND_HIST_GRADES },
+    { label: 'Sixth Form', options: AMEND_HIST_GRADES },
+    { label: 'Safeguarding', options: ['Effective', 'Not effective'] }
+  ];
+  // Each school's historical read is independent of the current-framework data.
+  const AMEND_HIST_STATE = {};
   const AMEND_OFSTED_AREAS = [
     { label: 'Safeguarding', options: ['Met', 'Not Met'] },
     { label: 'Inclusion', options: RATING_OPTIONS_5 },
@@ -2931,53 +2946,142 @@
     showAmendToast('✓ Key Contacts saved');
   }
 
-  function buildAmendOfsted(schoolId) {
-    const school = SCHOOL_AMEND_DATA[schoolId].school;
-    const ofsted = SCHOOL_AMEND_DATA[schoolId].ofsted;
-    const find = area => (ofsted || []).find(o => o.area === area);
+  function amendHistState(schoolId) {
+    return AMEND_HIST_STATE[schoolId] ||= { loaded: false, error: false, rows: [], drafts: {}, dateDraft: null };
+  }
 
+  async function loadAmendHistoricalOfsted(schoolId) {
+    const state = amendHistState(schoolId);
+    state.loaded = false; state.error = false;
+    const container = document.getElementById('amendBody-' + schoolId);
+    container.innerHTML = '<p class="amend-note">Loading Ofsted judgements…</p>';
+    const { data, error } = await sb.from('historical_ofsted_judgements')
+      .select('area,grading,inspection_date').eq('school_id', schoolId);
+    state.error = !!error;
+    if (error) console.error('Historical Ofsted load failed:', error);
+    else {
+      state.rows = data || [];
+      state.loaded = true;
+      state.drafts = {};
+      state.dateDraft = null;
+    }
+    container.innerHTML = buildAmendOfsted(schoolId);
+  }
+
+  function amendOfstedSnapshot(schoolId) {
+    const container = document.getElementById('amendBody-' + schoolId);
+    const table = container.querySelector('.amend-ofsted-table');
+    if (!table) return;
+    const state = amendHistState(schoolId);
+    const key = table.dataset.mode;
+    state.drafts[key] = Object.fromEntries(Array.from(table.querySelectorAll('tr[data-area]'))
+      .map(tr => [tr.dataset.area, tr.querySelector('select').value]));
+    if (key === 'historical') state.dateDraft = document.getElementById('amendHistoricalDate-' + schoolId)?.value ?? '';
+  }
+
+  function amendOfstedTypeChanged(schoolId) {
+    amendOfstedSnapshot(schoolId);
+    const container = document.getElementById('amendBody-' + schoolId);
+    const selected = document.getElementById('amendInspectionType-' + schoolId).value;
+    const lastDate = document.getElementById('amendLastInspectionDate-' + schoolId).value;
+    container.innerHTML = buildAmendOfsted(schoolId, selected, lastDate);
+  }
+
+  function buildAmendOfsted(schoolId, selectedType, selectedDate) {
+    const school = SCHOOL_AMEND_DATA[schoolId].school;
+    const state = amendHistState(schoolId);
+    const inspectionType = selectedType === undefined ? (school.inspection_type || '') : selectedType;
+    const historical = inspectionType === AMEND_HIST_TYPE;
+    const rows = historical ? state.rows : SCHOOL_AMEND_DATA[schoolId].ofsted;
+    const areas = historical ? AMEND_HIST_AREAS : AMEND_OFSTED_AREAS;
+    const draft = state.drafts[historical ? 'historical' : 'current'] || {};
+    const find = area => (rows || []).find(o => o.area === area);
     let html = '<div class="card"><div class="card-head">Ofsted Judgements</div><div class="card-body">';
     html += '<div class="amend-field-grid" style="margin-bottom:16px;">';
-    html += `<div class="field"><label>Inspection Type</label><select id="amendInspectionType-${schoolId}"><option value="">Select…</option>${AMEND_INSPECTION_TYPE_OPTIONS.map(o => `<option${o === school.inspection_type ? ' selected' : ''}>${o}</option>`).join('')}</select></div>`;
-    html += `<div class="field"><label>Last Inspection Date</label><input type="date" id="amendLastInspectionDate-${schoolId}" value="${school.last_inspection_date || ''}"></div>`;
+    html += `<div class="field"><label>Inspection Type</label><select id="amendInspectionType-${schoolId}" onchange="amendOfstedTypeChanged('${schoolId}')"><option value="">Select…</option>${AMEND_INSPECTION_TYPE_OPTIONS.map(o => `<option${o === inspectionType ? ' selected' : ''}>${o}</option>`).join('')}</select></div>`;
+    const date = selectedDate === undefined ? (school.last_inspection_date || '') : selectedDate;
+    html += `<div class="field" style="${historical ? 'display:none' : ''}"><label>Last Inspection Date</label><input type="date" id="amendLastInspectionDate-${schoolId}" value="${date}"></div>`;
     html += '</div>';
-    html += '<table class="grid-table"><thead><tr><th>Area</th><th>Grading</th></tr></thead><tbody>';
-    AMEND_OFSTED_AREAS.forEach(area => {
+    if (historical) {
+      const storedDate = state.rows.find(r => r.inspection_date)?.inspection_date || '';
+      const histDate = state.dateDraft === null ? storedDate : state.dateDraft;
+      html += `<div class="amend-field-grid" style="grid-template-columns:minmax(0,340px);margin-bottom:16px"><div class="field"><label>Previous Ofsted Inspection Date (2019 framework)</label><input type="date" id="amendHistoricalDate-${schoolId}" value="${histDate}" ${!state.loaded ? 'disabled' : ''}></div></div>`;
+      html += '<p class="amend-note">Previous Ofsted judgements (2019 framework). These are separate from the current framework and are not directly comparable.</p>';
+      if (!state.loaded) html += '<p role="alert" style="color:#a33;font-weight:bold">Historical Ofsted grades could not be loaded. Saving is disabled to protect existing records. Refresh and try again.</p>';
+    }
+    html += `<table class="grid-table amend-ofsted-table" data-mode="${historical ? 'historical' : 'current'}"><thead><tr><th>Area</th><th>Grading</th></tr></thead><tbody>`;
+    areas.forEach(area => {
       const row = find(area.label);
-      const current = row ? row.grading : '';
+      const current = Object.prototype.hasOwnProperty.call(draft, area.label) ? draft[area.label] : (row ? row.grading : '');
       html += `<tr data-area="${area.label}"><td class="label-cell">${area.label}</td>`;
-      html += `<td><select><option value="">—</option>${area.options.map(o => `<option${o === current ? ' selected' : ''}>${o}</option>`).join('')}</select></td></tr>`;
+      html += `<td><select ${historical && !state.loaded ? 'disabled' : ''}><option value="">—</option>${area.options.map(o => `<option${o === current ? ' selected' : ''}>${o}</option>`).join('')}</select></td></tr>`;
     });
     html += '</tbody></table></div></div>';
-    html += `<div><button type="button" class="save-amend-btn" onclick="saveAmendOfsted('${schoolId}')">Save Ofsted Judgements Changes</button></div>`;
+    html += `<div><button type="button" class="save-amend-btn" onclick="saveAmendOfsted('${schoolId}')" ${historical && !state.loaded ? 'disabled' : ''}>Save Ofsted Judgements Changes</button></div>`;
     return html;
   }
 
   async function saveAmendOfsted(schoolId) {
     const container = document.getElementById('amendBody-' + schoolId);
-    const inspectionType = document.getElementById(`amendInspectionType-${schoolId}`).value || null;
-    const lastInspectionDate = document.getElementById(`amendLastInspectionDate-${schoolId}`).value || null;
-
-    const { error: schoolErr } = await sb.from('schools').update({ inspection_type: inspectionType, last_inspection_date: lastInspectionDate }).eq('id', schoolId);
-    if (schoolErr) { showAmendToast('⚠ Save failed — see browser console', true); console.error(schoolErr); return; }
-
-    const judgements = Array.from(container.querySelectorAll('tr[data-area]')).map(tr => ({
-      school_id: schoolId,
-      area: tr.dataset.area,
-      grading: tr.querySelector('select').value || null
-    })).filter(j => j.grading);
-
-    const { error: delErr } = await sb.from('ofsted_judgements').delete().eq('school_id', schoolId);
-    if (delErr) { showAmendToast('⚠ Save failed — see browser console', true); console.error(delErr); return; }
-    if (judgements.length) {
-      const { error } = await sb.from('ofsted_judgements').insert(judgements);
-      if (error) { showAmendToast('⚠ Save failed — see browser console', true); console.error(error); return; }
-    }
-    if (SCHOOL_AMEND_DATA[schoolId]) {
-      Object.assign(SCHOOL_AMEND_DATA[schoolId].school, { inspection_type: inspectionType, last_inspection_date: lastInspectionDate });
-      SCHOOL_AMEND_DATA[schoolId].ofsted = judgements;
-    }
-    showAmendToast('✓ Ofsted Judgements saved');
+    const inspectionType = document.getElementById('amendInspectionType-' + schoolId).value || null;
+    const historical = inspectionType === AMEND_HIST_TYPE;
+    const state = amendHistState(schoolId);
+    const inspectionDate = historical ? (document.getElementById('amendHistoricalDate-' + schoolId).value || null) : null;
+    if (historical && !state.loaded) { showAmendToast('⚠ Historical data not loaded — nothing saved', true); return; }
+    const lastInspectionDate = document.getElementById('amendLastInspectionDate-' + schoolId).value || null;
+    const judgements = Array.from(container.querySelectorAll('.amend-ofsted-table tr[data-area]')).map(tr => ({
+      school_id: schoolId, area: tr.dataset.area, grading: tr.querySelector('select').value || null
+    }));
+    const button = container.querySelector('.save-amend-btn');
+    if (button) button.disabled = true;
+    try {
+      if (historical) {
+        const filled = judgements.filter(j => j.grading).map(j => ({ ...j, inspection_date: inspectionDate }));
+        const previous = new Set(state.rows.map(r => r.area));
+        const cleared = judgements.filter(j => !j.grading && previous.has(j.area)).map(j => j.area);
+        if (filled.length) {
+          const { error } = await sb.from('historical_ofsted_judgements').upsert(filled, { onConflict: 'school_id,area' });
+          if (error) throw error;
+        }
+        if (cleared.length) {
+          const { error } = await sb.from('historical_ofsted_judgements').delete().eq('school_id', schoolId).in('area', cleared);
+          if (error) throw error;
+        }
+        state.rows = filled;
+        state.drafts.historical = {};
+        state.dateDraft = null;
+      } else {
+        // Existing V67 behaviour retained for current-framework inspection types.
+        const current = judgements.filter(j => j.grading);
+        const { error: delErr } = await sb.from('ofsted_judgements').delete().eq('school_id', schoolId);
+        if (delErr) throw delErr;
+        if (current.length) {
+          const { error } = await sb.from('ofsted_judgements').insert(current);
+          if (error) throw error;
+        }
+        SCHOOL_AMEND_DATA[schoolId].ofsted = current;
+        state.drafts.current = {};
+      }
+      const { error: schoolErr } = await sb.from('schools').update({
+        inspection_type: inspectionType,
+        // Historical date belongs to historical_ofsted_judgements, not the 2025-framework field.
+        ...(historical ? {} : { last_inspection_date: lastInspectionDate })
+      }).eq('id', schoolId);
+      if (schoolErr) throw schoolErr;
+      Object.assign(SCHOOL_AMEND_DATA[schoolId].school, {
+        inspection_type: inspectionType,
+        ...(historical ? {} : { last_inspection_date: lastInspectionDate })
+      });
+      container.innerHTML = buildAmendOfsted(schoolId);
+      showAmendToast('✓ Ofsted Judgements saved');
+      if (historical && !state.rows.length && inspectionDate) showAmendToast('⚠ Inspection date cannot be stored without at least one historical grade', true);
+    } catch (e) {
+      console.error('Ofsted save failed:', e);
+      showAmendToast('⚠ Save failed — see browser console; refresh before retrying', true);
+      // Partial writes are possible; reload before any retry rather than assuming cached rows are current.
+      state.loaded = false;
+      if (historical) container.innerHTML = buildAmendOfsted(schoolId);
+    } finally { if (button?.isConnected) button.disabled = false; }
   }
 
   function buildAmendPeriods(schoolId) {
@@ -3681,6 +3785,7 @@
       leadership: buildAmendLeadership,
       finance: buildAmendFinance
     };
+    if (section === 'ofsted') { loadAmendHistoricalOfsted(schoolId); return; }
     container.innerHTML = builders[section](schoolId);
     if (section === 'context') recalcAmendContext(schoolId);
   }

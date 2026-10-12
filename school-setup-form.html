@@ -88,6 +88,9 @@
     font-weight: 700;
     color: var(--navy);
   }
+  .hist-note { background: var(--pale); border-left: 4px solid var(--teal); padding: 10px 14px; font-size: 13px; line-height: 1.5; border-radius: 4px; }
+  .hist-msg { font-size: 13px; font-weight: 700; margin-top: 10px; }
+  .hist-msg.err { color: var(--bad); }
   .field .hint {
     font-size: 11px;
     color: var(--muted);
@@ -323,12 +326,29 @@
               <option>No Inspection Under New Framework</option>
             </select>
           </div>
-          <div class="field"><label>Last Inspection Date</label><input type="date" id="lastInspectionDate"></div>
+          <div class="field" id="lastInspectionDateField"><label>Last Inspection Date</label><input type="date" id="lastInspectionDate"></div>
         </div>
+        <div id="newFrameworkOfsted">
         <table class="grid-table">
           <thead><tr><th style="width:40%">Area</th><th>Grading</th></tr></thead>
           <tbody id="ofstedRows"></tbody>
         </table>
+        </div>
+
+        <!-- V68 — previous (2019 framework) Ofsted grades. Shown only while the Inspection Type is exactly
+             "No Inspection Under New Framework"; the new-framework fields above are hidden (not cleared) then. -->
+        <div id="historicalOfstedBlock" style="display:none;">
+          <div class="hist-note"><strong>Previous Ofsted grades (2019 Education Inspection Framework).</strong>
+            Enter the grades from your school's most recent inspection. They are kept safely and shown on your SOAP only until your school is inspected under the new framework — they are never deleted automatically.</div>
+          <div id="historicalOfstedMsg" class="hist-msg" role="status"></div>
+          <div class="field-grid" style="margin:14px 0;">
+            <div class="field"><label>Date of that inspection <span class="hint">(optional)</span></label><input type="date" id="historicalInspectionDate"></div>
+          </div>
+          <table class="grid-table">
+            <thead><tr><th style="width:40%">Area</th><th>Grading</th></tr></thead>
+            <tbody id="historicalOfstedRows"></tbody>
+          </table>
+        </div>
       </div>
     </div>
 
@@ -441,6 +461,103 @@
     tbody.appendChild(tr);
   });
 
+  // ----- V68: previous (2019 EIF) Ofsted grades -----------------------------------------
+  // Stored in public.historical_ofsted_judgements (school_id, inspection_date, area, grading,
+  // updated_at; UNIQUE(school_id, area)). Area/grade strings must match the table's CHECK exactly.
+  const HIST_TYPE = 'No Inspection Under New Framework';
+  const HIST_GRADES = ['Outstanding', 'Good', 'Requires Improvement', 'Inadequate'];
+  const HIST_AREAS = [
+    { area: 'Overall Effectiveness', options: HIST_GRADES },
+    { area: 'Quality of Education', options: HIST_GRADES },
+    { area: 'Behaviour & Attitudes', options: HIST_GRADES },
+    { area: 'Personal Development', options: HIST_GRADES },
+    { area: 'Leadership & Management', options: HIST_GRADES },
+    { area: 'Early Years', options: HIST_GRADES, optional: true },
+    { area: 'Sixth Form', options: HIST_GRADES, optional: true },
+    { area: 'Safeguarding', options: ['Effective', 'Not effective'] },
+  ];
+  let HIST_LOADED = false;      // true only after a successful read of the table for this school
+  let HIST_ORIGINAL = {};       // area -> grading as last loaded/saved (decides which areas may be deleted)
+  (function buildHistoricalRows() {
+    const tb = document.getElementById('historicalOfstedRows');
+    HIST_AREAS.forEach(a => {
+      const tr = document.createElement('tr');
+      tr.dataset.area = a.area;
+      const opts = ['<option value="">—</option>'].concat(a.options.map(o => `<option>${o}</option>`)).join('');
+      tr.innerHTML = `<td class="label-cell">${a.area.replace(/&/g, '&amp;')}${a.optional ? ' <span class="hint">(if applicable)</span>' : ''}</td><td><select>${opts}</select></td>`;
+      tb.appendChild(tr);
+    });
+  })();
+  function histVisible() { return document.getElementById('inspectionType').value === HIST_TYPE; }
+  function histSetMsg(text, isErr) {
+    const el = document.getElementById('historicalOfstedMsg');
+    el.textContent = text || ''; el.className = 'hist-msg' + (isErr ? ' err' : '');
+  }
+  // Hide (never clear) whichever set of fields is not in use; values stay in the DOM.
+  function applyInspectionTypeView() {
+    const hist = histVisible();
+    document.getElementById('historicalOfstedBlock').style.display = hist ? '' : 'none';
+    document.getElementById('newFrameworkOfsted').style.display = hist ? 'none' : '';
+    document.getElementById('lastInspectionDateField').style.display = hist ? 'none' : '';
+  }
+  document.getElementById('inspectionType').addEventListener('change', applyInspectionTypeView);
+
+  // Read-only until the stored grades have loaded, so a failed read can never turn into a save of blanks.
+  function histSetEditable(editable) {
+    document.querySelectorAll('#historicalOfstedBlock select, #historicalOfstedBlock input').forEach(el => { el.disabled = !editable; });
+  }
+  async function loadHistoricalOfsted(schoolId) {
+    HIST_LOADED = false; histSetEditable(false);
+    try {
+      const { data, error } = await sb.from('historical_ofsted_judgements').select('area, grading, inspection_date').eq('school_id', schoolId);
+      if (error) throw error;
+      HIST_ORIGINAL = {};
+      let date = '';
+      (data || []).forEach(r => {
+        HIST_ORIGINAL[r.area] = r.grading;
+        const tr = Array.from(document.querySelectorAll('#historicalOfstedRows tr')).find(el => el.dataset.area === r.area);
+        if (tr && r.grading) tr.querySelector('select').value = r.grading;
+        if (!date && r.inspection_date) date = r.inspection_date;
+      });
+      document.getElementById('historicalInspectionDate').value = date;
+      HIST_LOADED = true; histSetEditable(true); histSetMsg('');
+    } catch (e) {
+      console.error('Could not load previous Ofsted grades:', e);
+      histSetMsg('Your previous Ofsted grades could not be loaded, so this section is locked for this visit to protect what is already saved. Refresh the page to try again. Everything else on this form saves as normal.', true);
+    }
+  }
+
+  // Targeted save: upsert filled areas, delete only areas the user explicitly cleared (and that existed).
+  // Never throws (it runs after other tables have been rewritten); returns a status for the toast.
+  async function saveHistoricalOfsted(schoolId) {
+    if (!histVisible()) return { status: 'skipped_hidden' };     // another inspection type: leave stored grades alone
+    if (!HIST_LOADED) return { status: 'skipped_not_loaded' };   // load failed / not finished: never write
+    try {
+      const date = document.getElementById('historicalInspectionDate').value || null;
+      const now = new Date().toISOString();
+      const filled = [], cleared = [];
+      document.querySelectorAll('#historicalOfstedRows tr').forEach(tr => {
+        const area = tr.dataset.area, g = tr.querySelector('select').value;
+        if (g) filled.push({ school_id: schoolId, area, grading: g, inspection_date: date, updated_at: now });
+        else if (Object.prototype.hasOwnProperty.call(HIST_ORIGINAL, area)) cleared.push(area);
+      });
+      if (filled.length) {
+        const { error } = await sb.from('historical_ofsted_judgements').upsert(filled, { onConflict: 'school_id,area' });
+        if (error) throw error;
+      }
+      if (cleared.length) {
+        const { error } = await sb.from('historical_ofsted_judgements').delete().eq('school_id', schoolId).in('area', cleared);
+        if (error) throw error;
+      }
+      HIST_ORIGINAL = {};
+      filled.forEach(r => { HIST_ORIGINAL[r.area] = r.grading; });
+      return { status: 'saved', dateIgnored: !filled.length && !!date };
+    } catch (e) {
+      console.error('Saving previous Ofsted grades failed:', e);
+      return { status: 'failed' };
+    }
+  }
+
   // --- Supabase connection ---
   const SUPABASE_URL = 'https://caopycszjzrmwhxxvtpx.supabase.co';
   const SUPABASE_KEY = 'sb_publishable_2CTGR0PKyRPpSk59lcr3sA_hvvUDX97';
@@ -521,6 +638,8 @@
       set('inspectionType', school.inspection_type);
       set('lastInspectionDate', school.last_inspection_date);
     }
+    applyInspectionTypeView();                    // V68
+    await loadHistoricalOfsted(schoolId);         // V68 — never throws; locks the section on failure
 
     const { data: contacts } = await sb.from('key_contacts').select('*').eq('school_id', schoolId);
     (contacts || []).forEach(c => {
@@ -1027,6 +1146,12 @@
         if (error) throw error;
       }
 
+      // V68 — previous Ofsted grades: targeted upsert, own failure handling (never aborts the save above).
+      const histResult = await saveHistoricalOfsted(schoolId);
+      const histWarn = histResult.status === 'failed'
+        ? ' Your previous Ofsted grades could not be saved — please try again.'
+        : (histResult.dateIgnored ? ' Note: the inspection date is only kept together with at least one grade.' : '');
+
       // Sync Responsible Person access for every section marked pending
       // above — this now covers BOTH a genuine change this save AND a
       // retry of a section whose sync failed on a previous save, even if
@@ -1099,11 +1224,11 @@
         // sync issue is reported as a warning, not treated as blocking the
         // whole save, so a transient problem granting access can't prevent
         // someone from saving their basic School Setup data at all.
-        showToast('⚠ Saved, but Responsible Person access update failed for: ' + responsiblePersonSyncErrors.join('; '), true);
+        showToast('⚠ Saved, but Responsible Person access update failed for: ' + responsiblePersonSyncErrors.join('; ') + histWarn, true);
         return;
       }
 
-      showToast('✓ School Setup saved to the database');
+      showToast(histResult.status === 'failed' ? '⚠ School Setup saved, but' + histWarn : '✓ School Setup saved to the database' + histWarn, histResult.status === 'failed');
     } catch (err) {
       console.error(err);
       showToast('⚠ Save failed — see browser console for details', true);
