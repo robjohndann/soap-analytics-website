@@ -287,6 +287,10 @@
 </div>
 
 <script>
+  function escapeHtml(value) {
+    return String(value == null ? '' : value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
   const SUPABASE_URL = 'https://caopycszjzrmwhxxvtpx.supabase.co';
   const SUPABASE_KEY = 'sb_publishable_2CTGR0PKyRPpSk59lcr3sA_hvvUDX97';
   const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
@@ -297,14 +301,14 @@
   // cellClassFn(rowLabel, colLabel, value) => optional CSS class to colour that specific cell
   function miniTable(cols, rows, valueFn, wrapHeaders, cellClassFn, extraClass) {
     let html = `<table class="mini${wrapHeaders ? ' wrap-headers' : ''}${extraClass ? ' ' + extraClass : ''}"><thead><tr><th></th>`;
-    cols.forEach(c => html += `<th>${c}</th>`);
+    cols.forEach(c => html += `<th>${escapeHtml(c)}</th>`);
     html += '</tr></thead><tbody>';
     rows.forEach(r => {
-      html += `<tr><td class="rowlabel">${r}</td>`;
+      html += `<tr><td class="rowlabel">${escapeHtml(r)}</td>`;
       cols.forEach((c, idx) => {
         const v = valueFn ? valueFn(r, c, idx) : null;
         const cls = cellClassFn ? (cellClassFn(r, c, v) || '') : '';
-        html += `<td class="${cls}">${v ?? '—'}</td>`;
+        html += `<td class="${cls}">${escapeHtml(v ?? '—')}</td>`;
       });
       html += '</tr>';
     });
@@ -350,12 +354,12 @@
     }
     html += '</tr></thead><tbody>';
     rows.forEach(r => {
-      html += `<tr><td class="rowlabel">${r}</td>`;
+      html += `<tr><td class="rowlabel">${escapeHtml(r)}</td>`;
       cols.forEach((c, idx) => {
         const v = valueFn ? valueFn(r, c, idx) : null;
         const cls = cellClassFn ? (cellClassFn(r, c, v) || '') : '';
         const divider = (idx === trailingStart || (c !== 'Nat' && cols[idx + 1] === 'Nat')) ? ' gcse-divider' : '';
-        html += `<td class="${cls}${divider}">${v ?? '—'}</td>`;
+        html += `<td class="${cls}${divider}">${escapeHtml(v ?? '—')}</td>`;
       });
       html += '</tr>';
     });
@@ -1145,8 +1149,8 @@
           </div>
         </div>
         <div class="sub-header">
-          <div><strong>${school.name || 'Untitled School'}${school.trust ? ' (' + school.trust + ')' : ''}</strong> &nbsp;·&nbsp; <span class="teal-text">Academic Year: ${school.academic_year || '—'}</span> &nbsp;·&nbsp; <span class="teal-text">Number on Roll: ${ctxVal('Whole School','Number on Roll',PERIODS.find(p=>ctxVal('Whole School','Number on Roll',p))) || '—'}</span> &nbsp;·&nbsp; <span class="teal-text">PAN: ${ctxVal('Whole School','PAN',PERIODS.find(p=>ctxVal('Whole School','PAN',p))) || '—'}</span> &nbsp;·&nbsp; <span class="teal-text">Last Ofsted Inspection: ${ukDate(SHOW_HIST_OFSTED ? histOfstedDate : school.last_inspection_date) || '—'}${school.inspection_type ? ' (' + school.inspection_type + ')' : ''}</span> &nbsp;·&nbsp; <span class="teal-text">URN: ${school.urn || '—'}</span></div>
-          <div>Headteacher: ${school.person_responsible || '—'}</div>
+          <div><strong>${escapeHtml(school.name || 'Untitled School')}${school.trust ? ' (' + escapeHtml(school.trust) + ')' : ''}</strong> &nbsp;·&nbsp; <span class="teal-text">Academic Year: ${escapeHtml(school.academic_year || '—')}</span> &nbsp;·&nbsp; <span class="teal-text">Number on Roll: ${escapeHtml(ctxVal('Whole School','Number on Roll',PERIODS.find(p=>ctxVal('Whole School','Number on Roll',p))) || '—')}</span> &nbsp;·&nbsp; <span class="teal-text">PAN: ${escapeHtml(ctxVal('Whole School','PAN',PERIODS.find(p=>ctxVal('Whole School','PAN',p))) || '—')}</span> &nbsp;·&nbsp; <span class="teal-text">Last Ofsted Inspection: ${ukDate(SHOW_HIST_OFSTED ? histOfstedDate : school.last_inspection_date) || '—'}${school.inspection_type ? ' (' + escapeHtml(school.inspection_type) + ')' : ''}</span> &nbsp;·&nbsp; <span class="teal-text">URN: ${escapeHtml(school.urn || '—')}</span></div>
+          <div>Headteacher: ${escapeHtml(school.person_responsible || '—')}</div>
         </div>
     `;
 

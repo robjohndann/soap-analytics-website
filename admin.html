@@ -42,6 +42,31 @@
   .acc-resend-btn:hover:not(:disabled) { background: #0a5c5f; }
   .acc-resend-btn:disabled { opacity: 0.6; cursor: not-allowed; }
 
+  /* V69 visual-only tidy: Admin > Users & Access. Scoped to this table. */
+  .acc-summary {align-items:center;gap:8px 10px;margin:0 0 14px;font-size:13px;line-height:1.5;}
+  .acc-summary > span:not(:first-child) {background:#F2F6FA;border:1px solid #E2EAF0;border-radius:16px;padding:3px 10px;}
+  .acc-summary > span:first-child {margin-right:8px;font-size:14px;}
+  .acc-summary .acc-s-ok {background:#E5F5E8!important;border-color:#CBE6D1!important;}
+  .acc-summary .acc-s-pend {background:#FFF4E6!important;border-color:#F5E1C2!important;}
+  table.acc-table {table-layout:fixed;min-width:790px;font-size:13px;border:1px solid #E1E8F0;border-radius:8px;border-collapse:separate;border-spacing:0;overflow:hidden;}
+  table.acc-table th {background:#F5F8FB;padding:11px 12px;color:#354A64;font-size:12px;letter-spacing:.02em;}
+  table.acc-table td {vertical-align:middle;padding:12px 12px;border-bottom:1px solid #E8EDF2;line-height:1.5;overflow-wrap:anywhere;}
+  table.acc-table tbody tr:last-child td {border-bottom:0;}
+  table.acc-table tbody tr:hover td {background:#F8FBFD;}
+  table.acc-table th:nth-child(1) {width:22%;}
+  table.acc-table th:nth-child(2) {width:28%;}
+  table.acc-table th:nth-child(3) {width:21%;}
+  table.acc-table th:nth-child(4) {width:14%;}
+  table.acc-table th:nth-child(5) {width:15%;}
+  .acc-person-name {font-weight:700;color:#0D2B4E;}
+  .acc-person-id {display:block;margin-top:3px;font:10px/1.4 ui-monospace,SFMono-Regular,Consolas,monospace;color:#7D8EA2;overflow-wrap:anywhere;}
+  .acc-person-email {color:#14375A;}
+  .acc-role-desc {display:block;margin-top:3px;color:#60748A;font-size:11px;line-height:1.45;}
+  table.acc-table .acc-badge {font-size:11px;padding:4px 9px;}
+  table.acc-table .acc-cat {margin-right:6px;}
+  @media(max-width:850px) {table.acc-table {min-width:790px;} .acc-summary {gap:6px;}}
+
+
   .wrap { max-width: 1400px; margin: 40px auto; padding: 0 20px; }
   .page-title { font-size: 22px; color: #fff; margin-bottom: 6px; }
   .page-sub { font-size: 13px; color: rgba(255,255,255,0.6); margin-bottom: 24px; }
@@ -172,6 +197,22 @@
   .rk-urgent { background: #F3B8B8; color: #1B2A4A; }
   .amend-toast { position: fixed; top: 20px; left: 50%; transform: translateX(-50%) translateY(-20px); background: #1A7A6E; color: #fff; font-size: 13px; font-weight: 700; padding: 12px 22px; border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,0.2); opacity: 0; pointer-events: none; transition: opacity 0.25s, transform 0.25s; z-index: 1100; max-width: 80vw; text-align: center; }
   .amend-toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+  /* V69: compact, readable section grants; scoped to access panel only */
+  .v69-grants { border:1px solid #dce6ec; border-radius:10px; padding:14px 16px; background:#f8fafc; }
+  .v69-grants > summary { cursor:pointer; color:#0d2b4e; font-size:15px; font-weight:700; }
+  .v69-grants-note { font-size:12px; color:#52657b; line-height:1.5; margin:10px 0 14px; }
+  .v69-grant-person { background:#fff; border:1px solid #dce6ec; border-radius:9px; padding:14px; margin:10px 0; }
+  .v69-grant-identity { display:flex; flex-wrap:wrap; gap:6px 18px; align-items:baseline; margin-bottom:12px; }
+  .v69-grant-identity strong { color:#0d2b4e; font-size:14px; }
+  .v69-grant-identity span { color:#52657b; font-size:12px; overflow-wrap:anywhere; }
+  .v69-grant-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; }
+  .v69-grant-chip { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:9px 10px; background:#f0f4f8; border:1px solid #e0e7ee; border-radius:7px; font-size:12px; color:#0d2b4e; }
+  .v69-grant-chip small { color:#60738b; text-align:right; }
+  .v69-revoke-btn { flex-shrink:0; border:1px solid #e5b9b9; border-radius:5px; background:white; color:#a12a2a; font-size:11px; padding:5px 8px; cursor:pointer; }
+  .v69-revoke-btn:hover { background:#fff1f1; }
+  .v69-revoke-btn:disabled { opacity:.55; cursor:wait; }
+  @media(max-width:850px){.v69-grant-grid{grid-template-columns:1fr;}}
 </style>
 </head>
 <body>
@@ -518,9 +559,9 @@
   function renderMiniTable(headers, rows) {
     if (!rows.length) return '<p class="empty-note">Nothing entered yet.</p>';
     let html = '<table class="mini-table"><thead><tr>' +
-      headers.map(h => `<th>${h}</th>`).join('') + '</tr></thead><tbody>';
+      headers.map(h => `<th>${escapeHtml(h)}</th>`).join('') + '</tr></thead><tbody>';
     rows.forEach(r => {
-      html += '<tr>' + r.map(c => `<td>${c ?? '—'}</td>`).join('') + '</tr>';
+      html += '<tr>' + r.map(c => `<td>${escapeHtml(c ?? '—')}</td>`).join('') + '</tr>';
     });
     html += '</tbody></table>';
     return html;
@@ -855,7 +896,7 @@
             <select id="adminPublishPeriod-${s.id}" style="flex:1;min-width:160px;padding:8px;border:1px solid #DCE3EA;border-radius:6px;font-size:13px;">
               ${Object.values(PERIOD_DISPLAY_SOAP).map(label => `<option${label === guessed ? ' selected' : ''}>${label}</option>`).join('')}
             </select>
-            <button type="button" class="save-amend-btn" style="padding:8px 16px;" onclick="adminPublishSoap('${s.id}', '${s.name.replace(/'/g, "\\'")}')" id="adminPublishBtn-${s.id}">Publish SOAP</button>
+            <button type="button" class="save-amend-btn" style="padding:8px 16px;" data-school-name="${escapeHtml(s.name)}" onclick="adminPublishSoap('${s.id}', this.dataset.schoolName)" id="adminPublishBtn-${s.id}">Publish SOAP</button>
           </div>
           <div id="adminPublishNote-${s.id}" style="font-size:12px;font-weight:700;margin-top:8px;"></div>
         </div>
@@ -873,13 +914,13 @@
         statusHtml = '<span style="color:#5A6B80;">No IDSR uploaded yet.</span>';
         actionsHtml = '';
       } else if (upload.status === 'pending') {
-        statusHtml = `<strong>${upload.file_name || 'IDSR'}</strong> uploaded ${new Date(upload.uploaded_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })} — awaiting review.`;
+        statusHtml = `<strong>${escapeHtml(upload.file_name || 'IDSR')}</strong> uploaded ${new Date(upload.uploaded_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })} — awaiting review.`;
         actionsHtml = `
           <a href="${pageFile}?school_id=${s.id}" target="_blank" style="color:#0D7377;font-weight:700;font-size:13px;text-decoration:none;">Preview →</a>
-          <button type="button" class="save-amend-btn" style="padding:8px 16px;" onclick="${publishFn}('${s.id}', '${s.name.replace(/'/g, "\\'")}')" id="adminIdsrPublishBtn-${iframeId}-${s.id}">Publish to school</button>
+          <button type="button" class="save-amend-btn" style="padding:8px 16px;" data-school-name="${escapeHtml(s.name)}" onclick="${publishFn}('${s.id}', this.dataset.schoolName)" id="adminIdsrPublishBtn-${iframeId}-${s.id}">Publish to school</button>
         `;
       } else {
-        statusHtml = `<strong>${upload.file_name || 'IDSR'}</strong> published ${new Date(upload.published_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}.`;
+        statusHtml = `<strong>${escapeHtml(upload.file_name || 'IDSR')}</strong> published ${new Date(upload.published_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}.`;
         actionsHtml = `<a href="${pageFile}?school_id=${s.id}" target="_blank" style="color:#0D7377;font-weight:700;font-size:13px;text-decoration:none;">View →</a>`;
       }
       return `
@@ -939,32 +980,37 @@
       // above is kept exactly as it was (plus a status line explaining why).
       membersHtml = accessMembersHtml(s, membersHtml);
 
-      // V60: Additional Contributors — grouped by person, since the same
-      // contributor can hold multiple section grants at this school.
+      // V69: section-level revocation controls for additional contributors only.
+      // Responsible-person grants are managed by the existing nomination sync.
       let contributorsHtml = '';
       if (contributors.length) {
         const byPerson = {};
         contributors.forEach(g => {
-          if (!byPerson[g.auth_user_id]) byPerson[g.auth_user_id] = { name: g.contributor_name, email: g.contributor_email, sections: [] };
-          byPerson[g.auth_user_id].sections.push(g.section);
+          const id = String(g.auth_user_id || '');
+          if (!byPerson[id]) byPerson[id] = { id, name: g.contributor_name, email: g.contributor_email, grants: [] };
+          byPerson[id].grants.push(g);
         });
         contributorsHtml = `
-          <details style="margin-top:14px;"><summary style="cursor:pointer;font-size:13px;font-weight:700;color:#0D2B4E;">Additional Contributors — section grants (detail)</summary>
-          <table class="mini-table" style="margin-top:6px;">
-            <thead><tr><th>Name</th><th>Email</th><th>Section(s)</th></tr></thead>
-            <tbody>
-              ${Object.values(byPerson).map(p => `
-                <tr>
-                  <td>${escapeHtml(p.name)}</td>
-                  <td>${escapeHtml(p.email)}</td>
-                  <td>${p.sections.join(', ')}</td>
-                </tr>
-              `).join('')}
-            </tbody>
-          </table></details>
+          <details class="v69-grants" style="margin-top:16px;" open>
+            <summary>Contributor section access — review and revoke</summary>
+            <p class="v69-grants-note">Remove additional permissions individually. Responsible-person assignments remain managed through the Contributor Tracker. School data and accounts are never deleted.</p>
+            ${Object.values(byPerson).map(person => `
+              <div class="v69-grant-person">
+                <div class="v69-grant-identity"><strong>${escapeHtml(person.name || 'Contributor')}</strong><span>${escapeHtml(person.email || 'No email recorded')}</span></div>
+                <div class="v69-grant-grid">
+                  ${person.grants.map(g => `
+                    <div class="v69-grant-chip"><span>${escapeHtml(g.section || '—')}</span>
+                      ${g.is_additional && !g.is_responsible
+                        ? `<button type="button" class="v69-revoke-btn" onclick="revokeAdditionalContributorSection(this, '${s.id}', '${escapeHtml(person.id)}', '${escapeHtml(g.section)}')">Remove access</button>`
+                        : '<small>Responsible person · Tracker</small>'}
+                    </div>
+                  `).join('')}
+                </div>
+              </div>
+            `).join('')}
+          </details>
         `;
       }
-
       // V64 Stage 5: the membership block is wrapped in an id'd container so it
       // can be refreshed on its own after a Viewer is added/removed, and the
       // Viewer Tracker is appended below the existing content. membersHtml and
@@ -1012,7 +1058,8 @@
       const ofstedC = rowCountCompletion(ofsted, 9);
       const periodsC = rowCountCompletion(periods, 6);
       const assessC = rowCountCompletion(assess, 4);
-      const trackerC = rowCountCompletion(trackerRows, 9);
+      // Correction 6: a cleared section can keep an empty row while a revocation is pending - only rows with real content count as assigned.
+      const trackerC = rowCountCompletion(trackerRows.filter(r => r.responsible_person || r.job_title || r.email), 9);
       const safeguardingC = safeguardingCompletion(periods, safeguardingRows);
       const inclusionC = inclusionCompletion(periods, inclusionRows2);
       const curriculumC = curriculumCompletion(curriculumRows);
@@ -1026,8 +1073,8 @@
       <div class="school-card" id="card-${s.id}">
         <div class="school-head" onclick="toggleCard('${s.id}')">
           <div>
-            <div class="school-name">${s.name}</div>
-            <div class="school-meta">${s.phase || '—'} · ${s.academic_year || '—'} · Submitted ${created} · Context ${contextCompletionResult.pct}% complete</div>
+            <div class="school-name">${escapeHtml(s.name)}</div>
+            <div class="school-meta">${escapeHtml(s.phase || '—')} · ${escapeHtml(s.academic_year || '—')} · Submitted ${created} · Context ${contextCompletionResult.pct}% complete</div>
           </div>
           <div class="chevron">▶</div>
         </div>
@@ -1036,7 +1083,7 @@
             <button type="button" class="tab-btn active" onclick="switchGroup(event,'${s.id}','setup')">School Setup</button>
             <button type="button" class="tab-btn" onclick="switchGroup(event,'${s.id}','soapdata')">SOAP Data</button>
             <button type="button" class="tab-btn" onclick="switchGroup(event,'${s.id}','soapidsr')">SOAP & IDSR</button>
-            <button type="button" class="tab-btn" onclick="switchGroup(event,'${s.id}','admingroup')">Admin</button>
+            <button type="button" class="tab-btn" data-v69-admin-group onclick="switchGroup(event,'${s.id}','admingroup')">Admin</button>
             <button type="button" class="tab-btn" style="color:#0D7377;" onclick="switchGroup(event,'${s.id}','amendgroup')">✎ Amend Data</button>
           </div>
           <div class="tab-bar" id="tabs-${s.id}">
@@ -1059,7 +1106,7 @@
             <button type="button" class="tab-btn" data-group="soapidsr" style="display:none;" onclick="switchTab(event,'${s.id}','idsrsoap')">IDSR SOAP</button>
             <button type="button" class="tab-btn" data-group="soapidsr" style="display:none;" onclick="switchTab(event,'${s.id}','idsrdash')">IDSR Dashboard</button>
             <button type="button" class="tab-btn" data-group="admingroup" style="display:none;" onclick="switchTab(event,'${s.id}','package')">Package</button>
-            <button type="button" class="tab-btn" data-group="admingroup" style="display:none;" onclick="switchTab(event,'${s.id}','users')">Users & Access</button>
+            <button type="button" class="tab-btn" data-group="admingroup" style="display:none;" data-v69-users-tab onclick="switchTab(event,'${s.id}','users')">Users & Access</button>
             <button type="button" class="tab-btn" data-group="amendgroup" style="display:none;color:#0D7377;" onclick="switchTab(event,'${s.id}','amend')">✎ Amend Data</button>
           </div>
 
@@ -1115,20 +1162,19 @@
                   // prior nominee would have a different email and must not
                   // read as "access granted" for today's nomination.)
                   let accessStatus = '';
-                  if (t.email) {
-                    if (t.access_sync_pending) {
-                      accessStatus = 'Sync pending';
-                    } else {
-                      const live = trackerSchoolAccessRows.some(g =>
-                        g.section === section && g.is_responsible && g.contributor_email === t.email);
-                      accessStatus = live ? 'Access granted' : 'No access on record';
-                    }
+                  if (t.access_sync_pending) {
+                    // Correction 6: also shown for a cleared section whose revocation has not completed.
+                    accessStatus = 'Sync pending';
+                  } else if (t.email) {
+                    const live = trackerSchoolAccessRows.some(g =>
+                      g.section === section && g.is_responsible && g.contributor_email === t.email);
+                    accessStatus = live ? 'Access granted' : 'No access on record';
                   }
 
                   const additional = trackerSchoolAccessRows
                     .filter(g => g.section === section && g.is_additional)
                     .map(g => `${g.contributor_name || '—'} (${g.contributor_email || 'no email on file'})`)
-                    .join('<br>');
+                    .join(' · ');
 
                   return [section, t.responsible_person, t.job_title, t.email, accessStatus || null, additional || null];
                 });
@@ -1403,12 +1449,14 @@
     el.value = v;
   }
 
-  function showAmendToast(msg, isError) {
+  let amendToastTimer = null;
+  function showAmendToast(msg, isError, ms) {
     const toast = document.getElementById('amendToast');
     toast.textContent = msg;
     toast.style.background = isError ? '#B3261E' : '#1A7A6E';
     toast.classList.add('show');
-    setTimeout(() => toast.classList.remove('show'), 3400);
+    clearTimeout(amendToastTimer);
+    amendToastTimer = setTimeout(() => toast.classList.remove('show'), ms || 3400);
   }
 
   const AMEND_SCHOOL_TYPE_OPTIONS = ['Academy Converter', 'Academy Sponsor-Led', 'Free School', 'Maintained School', 'Voluntary Aided', 'Voluntary Controlled', 'Foundation School', 'Independent School', 'Special School', 'Alternative Provision'];
@@ -1624,7 +1672,7 @@
     select.innerHTML = schools
       .slice()
       .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
-      .map(s => `<option value="${s.id}">${s.name}</option>`)
+      .map(s => `<option value="${s.id}">${escapeHtml(s.name)}</option>`)
       .join('');
   }
 
@@ -1806,13 +1854,12 @@
       const statusCell = ready ? accessBadge(r) : '<span class="acc-badge acc-unknown">' + (st.status === 'loading' ? 'Checking…' : 'Unknown') + '</span>';
       return `
         <tr>
-          <td data-label="Name">${r.full_name ? escapeHtml(r.full_name) : '<span style="color:#8FA0B3;">—</span>'}</td>
-          <td data-label="Email" style="word-break:break-all;">${r.email ? escapeHtml(r.email) : '<span style="color:#8FA0B3;">—</span>'}</td>
-          <td data-label="Role"><span class="acc-cat acc-cat-${r.category.toLowerCase()}">${r.category}</span> ${escapeHtml(r.role ?? '—')}${r.sections.length ? `<div style="font-size:11px;color:#5A6B80;margin-top:2px;">${r.sections.map(escapeHtml).join(', ')}</div>` : ''}</td>
+          <td data-label="Name"><span class="acc-person-name">${r.full_name ? escapeHtml(r.full_name) : '<span style="color:#8FA0B3;">—</span>'}</span><span class="acc-person-id">ID: ${escapeHtml(r.auth_user_id)}</span></td>
+          <td data-label="Email"><span class="acc-person-email">${r.email ? escapeHtml(r.email) : '<span style="color:#8FA0B3;">—</span>'}</span></td>
+          <td data-label="Role"><span class="acc-cat acc-cat-${r.category.toLowerCase()}">${r.category}</span> ${escapeHtml(r.role ?? '—')}${r.sections.length ? `<span class="acc-role-desc">${r.sections.map(escapeHtml).join(', ')}</span>` : ''}</td>
           <td data-label="Status">${statusCell}</td>
           <td data-label="Actions">${action}</td>
-        </tr>
-        <tr class="acc-id-row"><td colspan="5" style="font-family:monospace;font-size:10px;color:#8FA0B3;padding-top:0;">Account ID: ${escapeHtml(r.auth_user_id)}</td></tr>`;
+        </tr>`;
     }).join('');
     return note + summary + `
       <div style="overflow-x:auto;">
@@ -2681,6 +2728,37 @@
   }
 
   // ----------------------------------------------------------------------
+
+  // V69: server-side RPC checks administrator identity and deletes only an
+  // additional section grant. No raw client-side DELETE of section_access.
+  async function revokeAdditionalContributorSection(button, schoolId, userId, section) {
+    if (!confirm(`Remove additional access to ${section} for this contributor? Their account and school data will remain unchanged.`)) return;
+    button.disabled = true;
+    const oldText = button.textContent;
+    button.textContent = 'Removing…';
+    try {
+      const { error } = await sb.rpc('admin_revoke_additional_section_access', {
+        p_school_id: schoolId, p_auth_user_id: userId, p_section: section
+      });
+      if (error) throw error;
+      await loadAdmin();
+      // Restore the school, Admin group and Users & Access tab after refresh.
+      const card = document.getElementById('card-' + schoolId);
+      if (card) {
+        card.classList.add('open');
+        const adminGroup = card.querySelector('[data-v69-admin-group]');
+        if (adminGroup) adminGroup.click();
+        const usersTab = card.querySelector('[data-v69-users-tab]');
+        if (usersTab) usersTab.click();
+      }
+    } catch (err) {
+      console.error('Contributor access revocation failed:', err);
+      alert('Access could not be removed. Ensure the V69 Supabase RPC is installed. Details: ' + (err.message || err));
+      button.disabled = false;
+      button.textContent = oldText;
+    }
+  }
+
   // V64 Stage 5 — Admin Viewer management, inside each school's Users &
   // Access tab. Viewers are school_users rows with role = 'Viewer'. Emails
   // can't be read from school_users (no email column) or auth.users (not
@@ -2920,8 +2998,8 @@
     AMEND_CONTACT_ROLES.forEach(role => {
       const c = find(role);
       html += `<tr data-role="${role}"><td class="label-cell">${role}</td>`;
-      html += `<td><input type="text" value="${c.name || ''}"></td>`;
-      html += `<td><input type="email" value="${c.email || ''}"></td></tr>`;
+      html += `<td><input type="text" value="${escapeHtml(c.name || '')}"></td>`;
+      html += `<td><input type="email" value="${escapeHtml(c.email || '')}"></td></tr>`;
     });
     html += '</tbody></table></div></div>';
     html += `<div><button type="button" class="save-amend-btn" onclick="saveAmendContacts('${schoolId}')">Save Key Contacts Changes</button></div>`;
@@ -3155,31 +3233,146 @@
     AMEND_TRACKER_SECTIONS.forEach(section => {
       const t = find(section);
       html += `<tr data-section="${section}"><td class="label-cell">${section}</td>`;
-      html += `<td><input type="text" value="${t.responsible_person || ''}"></td>`;
-      html += `<td><input type="text" value="${t.job_title || ''}"></td>`;
-      html += `<td><input type="email" value="${t.email || ''}"></td></tr>`;
+      html += `<td><input type="text" value="${escapeHtml(t.responsible_person || '')}"></td>`;
+      html += `<td><input type="text" value="${escapeHtml(t.job_title || '')}"></td>`;
+      html += `<td><input type="email" value="${escapeHtml(t.email || '')}"></td></tr>`;
     });
     html += '</tbody></table></div></div>';
     html += `<div><button type="button" class="save-amend-btn" onclick="saveAmendTracker('${schoolId}')">Save Contributor Tracker Changes</button></div>`;
     return html;
   }
 
+  // Correction 6: the Admin save used to delete and re-insert every tracker row and never touched
+  // section_access. It now mirrors the School Setup synchronisation rules, but with targeted
+  // per-section writes (no school-wide delete), so a pending revocation marker is never discarded.
+  const amendTrackerSaving = new Set();
   async function saveAmendTracker(schoolId) {
+    if (amendTrackerSaving.has(schoolId)) return; // ignore double clicks while a save/sync is running
+    amendTrackerSaving.add(schoolId);
+    try { await saveAmendTrackerRun(schoolId); } finally { amendTrackerSaving.delete(schoolId); }
+  }
+
+  async function saveAmendTrackerRun(schoolId) {
     const container = document.getElementById('amendBody-' + schoolId);
-    const rows = Array.from(container.querySelectorAll('tr[data-section]')).map(tr => {
+    const lc = v => (v || '').toLowerCase();
+    const sameEmail = (a, b) => lc(a) === lc(b);
+    const formRows = Array.from(container.querySelectorAll('tr[data-section]')).map(tr => {
       const texts = tr.querySelectorAll('input[type="text"]');
       const email = tr.querySelector('input[type="email"]');
-      return { school_id: schoolId, section: tr.dataset.section, responsible_person: texts[0].value || null, job_title: texts[1].value || null, email: email.value || null };
-    }).filter(t => t.responsible_person || t.job_title || t.email);
-    const { error: delErr } = await sb.from('completion_tracker').delete().eq('school_id', schoolId);
-    if (delErr) { showAmendToast('⚠ Save failed — see browser console', true); console.error(delErr); return; }
-    if (rows.length) {
-      const { error } = await sb.from('completion_tracker').insert(rows);
-      if (error) { showAmendToast('⚠ Save failed — see browser console', true); console.error(error); return; }
+      return { section: tr.dataset.section, responsible_person: texts[0].value || null, job_title: texts[1].value || null, email: (email.value || '').trim() || null };
+    });
+
+    // 1. Read the CURRENT stored state (never the page's cached copy). Nothing is written if this fails.
+    const { data: priorData, error: priorErr } = await sb.from('completion_tracker')
+      .select('section, responsible_person, job_title, email, access_sync_pending, access_sync_previous_email')
+      .eq('school_id', schoolId);
+    if (priorErr) {
+      console.error(priorErr);
+      showAmendToast('⚠ Nothing was saved: could not read the current Contributor Tracker (' + priorErr.message + ').', true, 9000);
+      return;
     }
-    if (SCHOOL_AMEND_DATA[schoolId]) SCHOOL_AMEND_DATA[schoolId].tracker = rows;
-    showAmendToast('✓ Contributor Tracker saved');
+    const prior = {};
+    (priorData || []).forEach(r => { prior[r.section] = r; });
+    // An RLS-hidden SELECT returns no rows without an error. If the page loaded assignments that this read
+    // cannot see, the old emails needed for revocation are unavailable - refuse rather than lose them.
+    const cached = (SCHOOL_AMEND_DATA[schoolId] && SCHOOL_AMEND_DATA[schoolId].tracker) || [];
+    const unseen = cached.filter(r => r.email && !prior[r.section]).map(r => r.section);
+    if (unseen.length) {
+      showAmendToast('⚠ Nothing was saved: the stored assignments for ' + unseen.join(', ') + ' could not be re-read. Reload the page and try again.', true, 9000);
+      return;
+    }
+
+    // 2. Plan each section. A pending change must be resolved before the same section is changed again.
+    const plan = [];
+    const blocked = [];
+    formRows.forEach(f => {
+      const pr = prior[f.section] || null;
+      const priorEmail = pr ? (pr.email || null) : null;
+      const wasPending = !!(pr && pr.access_sync_pending);
+      if (wasPending && !sameEmail(priorEmail, f.email)) { blocked.push(f.section); return; }
+      const emailChanged = !sameEmail(priorEmail, f.email);
+      const needsSync = emailChanged || wasPending;
+      const previous = wasPending ? (pr.access_sync_previous_email || null) : priorEmail;
+      plan.push({ ...f, pr, needsSync, previous,
+        row: {
+          responsible_person: f.responsible_person, job_title: f.job_title, email: f.email,
+          access_sync_pending: needsSync, access_sync_previous_email: needsSync ? previous : null
+        } });
+    });
+    if (blocked.length) {
+      showAmendToast('⚠ Nothing was saved: a previous access update for ' + blocked.join(', ') + ' has not been confirmed. Save once WITHOUT changing ' + (blocked.length === 1 ? 'it' : 'them') + ' to retry that update, then make the change.', true, 12000);
+      return;
+    }
+
+    // 3. Targeted writes, one section at a time. Sections whose write fails are not synchronised.
+    const writeFailed = [];
+    for (const p of plan) {
+      const hasContent = p.responsible_person || p.job_title || p.email || p.needsSync;
+      const pr = p.pr;
+      const unchanged = pr && (pr.responsible_person || null) === p.row.responsible_person && (pr.job_title || null) === p.row.job_title &&
+        (pr.email || null) === p.row.email && !!pr.access_sync_pending === p.row.access_sync_pending &&
+        (pr.access_sync_previous_email || null) === p.row.access_sync_previous_email;
+      if (unchanged) continue;
+      if (!pr && !hasContent) continue;
+      try {
+        if (!hasContent) {
+          const { data, error } = await sb.from('completion_tracker').delete().eq('school_id', schoolId).eq('section', p.section).select('section');
+          if (error) throw error;
+          if (!data || !data.length) throw new Error('row was not removed (permission denied?)');
+        } else if (pr) {
+          const { data, error } = await sb.from('completion_tracker').update(p.row).eq('school_id', schoolId).eq('section', p.section).select('section');
+          if (error) throw error;
+          if (!data || !data.length) throw new Error('row was not updated (permission denied?)');
+        } else {
+          const { error } = await sb.from('completion_tracker').insert([{ school_id: schoolId, section: p.section, ...p.row }]);
+          if (error) throw error;
+        }
+      } catch (e) {
+        console.error('Contributor Tracker write failed for ' + p.section + ':', e);
+        writeFailed.push(p.section + ' (' + (e.message || e) + ')');
+        p.skip = true;
+      }
+    }
+
+    // 4. Synchronise section_access for every section marked pending (new change OR earlier failed sync).
+    const syncOk = [];
+    const syncErrors = [];
+    for (const p of plan) {
+      if (!p.needsSync || p.skip) continue;
+      try {
+        const { data, error } = await sb.functions.invoke('sync-responsible-person-access', {
+          body: { school_id: schoolId, section: p.section, new_name: p.responsible_person, new_email: p.email, old_email: p.row.access_sync_previous_email }
+        });
+        if (error) {
+          let detail = error.message || 'Unknown error';
+          try { if (error.context && typeof error.context.json === 'function') { const b = await error.context.json(); if (b && b.error) detail = b.error; } } catch (_) { /* keep message */ }
+          throw new Error(detail);
+        }
+        if (data && data.error) throw new Error(data.error);
+        syncOk.push(p.section);
+        // Confirmed: clear the pending marker (non-fatal if this fails - a retry is idempotent).
+        const empty = !(p.responsible_person || p.job_title || p.email);
+        const q = empty
+          ? sb.from('completion_tracker').delete().eq('school_id', schoolId).eq('section', p.section).select('section')
+          : sb.from('completion_tracker').update({ access_sync_pending: false, access_sync_previous_email: null }).eq('school_id', schoolId).eq('section', p.section).select('section');
+        const { data: cd, error: ce } = await q;
+        if (ce || !cd || !cd.length) console.error('Could not clear access_sync_pending for ' + p.section + ':', ce || 'no row affected');
+      } catch (e) {
+        console.error('Responsible Person access sync failed for ' + p.section + ':', e);
+        syncErrors.push(p.section + ': ' + (e.message || e));
+      }
+    }
+
+    // 5. Refresh from the database and report what actually happened.
     await loadAdmin();
+    if (writeFailed.length || syncErrors.length) {
+      const parts = [];
+      if (writeFailed.length) parts.push('Save failed for: ' + writeFailed.join('; ') + '.');
+      if (syncErrors.length) parts.push('Saved, but Responsible Person access was NOT updated for: ' + syncErrors.join('; ') + '. The change is marked "Sync pending" - press Save again to retry.');
+      showAmendToast('⚠ ' + parts.join(' '), true, 14000);
+    } else {
+      showAmendToast('✓ Contributor Tracker saved' + (syncOk.length ? ' · Responsible Person access updated for: ' + syncOk.join(', ') : ''), false, syncOk.length ? 6000 : undefined);
+    }
   }
 
   function buildAmendContext(schoolId) {
