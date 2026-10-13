@@ -118,6 +118,10 @@
 </div>
 
 <script>
+  function escapeHtml(value) {
+    return String(value == null ? '' : value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
   const SUPABASE_URL = 'https://caopycszjzrmwhxxvtpx.supabase.co';
   const SUPABASE_KEY = 'sb_publishable_2CTGR0PKyRPpSk59lcr3sA_hvvUDX97';
   const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
@@ -231,7 +235,7 @@
     if (!adminRow && !PACKAGES_WITH_DASHBOARD.includes(school.package_tier)) {
       statusArea.innerHTML = `
         <div class="page-title">SOAP Dashboard</div>
-        <div class="empty-msg">🔒 SOAP Dashboard isn't included in ${school.name || 'this school'}'s current package. Contact SOAP Analytics to upgrade.</div>`;
+        <div class="empty-msg">🔒 SOAP Dashboard isn't included in ${escapeHtml(school.name || 'this school')}'s current package. Contact SOAP Analytics to upgrade.</div>`;
       return;
     }
 
@@ -241,7 +245,7 @@
     if (!periodsWithData.length || !attendanceData.length) {
       statusArea.innerHTML = `
         <div class="page-title">Attendance</div>
-        <div class="page-sub">Live attendance trends for ${school.name || 'this school'}.</div>
+        <div class="page-sub">Live attendance trends for ${escapeHtml(school.name || 'this school')}.</div>
         <div class="empty-msg">No attendance data has been entered yet for any active period — once it is, this page will fill in automatically.</div>`;
       return;
     }
@@ -254,7 +258,7 @@
       <div class="page-header-row">
         <div>
           <div class="page-title">Attendance</div>
-          <div class="page-sub">Live attendance trends for ${school.name || 'this school'} — updates automatically as new data is entered via the forms.</div>
+          <div class="page-sub">Live attendance trends for ${escapeHtml(school.name || 'this school')} — updates automatically as new data is entered via the forms.</div>
         </div>
         <div class="period-picker">
           <button type="button" class="period-btn" onclick="togglePeriodMenu()">View as of: <span id="periodBtnLabel"></span> ▾</button>

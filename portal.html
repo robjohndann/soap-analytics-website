@@ -30,9 +30,9 @@
   .admin-link.unread-link { font-weight: 700; }
   .admin-link.unread-link:hover { text-decoration: underline; }
 
-  .wrap { max-width: 560px; margin: 0 auto; padding: 40px 20px 60px; }
-  .eyebrow { color: #3DCFB8; font-size: 11px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; text-align: center; margin-bottom: 6px; }
-  .greeting { color: #fff; font-size: 18px; text-align: center; margin-bottom: 28px; }
+  .wrap { width: 65%; max-width: 1250px; margin: 0 auto; padding: 40px 0 60px; }
+  .eyebrow { color: #3DCFB8; font-size: 12px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; text-align: center; margin-bottom: 6px; }
+  .greeting { color: #fff; font-size: 21px; font-weight: 600; text-align: center; margin-bottom: 25px; line-height: 1.4; }
   .greeting strong { color: #3DCFB8; }
 
   .status-card { background: #fff; border-radius: 12px; padding: 32px 24px; text-align: center; }
@@ -40,14 +40,34 @@
   .status-card p { color: #5A6B80; font-size: 14px; line-height: 1.6; }
   .loading { color: #5A6B80; font-size: 14px; text-align: center; }
 
-  .accordion { display: flex; flex-direction: column; gap: 10px; }
+  .accordion { display: flex; flex-direction: column; gap: 16px; }
+  .portal-welcome { background:#263d60; border:1px solid rgba(61,207,184,.18); border-radius:12px; padding:23px 26px; color:#fff; }
+  .portal-welcome h2 {font-size:21px;margin-bottom:7px;} .portal-welcome p {font-size:14px;color:#d0ddeb;line-height:1.5;}
+  .portal-pair {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;align-items:start;}
+  .portal-pair > div {min-width:0;} .portal-pair .bar {min-height:76px;align-items:center;}
+  .bar {box-shadow:0 3px 10px rgba(0,0,0,.10);} .bar:not(.locked):hover {background:#108489;}
+  .portal-pair .bar-label::before {content:'▣';display:inline-block;margin-right:12px;color:#8ce8d9;font-size:17px;vertical-align:-1px;}
+  .portal-feature .bar {background:#263d60;border:1px solid #3DCFB8;min-height:76px;box-shadow:0 3px 10px rgba(0,0,0,.10);}
+  .portal-feature .bar:not(.locked):hover {background:#304c70;}
+  .portal-feature .bar-label::before {content:'✦';margin-right:12px;color:#3DCFB8;}
+  #panel-forms.open {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px 12px;}
+  #panel-forms .form-row {margin-bottom:0;min-width:0;gap:8px;}
+  .bar-label {line-height:1.35;}
+  .bar-right {flex-shrink:0;}
+  .bar:focus-visible, .form-row:focus-visible {outline:2px solid #8ce8d9;outline-offset:3px;}
+  .portal-welcome {margin-bottom:2px;}
+  .portal-feature .badge {background:rgba(61,207,184,.17);color:#b9fff2;}
+  .forms-average {background:rgba(61,207,184,.2);color:#d5fff6;}
+  .panel.open {animation:portal-panel-in .15s ease-out;}
+  @keyframes portal-panel-in {from{opacity:.65;transform:translateY(-3px)}to{opacity:1;transform:translateY(0)}}
+
   .bar {
     width: 100%; background: #0D7377; color: #fff; border: none; border-radius: 8px;
     padding: 16px 20px; display: flex; align-items: center; justify-content: space-between;
     cursor: pointer; font-family: inherit; text-align: left;
   }
   .bar.locked { background: #5A6B80; opacity: 0.85; cursor: not-allowed; }
-  .bar-label { font-size: 15px; font-weight: 700; }
+  .bar-label { font-size: 16px; font-weight: 700; }
   .bar-unread { background: #F5B942; color: #0D2B4E; border-radius: 12px; padding: 3px 11px; font-size: 12px; font-weight: 800; white-space: nowrap; }
   .bar-right { display: flex; align-items: center; gap: 10px; }
   .badge { font-size: 11px; font-weight: 700; padding: 3px 10px; border-radius: 10px; background: rgba(255,255,255,0.18); }
@@ -64,7 +84,7 @@
     display: flex; align-items: center; justify-content: space-between; text-decoration: none;
   }
   .form-row:last-child { margin-bottom: 0; }
-  .form-row span.name { color: #fff; font-size: 14px; }
+  .form-row span.name { color: #fff; font-size: 15px; }
   .pct-badge { color: #fff; font-size: 11px; font-weight: 700; padding: 2px 9px; border-radius: 9px; }
   .soap-row { cursor: pointer; }
   .soap-name { color: #fff; font-size: 14px; font-weight: 700; display: block; }
@@ -88,7 +108,11 @@
   .modal-box iframe { flex: 1; border: none; width: 100%; }
 
   @media (max-width: 700px) {
-    .wrap { padding: 24px 16px 40px; }
+    .wrap { width:94%; padding:24px 0 40px; }
+    .portal-pair {grid-template-columns:1fr;gap:12px;}
+    #panel-forms.open {grid-template-columns:1fr;}
+    .portal-pair .bar {min-height:70px;}
+
   }
 </style>
 </head>
@@ -787,7 +811,7 @@
           <h1>Choose a school</h1>
           <p>Your account has access to more than one school. Select the school you want to work with.</p>
           <div style="margin-top:18px;display:grid;gap:10px;">
-            ${linkRows.map(r => `<a href="portal.html?school_id=${encodeURIComponent(r.school_id)}" style="display:block;padding:14px 16px;border-radius:8px;background:#0D2B4E;color:#fff;text-decoration:none;font-weight:700;">${schoolNameById[r.school_id] || 'School'} <span style="opacity:.7;font-weight:500;">— ${r.role}</span></a>`).join('')}
+            ${linkRows.map(r => `<a href="portal.html?school_id=${encodeURIComponent(r.school_id)}" style="display:block;padding:14px 16px;border-radius:8px;background:#0D2B4E;color:#fff;text-decoration:none;font-weight:700;">${escapeHtml(schoolNameById[r.school_id] || 'School')} <span style="opacity:.7;font-weight:500;">— ${escapeHtml(r.role)}</span></a>`).join('')}
           </div>
         </div>`;
       return;
@@ -887,12 +911,12 @@
     let accordionHtml = isViewer ? '' : `
       <div>
         <button type="button" class="bar" id="bar-forms" onclick="toggleAccordion('forms');">
-          <span class="bar-label">Data Entry Forms</span>
-          <span class="bar-right">
+          <span class="bar-label">SOAP Data Entry Forms</span>
+          <span class="bar-right"><span class="badge forms-average" id="formsAverageBadge" title="Mean of completion percentages for forms available to this user">${availableForms.length ? Math.round(availableForms.reduce((sum, f) => sum + (PCT[f.key] || 0), 0) / availableForms.length) + '% average' : 'No forms assigned'}</span>
             <i class="chev" id="chev-forms">▾</i>
           </span>
         </button>
-        <div class="panel open" id="panel-forms">
+        <div class="panel" id="panel-forms">
           ${availableForms.map(f => `
             <a class="form-row" href="${f.href}?school_id=${encodeURIComponent(linkRow.school_id)}">
               <span class="name">${f.label}</span>
@@ -911,7 +935,7 @@
           ${isHeadteacher ? `<div id="supportLeadershipArea"><div style="font-size:13px;color:rgba(255,255,255,0.6);">Loading conversations…</div></div>` : `
           <div style="font-size:13px;color:rgba(255,255,255,0.7);margin-bottom:10px;">Having an issue or a question? Type it below and it'll come straight through to us.</div>
           <textarea id="supportMessageInput" rows="4" placeholder="Describe the issue you're having..." style="width:100%;padding:10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#0D2B4E;color:#fff;font-family:inherit;font-size:14px;resize:vertical;"></textarea>
-          <button type="button" onclick="submitSupportMessage('${linkRow.school_id}', '${linkRow.role}')" id="supportSubmitBtn" style="margin-top:10px;background:#3DCFB8;color:#0D2B4E;border:none;border-radius:6px;padding:10px 20px;font-weight:700;font-size:14px;cursor:pointer;">Send to support</button>
+          <button type="button" data-role="${escapeHtml(linkRow.role)}" onclick="submitSupportMessage('${linkRow.school_id}', this.dataset.role)" id="supportSubmitBtn" style="margin-top:10px;background:#3DCFB8;color:#0D2B4E;border:none;border-radius:6px;padding:10px 20px;font-weight:700;font-size:14px;cursor:pointer;">Send to support</button>
           <div id="supportNote" style="font-size:12px;font-weight:700;margin-top:8px;"></div>
           `}
         </div>
@@ -937,9 +961,9 @@
           <div class="panel" id="panel-soap">
             ${publishedSoaps.length
               ? publishedSoaps.map((p, idx) => `
-                <div class="form-row soap-row" onclick='openSoapModal(${JSON.stringify(p.period_label)}, PUBLISHED_SOAP_HTML["${p.id}"])'>
+                <div class="form-row soap-row" data-period="${escapeHtml(p.period_label)}" data-soap-id="${escapeHtml(p.id)}" onclick="openSoapModal(this.dataset.period, PUBLISHED_SOAP_HTML[this.dataset.soapId])">
                   <span>
-                    <span class="soap-name">${p.period_label}</span>
+                    <span class="soap-name">${escapeHtml(p.period_label)}</span>
                     <span class="soap-date">Published ${new Date(p.published_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</span>
                   </span>
                   ${idx === 0 ? '<span class="badge live">Latest</span>' : ''}
@@ -998,7 +1022,7 @@
         } else if (idsrUpload.status === 'pending') {
           idsrPanelBody = `
             <div class="form-row" style="flex-direction:column; align-items:flex-start; gap:6px;">
-              <p style="margin:0; color:#fff;"><strong>${idsrUpload.file_name || 'IDSR'}</strong> uploaded ${new Date(idsrUpload.uploaded_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })} — awaiting review.</p>
+              <p style="margin:0; color:#fff;"><strong>${escapeHtml(idsrUpload.file_name || 'IDSR')}</strong> uploaded ${new Date(idsrUpload.uploaded_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })} — awaiting review.</p>
               <p style="margin:0; color:rgba(255,255,255,0.6); font-size:13px;">We'll let you know once it's ready to view in IDSR Dashboard below.</p>
               <input type="file" id="idsrFileInput" accept=".html,.htm" style="font-size:13px; margin-top:8px;">
               <button type="button" id="idsrUploadBtn" onclick="uploadIdsr('${linkRow.school_id}')" style="background:#3DCFB8;color:#0D2B4E;border:none;border-radius:6px;padding:10px 20px;font-weight:700;font-size:14px;cursor:pointer;">Upload a different file</button>
@@ -1007,7 +1031,7 @@
         } else {
           idsrPanelBody = `
             <div class="form-row" style="flex-direction:column; align-items:flex-start; gap:6px;">
-              <p style="margin:0; color:#fff;"><strong>${idsrUpload.file_name || 'IDSR'}</strong> published ${new Date(idsrUpload.published_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}.</p>
+              <p style="margin:0; color:#fff;"><strong>${escapeHtml(idsrUpload.file_name || 'IDSR')}</strong> published ${new Date(idsrUpload.published_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}.</p>
               <a href="idsr-soap.html?school_id=${linkRow.school_id}" target="_blank" style="color:#3DCFB8;font-weight:700;font-size:13px;text-decoration:none;">Open IDSR SOAP →</a>
               <input type="file" id="idsrFileInput" accept=".html,.htm" style="font-size:13px; margin-top:8px;">
               <button type="button" id="idsrUploadBtn" onclick="uploadIdsr('${linkRow.school_id}')" style="background:#3DCFB8;color:#0D2B4E;border:none;border-radius:6px;padding:10px 20px;font-weight:700;font-size:14px;cursor:pointer;">Upload a new IDSR (replaces this one)</button>
@@ -1017,7 +1041,7 @@
         accordionHtml += `
         <div>
           <button type="button" class="bar" id="bar-idsrsoap" onclick="toggleAccordion('idsrsoap');">
-            <span class="bar-label">IDSR SOAP</span>
+            <span class="bar-label">${isViewer ? 'View My IDSR' : 'IDSR SOAP Upload'}</span>
             <span class="bar-right"><span class="badge live">Live</span><i class="chev" id="chev-idsrsoap">▾</i></span>
           </button>
           <div class="panel" id="panel-idsrsoap">
@@ -1025,7 +1049,20 @@
           </div>
         </div>`;
       } else {
-        accordionHtml += lockedBar('idsrsoap', 'IDSR SOAP');
+        accordionHtml += lockedBar('idsrsoap', isViewer ? 'View My IDSR' : 'IDSR SOAP Upload');
+      }
+
+      // V69: Separate published IDSR output from the leadership upload interface.
+      // Uses the existing published idsr_uploads record and existing idsr-soap.html viewer.
+      if (!isViewer) {
+        const viewIdsrBody = (idsrUpload && idsrUpload.status === 'published')
+          ? `<a class="form-row" href="idsr-soap.html?school_id=${encodeURIComponent(linkRow.school_id)}" target="_blank"><span class="name">Open published IDSR SOAP →</span></a>`
+          : `<div class="empty-note">No published IDSR SOAP is available yet. Once your uploaded IDSR has been reviewed and published, it will appear here.</div>`;
+        if (features.idsrSoap) {
+          accordionHtml += `<div><button type="button" class="bar" id="bar-viewidsr" onclick="toggleAccordion('viewidsr');"><span class="bar-label">View My IDSR</span><span class="bar-right"><span class="badge">${idsrUpload && idsrUpload.status === 'published' ? 'Published' : 'Awaiting publication'}</span><i class="chev" id="chev-viewidsr">▾</i></span></button><div class="panel" id="panel-viewidsr">${viewIdsrBody}</div></div>`;
+        } else {
+          accordionHtml += lockedBar('viewidsr', 'View My IDSR');
+        }
       }
 
       // IDSR Dashboard
@@ -1052,9 +1089,48 @@
 
     document.getElementById('statusArea').innerHTML = `
       <div class="eyebrow">SOAP Analytics</div>
-      <div class="greeting">${school.name || 'Your school'} — <strong>${linkRow.role}</strong></div>
+      <div class="greeting">${escapeHtml(school.name || 'Your school')} — <strong>${escapeHtml(linkRow.role)}</strong></div>
       <div class="accordion">${accordionHtml}</div>
     `;
+
+    // V69 visual restructure: keep original panel nodes, IDs, listeners and
+    // permission checks intact. Move only the existing DOM nodes into rows.
+    const portalAccordion = document.querySelector('#statusArea .accordion');
+    const takePanel = id => document.getElementById('bar-' + id)?.parentElement || null;
+    const groupPair = (a, b) => {
+      const first = takePanel(a), second = takePanel(b);
+      if (!first || !second) return;
+      const row = document.createElement('div');
+      row.className = 'portal-pair';
+      first.before(row);
+      row.append(first, second);
+    };
+    const greeting = document.querySelector('#statusArea .greeting');
+    const welcome = document.createElement('div');
+    welcome.className = 'portal-welcome';
+    welcome.innerHTML = `<h2>Welcome to your school workspace</h2><p>${isViewer ? 'Access the published reports and dashboards available to you.' : isHeadteacher ? 'Manage school information, view published reports and explore your school analytics.' : 'Update the school information you have permission to contribute to.'}</p>`;
+    portalAccordion.before(welcome);
+    groupPair('soap', 'soapdash');
+    groupPair(isViewer ? 'idsrsoap' : 'viewidsr', 'idsrdash');
+    // Viewer is intentionally read-only and gets no upload panel.
+    if (isViewer) {
+      const viewerIdsr = document.getElementById('bar-idsrsoap');
+      if (viewerIdsr) viewerIdsr.id = 'bar-viewidsr';
+      const viewerPanel = document.getElementById('panel-idsrsoap');
+      if (viewerPanel) viewerPanel.id = 'panel-viewidsr';
+      const viewerChev = document.getElementById('chev-idsrsoap');
+      if (viewerChev) viewerChev.id = 'chev-viewidsr';
+      if (viewerIdsr && !viewerIdsr.classList.contains('locked')) viewerIdsr.setAttribute('onclick', "toggleAccordion('viewidsr');");
+    }
+    if (isHeadteacher) {
+      const build = document.createElement('div');
+      build.className = 'portal-feature';
+      const isPilotSchool = (school.name || '').trim().toLowerCase() === 'soap analytics high school';
+      build.innerHTML = `<button type="button" class="bar" id="bar-buildsoap" onclick="toggleAccordion('buildsoap');"><span class="bar-label">Build My SOAP</span><span class="bar-right"><span class="badge">${isPilotSchool ? 'Pilot · In development' : 'Coming soon'}</span><i class="chev" id="chev-buildsoap">▾</i></span></button><div class="panel" id="panel-buildsoap"><div class="empty-note">${isPilotSchool ? 'Pilot development area. Individual card selection and saved configurations are not available yet.' : 'Build My SOAP is under development and is not available with your current access.'}</div></div>`;
+      portalAccordion.append(build);
+    }
+    const supportPanel = takePanel('support');
+    if (supportPanel) portalAccordion.append(supportPanel);
 
     if (isHeadteacher) {
       MSG_SCHOOL_ID = linkRow.school_id;

@@ -300,8 +300,13 @@
     const { data: school } = await sb
       .from('schools').select('phase').eq('id', currentSchoolId).maybeSingle();
 
-    const { data: repPeriods } = await sb
+    const { data: repPeriods, error: reportingPeriodsError } = await sb
       .from('reporting_periods').select('period_name, start_date').eq('school_id', currentSchoolId);
+    reportingPeriodsReadFailed = !!reportingPeriodsError || !Array.isArray(repPeriods) || repPeriods.length === 0;
+    if (reportingPeriodsReadFailed) {
+      console.error('Reporting periods unavailable:', reportingPeriodsError || 'No reporting periods returned');
+      showToast('⚠ Reporting periods could not be verified. Saving is disabled to protect existing data.', true);
+    }
 
     const lockedPeriods = {};
     const today = new Date();
@@ -334,8 +339,22 @@
 
     // Load back in any previously saved values, so returning to this form
     // doesn't show blank fields (and doesn't risk wiping saved data on next save)
-    const { data: existingRows } = await sb
+    const { data: existingRows, error: contextReadError } = await sb
       .from('context_data').select('category, metric, period, value').eq('school_id', currentSchoolId);
+    contextSourceReadFailed = !!contextReadError;
+    if (contextReadError) {
+      console.error('Context data could not be loaded:', contextReadError);
+      showToast('⚠ Context data could not be loaded. Saving is disabled to protect existing values.', true);
+    }
+    // A whole-school delete would also erase rows in locked or unrendered periods.
+    // Fail closed until the save operation can preserve those rows transactionally.
+    storedLockedContextRows = (existingRows || []).filter(r => {
+      const tr = Array.from(document.querySelectorAll('#contextForm tr[data-category]')).find(
+        el => el.dataset.category === r.category && el.dataset.metric === r.metric
+      );
+      const input = tr && Array.from(tr.querySelectorAll('input')).find(el => el.dataset.period === r.period);
+      return !input || input.disabled;
+    });
     (existingRows || []).forEach(r => {
       const row = Array.from(document.querySelectorAll('#contextForm tr')).find(
         el => el.dataset.category === r.category && el.dataset.metric === r.metric
@@ -358,9 +377,21 @@
     document.getElementById('submitBar').style.display = '';
   }
 
+  // V69 audit correction: a failed source read must never be saved as blank data.
+  let contextSourceReadFailed = false;
+  let reportingPeriodsReadFailed = false;
+  let storedLockedContextRows = [];
+  let inclusionSourceReadFailed = false;
+
   async function recalculatePupilProfileFromInclusion(schoolId) {
-    const { data: inclusionRows } = await sb
+    const { data: inclusionRows, error: inclusionReadError } = await sb
       .from('inclusion_data').select('metric, period, value').eq('school_id', schoolId).eq('category', 'Inclusion Numbers');
+    inclusionSourceReadFailed = !!inclusionReadError;
+    if (inclusionReadError) {
+      console.error('Inclusion counts could not be loaded:', inclusionReadError);
+      showToast('⚠ Inclusion counts unavailable. Existing percentages are preserved; saving is disabled.', true);
+      return; // Never replace previously saved percentages after a failed query.
+    }
 
     // Maps Pupil Profile field -> the matching Inclusion Numbers metric
     const mapping = {
@@ -385,13 +416,25 @@
         const roll = norInput ? parseFloat(norInput.value) : NaN;
         const inclusionRow = (inclusionRows || []).find(r => r.metric === inclusionMetric && r.period === p);
         const count = inclusionRow ? parseFloat(inclusionRow.value) : NaN;
-        input.value = (!isNaN(roll) && roll > 0 && !isNaN(count)) ? (Math.round((count / roll) * 1000) / 10).toFixed(1) : '';
+        // If inputs are missing, retain the value loaded from context_data.
+        // Do not silently clear an existing percentage.
+        if (Number.isFinite(roll) && roll > 0 && Number.isFinite(count)) {
+          input.value = (Math.round((count / roll) * 1000) / 10).toFixed(1);
+        }
       });
     });
   }
 
   async function saveForm() {
     if (!currentSchoolId) return;
+    if (contextSourceReadFailed || inclusionSourceReadFailed || reportingPeriodsReadFailed) {
+      showToast('⚠ Save blocked: source data could not be loaded. Reload and try again.', true);
+      return;
+    }
+    if (storedLockedContextRows.length) {
+      showToast('⚠ Save blocked: existing Context data is linked to locked, undated or unavailable periods (or fields no longer on this form). No data was changed. Ask your Headteacher to check reporting-period dates in School Setup; if the school phase or fields have changed, contact SOAP Analytics support.', true);
+      return;
+    }
     const btn = document.getElementById('saveBtn');
     btn.disabled = true;
     btn.textContent = 'Saving…';
