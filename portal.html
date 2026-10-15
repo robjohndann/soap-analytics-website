@@ -657,6 +657,14 @@
       return;
     }
 
+    // V70-04: ask the server-side worker to send the administrator notification.
+    // The notification itself was already queued by a database trigger when the row above
+    // was written; this call only wakes the worker. Fire-and-forget: never awaited, never
+    // shown to the user, and any failure (function not deployed, offline) is ignored.
+    try {
+      Promise.resolve(sb.functions.invoke('idsr-upload-notifications', { body: {} })).catch(() => {});
+    } catch (e) { /* ignore */ }
+
     note.style.color = '#3DCFB8';
     note.textContent = 'Uploaded — awaiting review.';
     await checkLogin();
