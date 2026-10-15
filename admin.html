@@ -147,6 +147,14 @@
   table.amend-tracker-table th:nth-child(3), table.amend-tracker-table td:nth-child(3) { width: 17%; }
   table.amend-tracker-table th:nth-child(4), table.amend-tracker-table td:nth-child(4) { width: 47%; }
 
+  /* V70-02: Amend Data -> Key Contacts. Presentation only; same compound-selector approach as the
+     Contributor Tracker above, scoped to .amend-contacts-table so no other grid-table is affected. */
+  table.grid-table.amend-contacts-table input[type="text"],
+  table.grid-table.amend-contacts-table input[type="email"] { width: 100%; box-sizing: border-box; }
+  table.amend-contacts-table th:nth-child(1), table.amend-contacts-table td:nth-child(1) { width: 20%; }
+  table.amend-contacts-table th:nth-child(2), table.amend-contacts-table td:nth-child(2) { width: 34%; }
+  table.amend-contacts-table th:nth-child(3), table.amend-contacts-table td:nth-child(3) { width: 46%; }
+
   table.grid-table.year-table { min-width: 0; }
   table.grid-table.year-table th { padding: 6px 5px; font-size: 10px; }
   table.grid-table.year-table td { padding: 4px 4px; }
@@ -161,6 +169,12 @@
   table.grid-table.resources-table select { width: 150px; }
   table.grid-table.resources-table input[data-field="metric"] { width: 280px; }
   table.grid-table.resources-table td.label-cell { min-width: 220px; }
+  /* V70-03: Attendance & Behaviour matrix cells (same look as the GCSE matrix, narrower inputs for 7 period columns) */
+  table.grid-table.resources-table.natavg-matrix { width: 100%; }
+  table.grid-table.resources-table.natavg-matrix td.label-cell { min-width: 180px; }
+  table.grid-table.resources-table.natavg-matrix input { width: 76px; }
+  .natavg-cell { display: flex; align-items: center; gap: 4px; }
+  .natavg-pct { color: #5A6B80; font-weight: 700; }
   .rating-field { display: flex; align-items: center; gap: 14px; }
   .rating-field select { max-width: 260px; width: auto; }
   .save-amend-btn { background: #0D7377; color: #fff; font-family: Arial, Helvetica, sans-serif; font-weight: 700; font-size: 13px; border: none; border-radius: 8px; padding: 10px 22px; cursor: pointer; }
@@ -645,6 +659,28 @@
     renderNatAvgSection(natAvgSectionKey);
   }
 
+  // V70-03 — Attendance & Behaviour matrix. Display mapping only: stored period strings are never rewritten
+  // unless the admin edits that row. Mirrors the SOAP pages' period matching (soap-page.html
+  // normalizePeriodInput), so a stored "Autumn 1 2026" / "AUT 1 2026" / "AUT1 26" lands in the AUT1 26 column.
+  // Historical figures use the stored label '2022-2025'; '2022–2025' and '2022/25' are recognised as the same.
+  const NATAVG_MATRIX_COLS = [
+    { key: '2022-2025', label: '2022–2025' },
+    { key: 'AUT1 26', label: 'AUT1 26' }, { key: 'AUT2 26', label: 'AUT2 26' },
+    { key: 'SPR1 27', label: 'SPR1 27' }, { key: 'SPR2 27', label: 'SPR2 27' },
+    { key: 'SUM1 27', label: 'SUM1 27' }, { key: 'SUM2 27', label: 'SUM2 27' }
+  ];
+  let NATAVG_CELL_ROWS = {};    // matrix cell -> stored row as loaded
+  let NATAVG_OTHER_ROWS = [];   // stored rows shown under "Other stored values", as loaded
+  function natAvgCellKey(metric, col) { return JSON.stringify([metric, col]); }
+  function natAvgPeriodColumn(period) {
+    const raw = String(period == null ? '' : period).trim();
+    if (/^2022\s*[-–—\/]\s*(20)?25$/.test(raw)) return '2022-2025';
+    const m = raw.toUpperCase().match(/(AUT|SPR|SUM)\D*(1|2)\D*(\d{2,4})/);
+    if (!m) return null;
+    const key = `${m[1]}${m[2]} ${m[3].slice(-2)}`;
+    return NATAVG_MATRIX_COLS.some(c => c.key === key) ? key : null;
+  }
+
   function renderNatAvgSection(sectionKey) {
     natAvgSectionKey = sectionKey;
     const section = NATAVG_SECTIONS[sectionKey];
@@ -661,24 +697,52 @@
     html += '</select>';
 
     if (section.type === 'flat') {
-      // Every existing (metric, period) combination for this category gets
-      // its own row, editable — plus a blank starter row for any known
-      // metric that has no data yet at all, so the familiar fields still
-      // show up ready to fill in on first use. New rows (any metric name,
-      // any period) can be added freely below.
+      // V70-03: matrix presentation (metrics down, periods across), like GCSE. Every stored row is still
+      // shown: rows whose period maps to a column fill that cell; everything else stays editable in
+      // "Other stored values" below, so nothing is ever hidden or dropped by the display.
       const existingRows = NATAVG_DATA.filter(x => x.category === section.category);
-      const metricsWithData = new Set(existingRows.map(x => x.metric));
-      const starterRows = section.rows.filter(r => !metricsWithData.has(r)).map(r => ({ metric: r, period: '', value: '' }));
-      const allRows = [...existingRows, ...starterRows];
+      const cellRows = {};          // key -> the stored row bound to that matrix cell
+      const others = [];            // stored rows that do not fit a matrix cell
+      const extraMetrics = [];
+      existingRows.forEach(r => {
+        const col = natAvgPeriodColumn(r.period);
+        const k = natAvgCellKey(r.metric, col);
+        if (col && !cellRows[k]) {
+          cellRows[k] = r;
+          if (!section.rows.includes(r.metric) && !extraMetrics.includes(r.metric)) extraMetrics.push(r.metric);
+        } else {
+          others.push(r);
+        }
+      });
+      NATAVG_CELL_ROWS = cellRows;
+      NATAVG_OTHER_ROWS = others;
+      const matrixMetrics = [...section.rows, ...extraMetrics];
 
-      html += `<datalist id="natAvgMetricList">${section.rows.map(r => `<option value="${r}">`).join('')}</datalist>`;
+      html += `<datalist id="natAvgMetricList">${section.rows.map(r => `<option value="${escapeHtml(r)}">`).join('')}</datalist>`;
+      html += '<table class="grid-table resources-table wide-table natavg-matrix" id="natAvgMatrix"><thead><tr><th>Metric</th>';
+      NATAVG_MATRIX_COLS.forEach(c => html += `<th>${escapeHtml(c.label)}</th>`);
+      html += '</tr></thead><tbody>';
+      matrixMetrics.forEach(metric => {
+        const isPercent = metric !== 'Permanent Exclusions';
+        html += `<tr><td class="label-cell">${escapeHtml(metric)}</td>`;
+        NATAVG_MATRIX_COLS.forEach(c => {
+          const row = cellRows[natAvgCellKey(metric, c.key)];
+          const v = row && row.value != null ? String(row.value) : '';
+          html += `<td><div class="natavg-cell"><input type="text" data-field="cell" data-metric="${escapeHtml(metric)}" data-col="${escapeHtml(c.key)}" data-orig="${escapeHtml(v)}" data-has-row="${row ? '1' : '0'}" value="${escapeHtml(v)}">${isPercent ? '<span class="natavg-pct">%</span>' : ''}</div></td>`;
+        });
+        html += '</tr>';
+      });
+      html += '</tbody></table>';
+      html += '<p class="amend-note" style="margin-top:8px;">A blank cell means "not recorded" and is never saved as zero. Only cells you change are written. Clearing a filled cell removes just that stored value, after confirmation.</p>';
+
+      html += '<h4 style="margin:22px 0 6px;color:#1B2A4A;">Other stored values</h4>';
+      html += '<p class="amend-note" style="margin:0 0 8px;">Stored values whose metric or period does not fit a column above (for example a different period label, or a blank period) are kept here, unchanged, and remain editable. New metrics or other periods can also be added here.</p>';
       html += '<table class="grid-table resources-table"><thead><tr><th>Metric</th><th>Period</th><th>Value</th><th></th></tr></thead><tbody id="natAvgFlatBody">';
-      allRows.forEach(r => {
-        const isPercent = r.metric !== 'Permanent Exclusions';
-        html += `<tr>
-          <td><input type="text" list="natAvgMetricList" data-field="metric" value="${r.metric}" placeholder="Metric name"></td>
-          <td><input type="text" data-field="period" value="${r.period || ''}" placeholder="e.g. Autumn 1 2026"></td>
-          <td><div style="display:flex;align-items:center;gap:6px;"><input type="text" data-field="value" value="${r.value || ''}">${isPercent ? '<span style="color:#5A6B80;font-weight:700;">%</span>' : ''}</div></td>
+      others.forEach((r, i) => {
+        html += `<tr data-orig-index="${i}">
+          <td><input type="text" list="natAvgMetricList" data-field="metric" value="${escapeHtml(r.metric)}" placeholder="Metric name"></td>
+          <td><input type="text" data-field="period" value="${escapeHtml(r.period || '')}" placeholder="e.g. Autumn 1 2026"></td>
+          <td><div style="display:flex;align-items:center;gap:6px;"><input type="text" data-field="value" value="${escapeHtml(r.value || '')}"></div></td>
           <td>
             <button type="button" onclick="duplicateNatAvgRow(this)" style="background:#E6F4F1;color:#0D7377;border:none;border-radius:6px;padding:6px 10px;font-size:12px;font-weight:700;cursor:pointer;margin-right:6px;">Duplicate</button>
             <button type="button" onclick="this.closest('tr').remove()" style="background:#F3B8B8;color:#7A1F1F;border:none;border-radius:6px;padding:6px 10px;font-size:12px;font-weight:700;cursor:pointer;">Remove</button>
@@ -739,9 +803,9 @@
     const value = sourceTr.querySelector('[data-field="value"]').value;
     const tr = document.createElement('tr');
     tr.innerHTML = `
-      <td><input type="text" list="natAvgMetricList" data-field="metric" value="${metric}" placeholder="Metric name"></td>
-      <td><input type="text" data-field="period" value="${period}" placeholder="e.g. Autumn 1 2026"></td>
-      <td><div style="display:flex;align-items:center;gap:6px;"><input type="text" data-field="value" value="${value}"></div></td>
+      <td><input type="text" list="natAvgMetricList" data-field="metric" value="${escapeHtml(metric)}" placeholder="Metric name"></td>
+      <td><input type="text" data-field="period" value="${escapeHtml(period)}" placeholder="e.g. Autumn 1 2026"></td>
+      <td><div style="display:flex;align-items:center;gap:6px;"><input type="text" data-field="value" value="${escapeHtml(value)}"></div></td>
       <td>
         <button type="button" onclick="duplicateNatAvgRow(this)" style="background:#E6F4F1;color:#0D7377;border:none;border-radius:6px;padding:6px 10px;font-size:12px;font-weight:700;cursor:pointer;margin-right:6px;">Duplicate</button>
         <button type="button" onclick="this.closest('tr').remove()" style="background:#F3B8B8;color:#7A1F1F;border:none;border-radius:6px;padding:6px 10px;font-size:12px;font-weight:700;cursor:pointer;">Remove</button>
@@ -755,26 +819,18 @@
 
   async function saveNatAvgSection() {
     const section = NATAVG_SECTIONS[natAvgSectionKey];
+    if (section.type === 'flat') { return saveNatAvgFlat(section); }
     const container = document.getElementById('resourcesContent');
     const rows = [];
 
-    if (section.type === 'flat') {
-      container.querySelectorAll('#natAvgFlatBody tr').forEach(tr => {
-        const metric = tr.querySelector('[data-field="metric"]').value.trim();
-        const period = tr.querySelector('[data-field="period"]').value.trim();
-        const value = tr.querySelector('[data-field="value"]').value.trim();
-        if (metric && (period || value)) rows.push({ category: section.category, metric, period, value });
+    container.querySelectorAll('tr[data-metric]').forEach(tr => {
+      const metric = tr.dataset.metric;
+      tr.querySelectorAll('[data-field="year"]').forEach(el => {
+        const year = el.dataset.year;
+        const value = el.value.trim();
+        if (value) rows.push({ category: section.category, metric, period: year, value });
       });
-    } else {
-      container.querySelectorAll('tr[data-metric]').forEach(tr => {
-        const metric = tr.dataset.metric;
-        tr.querySelectorAll('[data-field="year"]').forEach(el => {
-          const year = el.dataset.year;
-          const value = el.value.trim();
-          if (value) rows.push({ category: section.category, metric, period: year, value });
-        });
-      });
-    }
+    });
 
     const { error: delErr } = await sb.from('resource_stats').delete().eq('category', section.category);
     if (delErr) { showAmendToast('⚠ Save failed — see browser console', true); console.error(delErr); return; }
@@ -783,6 +839,117 @@
       if (error) { showAmendToast('⚠ Save failed — see browser console', true); console.error(error); return; }
     }
     showAmendToast(`✓ ${section.label} saved`);
+    await loadResources();
+  }
+
+  // V70-03 — non-destructive save for the Attendance & Behaviour matrix. The previous implementation deleted
+  // EVERY row of the category and re-inserted whatever was on screen; that is deliberately not used here.
+  // Only cells/rows the admin actually changed are written, each addressed by its exact stored identity,
+  // inside the 'National Averages' category only. Updates run first, then inserts, then (confirmed) deletes,
+  // so a failure stops before anything destructive. Not atomic: a mid-way failure is reported and the
+  // page reloads the real stored state.
+  async function saveNatAvgFlat(section) {
+    const container = document.getElementById('resourcesContent');
+    const cat = section.category;
+    const norm = v => String(v == null ? '' : v).trim();
+    const same = (a, b) => norm(a) === norm(b);
+    const ops = { update: [], insert: [], remove: [] };
+    const describe = r => `${r.metric} / ${r.period || '(no period)'} = ${r.value}`;
+
+    // Matrix cells
+    container.querySelectorAll('#natAvgMatrix input[data-field="cell"]').forEach(inp => {
+      const metric = inp.dataset.metric, col = inp.dataset.col;
+      const value = norm(inp.value), orig = norm(inp.dataset.orig);
+      if (value === orig) return;                                   // untouched cell: never written
+      const row = NATAVG_CELL_ROWS[natAvgCellKey(metric, col)];
+      if (row) {
+        if (value) ops.update.push({ row, set: { value } });
+        else ops.remove.push({ row });
+      } else if (value) {
+        ops.insert.push({ category: cat, metric, period: col, value });
+      }
+    });
+
+    // "Other stored values" rows
+    const seen = new Set();
+    container.querySelectorAll('#natAvgFlatBody tr').forEach(tr => {
+      const metric = norm(tr.querySelector('[data-field="metric"]').value);
+      const period = norm(tr.querySelector('[data-field="period"]').value);
+      const value = norm(tr.querySelector('[data-field="value"]').value);
+      const idx = tr.dataset.origIndex;
+      if (idx !== undefined) {
+        seen.add(Number(idx));
+        const row = NATAVG_OTHER_ROWS[Number(idx)];
+        if (!metric || (!period && !value)) { ops.remove.push({ row }); return; }  // emptied row = removed (as before)
+        if (!same(metric, row.metric) || !same(period, row.period) || !same(value, row.value)) {
+          ops.update.push({ row, set: { metric, period, value } });
+        }
+      } else if (metric && (period || value)) {
+        ops.insert.push({ category: cat, metric, period, value });
+      }
+    });
+    NATAVG_OTHER_ROWS.forEach((row, i) => { if (!seen.has(i)) ops.remove.push({ row }); }); // row removed with its Remove button
+
+    if (!ops.update.length && !ops.insert.length && !ops.remove.length) {
+      showAmendToast('No changes to save');
+      return;
+    }
+
+    // Re-read the stored rows and refuse if anything we are about to touch has changed since this page loaded.
+    const { data: fresh, error: readErr } = await sb.from('resource_stats').select('*').eq('category', cat);
+    if (readErr) { console.error(readErr); showAmendToast('⚠ Nothing was saved: could not re-read the stored values', true, 7000); return; }
+    const identity = r => (r.id !== undefined && r.id !== null) ? 'id:' + r.id : 'k:' + JSON.stringify([r.metric, r.period == null ? null : r.period]);
+    const freshByKey = {};
+    (fresh || []).forEach(r => { (freshByKey[identity(r)] = freshByKey[identity(r)] || []).push(r); });
+    const stale = [];
+    [...ops.update, ...ops.remove].forEach(o => {
+      const f = freshByKey[identity(o.row)];
+      if (!f || !f.some(x => same(x.value, o.row.value))) stale.push(describe(o.row));
+    });
+    ops.insert.forEach(o => {
+      if ((fresh || []).some(x => same(x.metric, o.metric) && same(x.period, o.period))) stale.push(`${o.metric} / ${o.period} (already stored)`);
+    });
+    if (stale.length) {
+      showAmendToast('⚠ Nothing was saved: these values changed since the page loaded — reload and try again: ' + stale.slice(0, 3).join('; '), true, 9000);
+      return;
+    }
+
+    if (ops.remove.length) {
+      const list = ops.remove.slice(0, 12).map(o => '• ' + describe(o.row)).join('\n') + (ops.remove.length > 12 ? `\n…and ${ops.remove.length - 12} more` : '');
+      if (!confirm(`This will remove ${ops.remove.length} stored value${ops.remove.length === 1 ? '' : 's'}:\n\n${list}\n\nOnly these exact entries are removed; everything else is kept. Continue?`)) return;
+    }
+
+    const target = (q, row) => {
+      if (row.id !== undefined && row.id !== null) return q.eq('id', row.id);
+      q = q.eq('category', cat).eq('metric', row.metric);
+      return row.period == null ? q.is('period', null) : q.eq('period', row.period);
+    };
+    const done = { update: 0, insert: 0, remove: 0 };
+    try {
+      for (const o of ops.update) {
+        const { data, error } = await target(sb.from('resource_stats').update(o.set), o.row).select('metric');
+        if (error) throw error;
+        if (!data || !data.length) throw new Error('update affected no rows (permission denied?)');
+        done.update++;
+      }
+      if (ops.insert.length) {
+        const { error } = await sb.from('resource_stats').insert(ops.insert);
+        if (error) throw error;
+        done.insert = ops.insert.length;
+      }
+      for (const o of ops.remove) {
+        const { data, error } = await target(sb.from('resource_stats').delete(), o.row).select('metric');
+        if (error) throw error;
+        if (!data || !data.length) throw new Error('delete affected no rows (permission denied?)');
+        done.remove++;
+      }
+    } catch (err) {
+      console.error('National Averages save failed:', err);
+      showAmendToast(`⚠ Save stopped part-way (${done.update} updated, ${done.insert} added, ${done.remove} removed). Showing the stored values; check them and save again if needed.`, true, 10000);
+      await loadResources();
+      return;
+    }
+    showAmendToast(`✓ ${section.label} saved (${done.update} updated, ${done.insert} added, ${done.remove} removed)`);
     await loadResources();
   }
 
@@ -1140,7 +1307,7 @@
           <div class="tab-panel" id="panel-${s.id}-assess">
             <div class="detail-section" style="margin-top:0;">
               <h4>Assessment Setup — ${assessC.pct}% complete (${assessC.filled} of ${assessC.total} assessments)</h4>
-              ${renderMiniTable(['Assessment', 'Planned', 'Date'], assess.map(a => [a.assessment_name, a.planned, a.assessment_date]))}
+              ${renderMiniTable(['Assessment', 'Planned', 'Date'], assess.map(a => [assessmentDisplayLabel(a.assessment_name), a.planned, a.assessment_date]))}
             </div>
           </div>
           <div class="tab-panel" id="panel-${s.id}-tracker">
@@ -1499,6 +1666,10 @@
   const AMEND_TRACKER_SECTIONS = ['Context', 'Safeguarding', 'Inclusion', 'Curriculum & Teaching', 'Achievement', 'Attendance & Behaviour', 'PDW', 'Leadership & Governance', 'Finance & Resources'];
   const AMEND_REPORTING_PERIOD_ROWS = ['Autumn 1', 'Autumn 2', 'Spring 1', 'Spring 2', 'Summer 1', 'Summer 2'];
   const AMEND_ASSESSMENT_ROWS = ['Year 11 PPE 1', 'Year 11 PPE 2', 'Year 13 PPE 1', 'Year 13 PPE 2'];
+  // V70-05: display label only. Stored assessment_name values (and data-assessment keys) are unchanged.
+  function assessmentDisplayLabel(name) {
+    return typeof name === 'string' ? name.replace(/^(Year (?:11|13)) PPE ([12])$/, '$1 PPE / Mocks $2') : name;
+  }
   const AMEND_ALL_YEAR_GROUPS = ['EYFS', 'Y1', 'Y2', 'Y3', 'Y4', 'Y5', 'Y6', 'Y7', 'Y8', 'Y9', 'Y10', 'Y11', 'Y12', 'Y13'];
   const AMEND_PHASE_YEAR_GROUPS = {
     'Primary': ['EYFS', 'Y1', 'Y2', 'Y3', 'Y4', 'Y5', 'Y6'],
@@ -2994,7 +3165,7 @@
   function buildAmendContacts(schoolId) {
     const contacts = SCHOOL_AMEND_DATA[schoolId].contacts;
     const find = role => (contacts || []).find(c => c.role === role) || {};
-    let html = '<div class="card"><div class="card-head">Key Contacts</div><div class="card-body"><table class="grid-table"><thead><tr><th>Role</th><th>Name / Surname</th><th>Email Address</th></tr></thead><tbody>';
+    let html = '<div class="card"><div class="card-head">Key Contacts</div><div class="card-body"><table class="grid-table amend-contacts-table"><thead><tr><th>Role</th><th>Name / Surname</th><th>Email Address</th></tr></thead><tbody>';
     AMEND_CONTACT_ROLES.forEach(role => {
       const c = find(role);
       html += `<tr data-role="${role}"><td class="label-cell">${role}</td>`;
@@ -3199,7 +3370,7 @@
     let html = '<div class="card"><div class="card-head">Assessment Setup</div><div class="card-body"><table class="grid-table"><thead><tr><th>Assessment</th><th>Planned</th><th>Date</th></tr></thead><tbody>';
     AMEND_ASSESSMENT_ROWS.forEach(name => {
       const a = find(name);
-      html += `<tr data-assessment="${name}"><td class="label-cell">${name}</td>`;
+      html += `<tr data-assessment="${name}"><td class="label-cell">${assessmentDisplayLabel(name)}</td>`;
       html += `<td><select><option value="">—</option><option${a.planned === 'Yes' ? ' selected' : ''}>Yes</option><option${a.planned === 'No' ? ' selected' : ''}>No</option></select></td>`;
       html += `<td><input type="date" value="${a.assessment_date || ''}"></td></tr>`;
     });

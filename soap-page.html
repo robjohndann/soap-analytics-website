@@ -176,6 +176,15 @@
   .panel-modal-body table.mini.wrap-headers th { max-width: none; }
   .panel-modal-body table.mini td.guidance-cell { font-size: 13px; }
   .panel-modal-body table.mini td.rowlabel { min-width: 200px; }
+  /* V70-01: Year Group Cohorts zoom only. Re-balances the existing width: narrower year-group column,
+     wider PAN / PAL % / PAH % columns (the base 34px cap and 1px padding for the summary columns do not apply in the zoom). */
+  .panel-modal-body table.mini.narrow-summary-cols { table-layout: fixed; min-width: 640px; }
+  .panel-modal-body table.mini.narrow-summary-cols th:first-child,
+  .panel-modal-body table.mini.narrow-summary-cols td.rowlabel { width: 10%; min-width: 0; }
+  .panel-modal-body table.mini.narrow-summary-cols th:nth-child(n+2):nth-child(-n+7) { width: 10.5%; }
+  .panel-modal-body table.mini.narrow-summary-cols th:nth-child(n+8) { width: 9%; }
+  .panel-modal-body table.mini.narrow-summary-cols th:nth-child(n+8),
+  .panel-modal-body table.mini.narrow-summary-cols td:nth-child(n+8) { max-width: none; padding: 8px 6px; white-space: nowrap; }
   .panel-modal-overlay.wide-modal .panel-modal-content { max-width: 1400px; width: 96%; }
   .panel-modal-overlay.wide-modal table.mini td.rowlabel { min-width: 320px; white-space: nowrap; }
 
