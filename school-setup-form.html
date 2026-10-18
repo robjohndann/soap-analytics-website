@@ -608,7 +608,7 @@
       return;
     }
 
-    const FULL_ACCESS_ROLES = ['Headteacher', 'Executive Headteacher', 'CEO', 'School Improvement Director'];
+    const FULL_ACCESS_ROLES = ['Headteacher', 'multi_school_leader', 'Executive Headteacher', 'CEO', 'School Improvement Director'];
     if (!FULL_ACCESS_ROLES.includes(linkRow.role)) {
       banner.innerHTML = `You're logged in as ${session.user.email}, but this account is assigned to ${linkRow.role}, not School Setup.`;
       return;

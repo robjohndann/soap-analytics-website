@@ -357,19 +357,19 @@
 
   // ----------------------------------------------------------------------
   // V63 Messaging — Leadership UX (portal.html). Reads message_threads/
-  // support_messages already fetched for this school in checkLogin()'s
-  // batch (RLS: has_school_role() already restricts these to this school
-  // for a leadership caller). Every mutation goes exclusively through the
+  // support_messages fetched in checkLogin()'s batch. V71-03: conversations are PRIVATE
+  // to their recipient (notify_user_id); the database (RLS + RPC checks) enforces this and the
+  // .eq('notify_user_id', …) filters here only keep the UI consistent with it. Every mutation goes exclusively through the
   // hardened msg_leadership_* RPCs — no raw insert/update/delete.
   // ----------------------------------------------------------------------
 
   async function refreshMessagingData() {
     const [threadsRes, messagesRes] = await Promise.all([
-      sb.from('message_threads').select('*').eq('school_id', MSG_SCHOOL_ID),
+      sb.from('message_threads').select('*').eq('school_id', MSG_SCHOOL_ID).eq('notify_user_id', MSG_USER_ID),
       sb.from('support_messages').select('*').eq('school_id', MSG_SCHOOL_ID)
     ]);
     MSG_THREADS = threadsRes.data || [];
-    MSG_ALL_MESSAGES = messagesRes.data || [];
+    MSG_ALL_MESSAGES = (messagesRes.data || []).filter(m => MSG_THREADS.some(t => t.id === m.thread_id));
     refreshUnreadFromLocal(); // V67 — header unread indicator follows every refresh
   }
 
@@ -382,8 +382,8 @@
   // permission the page already uses. The poll never re-renders the list, so it
   // cannot disturb a half-written reply; a sequence number discards any poll
   // result requested before a later local change.
-  // NOTE: unread_by_school is one flag per conversation for the whole school, so
-  // once any leadership user opens a conversation it is read for all of them.
+  // NOTE: unread_by_school is one flag per conversation; since each conversation now has a single
+  // recipient, it is that recipient's own unread state.
   // ----------------------------------------------------------------------
   const UNREAD_POLL_MS = 60000;
   let UNREAD_SEQ = 0;
@@ -419,7 +419,7 @@
     const seq = UNREAD_SEQ;
     try {
       const { count, error } = await sb.from('message_threads').select('id', { count: 'exact', head: true })
-        .eq('school_id', MSG_SCHOOL_ID).eq('unread_by_school', true);
+        .eq('school_id', MSG_SCHOOL_ID).eq('notify_user_id', MSG_USER_ID).eq('unread_by_school', true);
       if (error) throw error;
       if (seq === UNREAD_SEQ && typeof count === 'number') setUnreadIndicator(count);
     } catch (err) {
@@ -449,13 +449,13 @@
     if (!MSG_SCHOOL_ID || MSG_ACTIVE_THREAD_ID || MSG_COMPOSE_MODE) return;
     try {
       const [threadsRes, messagesRes] = await Promise.all([
-        sb.from('message_threads').select('*').eq('school_id', MSG_SCHOOL_ID),
+        sb.from('message_threads').select('*').eq('school_id', MSG_SCHOOL_ID).eq('notify_user_id', MSG_USER_ID),
         sb.from('support_messages').select('*').eq('school_id', MSG_SCHOOL_ID)
       ]);
       if (threadsRes.error || messagesRes.error) throw (threadsRes.error || messagesRes.error);
       if (MSG_ACTIVE_THREAD_ID || MSG_COMPOSE_MODE) return; // user moved on while loading
       MSG_THREADS = threadsRes.data || [];
-      MSG_ALL_MESSAGES = messagesRes.data || [];
+      MSG_ALL_MESSAGES = (messagesRes.data || []).filter(m => MSG_THREADS.some(t => t.id === m.thread_id));
       renderLeadershipSupportPanel();
       refreshUnreadFromLocal();
     } catch (err) {
@@ -727,9 +727,12 @@
     window.location.href = 'login.html';
   }
 
-  const FULL_ACCESS_ROLES = ['Headteacher', 'Executive Headteacher', 'CEO', 'School Improvement Director'];
+  // V71-01: stored role identifiers are shown with a friendly label.
+  function roleLabel(role) { return role === 'multi_school_leader' ? 'Multi-School Leader' : role; }
+  const FULL_ACCESS_ROLES = ['Headteacher', 'multi_school_leader', 'Executive Headteacher', 'CEO', 'School Improvement Director'];
   // V63 messaging state (leadership thread view only — Contributor's panel
   // stays a single stateless textarea, no fetch, no state needed for it).
+  let MSG_USER_ID = null;
   let MSG_THREADS = [];
   let MSG_ALL_MESSAGES = [];
   let MSG_SCHOOL_ID = null;
@@ -749,6 +752,7 @@
   ];
   const FORM_ACCESS = {
     'Headteacher': FULL_ACCESS_FORMS,
+    'multi_school_leader': FULL_ACCESS_FORMS, // V71-01: same forms as Headteacher
     'Executive Headteacher': FULL_ACCESS_FORMS,
     'CEO': FULL_ACCESS_FORMS,
     'School Improvement Director': FULL_ACCESS_FORMS,
@@ -819,7 +823,7 @@
           <h1>Choose a school</h1>
           <p>Your account has access to more than one school. Select the school you want to work with.</p>
           <div style="margin-top:18px;display:grid;gap:10px;">
-            ${linkRows.map(r => `<a href="portal.html?school_id=${encodeURIComponent(r.school_id)}" style="display:block;padding:14px 16px;border-radius:8px;background:#0D2B4E;color:#fff;text-decoration:none;font-weight:700;">${escapeHtml(schoolNameById[r.school_id] || 'School')} <span style="opacity:.7;font-weight:500;">— ${escapeHtml(r.role)}</span></a>`).join('')}
+            ${linkRows.map(r => `<a href="portal.html?school_id=${encodeURIComponent(r.school_id)}" style="display:block;padding:14px 16px;border-radius:8px;background:#0D2B4E;color:#fff;text-decoration:none;font-weight:700;">${escapeHtml(schoolNameById[r.school_id] || 'School')}</a>`).join('')}
           </div>
         </div>`;
       return;
@@ -880,7 +884,7 @@
       sb.from('finance_data').select('*').eq('school_id', linkRow.school_id),
       sb.from('published_soaps').select('*').eq('school_id', linkRow.school_id).order('published_at', { ascending: false }),
       sb.from('idsr_uploads').select('*').eq('school_id', linkRow.school_id).maybeSingle(),
-      sb.from('message_threads').select('*').eq('school_id', linkRow.school_id),
+      sb.from('message_threads').select('*').eq('school_id', linkRow.school_id).eq('notify_user_id', session.user.id),
       sb.from('support_messages').select('*').eq('school_id', linkRow.school_id)
     ]);
 
@@ -1097,7 +1101,7 @@
 
     document.getElementById('statusArea').innerHTML = `
       <div class="eyebrow">SOAP Analytics</div>
-      <div class="greeting">${escapeHtml(school.name || 'Your school')} — <strong>${escapeHtml(linkRow.role)}</strong></div>
+      <div class="greeting">${escapeHtml(school.name || 'Your school')} — <strong>${escapeHtml(roleLabel(linkRow.role))}</strong></div>
       <div class="accordion">${accordionHtml}</div>
     `;
 
@@ -1142,8 +1146,9 @@
 
     if (isHeadteacher) {
       MSG_SCHOOL_ID = linkRow.school_id;
+      MSG_USER_ID = session.user.id;
       MSG_THREADS = threadsRes.data || [];
-      MSG_ALL_MESSAGES = messagesRes.data || [];
+      MSG_ALL_MESSAGES = (messagesRes.data || []).filter(m => MSG_THREADS.some(t => t.id === m.thread_id));
       renderLeadershipSupportPanel();
       refreshUnreadFromLocal();   // V67 — header unread indicator (leadership only)
       startUnreadPolling();       // V67 — reconciles with the server every 60s
