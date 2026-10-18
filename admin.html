@@ -307,15 +307,21 @@
       <div class="field">
         <label for="inviteRole">Role</label>
         <select id="inviteRole">
-          <option>Headteacher</option>
-          <option>Executive Headteacher</option>
-          <option>CEO</option>
-          <option>School Improvement Director</option>
+          <option value="Headteacher">Headteacher</option>
+          <option value="multi_school_leader">Multi-School Leader</option>
         </select>
+        <div class="school-meta" style="margin-top:6px;">A Multi-School Leader is invited for one school here; assign further schools in <b>Multi-School Leaders</b> below.</div>
       </div>
     </div>
     <button type="button" class="save-amend-btn" id="inviteSubmitBtn" style="margin-top:18px;" onclick="inviteSubscriber()">Send Invitation</button>
     <div id="inviteResultMsg" style="margin-top:12px; font-size:13px; font-weight:700;"></div>
+  </div>
+
+  <div class="page-title" id="mslSection">Multi-School Leaders</div>
+  <div class="page-sub">One account, several schools. Each assigned school gives the leader Headteacher-level access to that school only — never to this Admin area. Assignments are changed with admin-only database functions; the account itself is never created or deleted here.</div>
+  <div class="school-card" style="margin-bottom:40px; padding:20px 22px;">
+    <div id="mslContent"><div class="status-msg">Loading…</div></div>
+    <div id="mslMsg" style="margin-top:12px; font-size:13px; font-weight:700;"></div>
   </div>
 
 </div>
@@ -1192,6 +1198,7 @@
     USERS_ACCESS_HOOKS = { schools, schoolUsers, sectionAccessRows, renderFragment: renderUsersAccessFragment };
 
     renderInviteSchoolOptions(schools);
+    renderLeaders();   // V71-01
 
     await loadResources();
 
@@ -1847,6 +1854,129 @@
       .join('');
   }
 
+  // ----------------------------------------------------------------------
+  // V71-01 — Multi-School Leaders. Reuses the existing school_users model: one
+  // row per (school, user) with role 'multi_school_leader'. Adding/removing a
+  // school is a single admin-only RPC call (SECURITY DEFINER, checks the
+  // admins table itself); this page never writes school_users directly and
+  // never creates or deletes an account.
+  const MSL_ROLE = 'multi_school_leader';
+  function roleLabel(role) { return role === MSL_ROLE ? 'Multi-School Leader' : role; }
+  const MSL_NAMES = {};          // auth_user_id -> { email, full_name } (best effort, from admin_list_school_access)
+  let MSL_BUSY = false;
+
+  function mslLeaders() {
+    const hooks = USERS_ACCESS_HOOKS;
+    if (!hooks) return [];
+    const byUser = {};
+    (hooks.schoolUsers || []).filter(u => u.role === MSL_ROLE).forEach(u => {
+      (byUser[u.auth_user_id] = byUser[u.auth_user_id] || []).push(u.school_id);
+    });
+    return Object.keys(byUser).map(id => ({ id, schoolIds: byUser[id] }));
+  }
+
+  async function mslLoadNames(leaders) {
+    const need = new Set();
+    leaders.forEach(l => { if (!MSL_NAMES[l.id]) l.schoolIds.forEach(sid => need.add(sid)); });
+    await Promise.all(Array.from(need).map(async sid => {
+      try {
+        const { data, error } = await sb.rpc('admin_list_school_access', { p_school_id: sid });
+        if (error || !Array.isArray(data)) return;
+        data.forEach(r => { if (r.role === MSL_ROLE && !MSL_NAMES[r.auth_user_id]) MSL_NAMES[r.auth_user_id] = { email: r.email || '', full_name: r.full_name || '' }; });
+      } catch (_) { /* names are optional; the user id is always shown */ }
+    }));
+  }
+
+  async function renderLeaders() {
+    const box = document.getElementById('mslContent');
+    if (!box || !USERS_ACCESS_HOOKS) return;
+    const schools = (USERS_ACCESS_HOOKS.schools || []).slice().sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+    const nameOf = id => (schools.find(s => s.id === id) || {}).name || 'Unknown school';
+    const leaders = mslLeaders();
+    if (!leaders.length) {
+      box.innerHTML = '<div class="school-meta">No Multi-School Leaders yet. Use <b>Invite Subscriber</b> above (role: Multi-School Leader) to create the first assignment; further schools are added here.</div>';
+      return;
+    }
+    await mslLoadNames(leaders);
+    const rows = leaders.map(l => {
+      const nm = MSL_NAMES[l.id] || {};
+      const assigned = l.schoolIds.slice().sort((a, b) => nameOf(a).localeCompare(nameOf(b)));
+      const chips = assigned.map(sid =>
+        `<span style="display:inline-flex;align-items:center;gap:6px;background:#EAF3F2;border-radius:14px;padding:4px 6px 4px 10px;margin:2px 6px 2px 0;font-size:12px;font-weight:700;color:#0D2B4E;">${escapeHtml(nameOf(sid))}<button type="button" class="msl-remove" data-user-id="${escapeHtml(l.id)}" data-school-id="${escapeHtml(sid)}" data-school-name="${escapeHtml(nameOf(sid))}" data-last="${assigned.length === 1 ? '1' : '0'}" style="border:none;background:#fff;border-radius:50%;width:20px;height:20px;cursor:pointer;color:#B3261E;font-weight:700;" aria-label="Remove ${escapeHtml(nameOf(sid))}">×</button></span>`).join('');
+      const free = schools.filter(s => !l.schoolIds.includes(s.id));
+      const opts = free.map(s => `<option value="${escapeHtml(s.id)}">${escapeHtml(s.name)}</option>`).join('');
+      return `<tr>
+        <td data-label="Leader"><span class="acc-person-name">${nm.full_name ? escapeHtml(nm.full_name) : '<span style="color:#8FA0B3;">—</span>'}</span><span class="acc-person-email">${nm.email ? escapeHtml(nm.email) : ''}</span><span class="acc-person-id">ID: ${escapeHtml(l.id)}</span></td>
+        <td data-label="Assigned schools">${chips}</td>
+        <td data-label="Add a school">${free.length ? `<select class="msl-add-select" data-user-id="${escapeHtml(l.id)}" style="max-width:220px;"><option value="">Choose a school…</option>${opts}</select> <button type="button" class="msl-add save-amend-btn" data-user-id="${escapeHtml(l.id)}" style="padding:6px 12px;">Add</button>` : '<span style="color:#5A6B80;font-size:12px;">Assigned to every school</span>'}</td>
+      </tr>`;
+    }).join('');
+    box.innerHTML = `<div style="overflow-x:auto;"><table class="mini-table acc-table" style="min-width:720px;"><thead><tr><th>Leader</th><th>Assigned schools</th><th>Add a school</th></tr></thead><tbody>${rows}</tbody></table></div>
+      <div style="font-size:11px;color:#5A6B80;margin-top:8px;">Removing a school removes only that school's Multi-School Leader membership; the account, other schools and anything the leader entered are untouched. A leader's last school cannot be removed here.</div>`;
+  }
+
+  function mslSay(text, kind) {
+    const el = document.getElementById('mslMsg');
+    if (!el) return;
+    el.style.color = kind === 'error' ? '#B3261E' : kind === 'ok' ? '#0D7377' : '#5A6B80';
+    el.textContent = text;
+  }
+
+  function mslRpcMissing(err) {
+    const t = String((err && (err.code || '')) + ' ' + (err && err.message || '')).toLowerCase();
+    return t.includes('pgrst202') || t.includes('42883') || t.includes('could not find the function') || t.includes('does not exist');
+  }
+
+  async function mslCall(fn, args, okText) {
+    if (MSL_BUSY) return;
+    MSL_BUSY = true;
+    mslSay('Working…', 'info');
+    try {
+      const { data, error } = await sb.rpc(fn, args);
+      if (error) throw error;
+      const status = data && data.status;
+      if (status === 'added' || status === 'removed' || status === 'already_member') {
+        mslSay(status === 'already_member' ? 'Already assigned — nothing changed.' : okText, 'ok');
+        await loadAdmin();      // same refresh the other admin saves use
+      } else {
+        const why = {
+          not_admin: 'Only the platform administrator can change assignments.',
+          not_a_leader: 'That account is not a Multi-School Leader, so no school was added.',
+          other_role_at_school: 'That account already has a different role at this school; nothing was changed.',
+          has_section_grants: 'That leader has section grants at this school. Review them in Users & Access first; nothing was removed.',
+          not_leader_membership: 'That membership is not a Multi-School Leader membership; nothing was removed.',
+          not_found: 'No such assignment — nothing changed.',
+          last_school: 'A leader’s last school cannot be removed here; nothing changed.'
+        }[status] || ('Not changed (' + (status || 'unknown') + ').');
+        mslSay('⚠ ' + why, 'error');
+      }
+    } catch (err) {
+      console.error('Multi-School Leader change failed:', err);
+      mslSay(mslRpcMissing(err)
+        ? '⚠ The backend function ' + fn + ' is not installed yet (see V71_Supabase_Requirements.md). Nothing was changed.'
+        : '⚠ Nothing was changed: ' + ((err && err.message) || 'unknown error'), 'error');
+    } finally {
+      MSL_BUSY = false;
+    }
+  }
+
+  document.addEventListener('click', e => {
+    const add = e.target.closest && e.target.closest('.msl-add');
+    if (add) {
+      const sel = add.parentElement.querySelector('.msl-add-select');
+      if (!sel || !sel.value) { mslSay('Choose a school first.', 'error'); return; }
+      const schoolName = sel.options[sel.selectedIndex].text;
+      mslCall('admin_add_school_membership', { p_school_id: sel.value, p_user_id: add.dataset.userId, p_role: MSL_ROLE }, 'Added ' + schoolName + '.');
+      return;
+    }
+    const rem = e.target.closest && e.target.closest('.msl-remove');
+    if (rem) {
+      if (rem.dataset.last === '1') { mslSay('⚠ A leader’s last school cannot be removed here; nothing changed.', 'error'); return; }
+      if (!confirm('Remove this leader’s access to ' + rem.dataset.schoolName + '?\n\nThe account and the leader’s other schools are not affected.')) return;
+      mslCall('admin_remove_school_membership', { p_school_id: rem.dataset.schoolId, p_user_id: rem.dataset.userId, p_role: MSL_ROLE }, 'Removed ' + rem.dataset.schoolName + '.');
+    }
+  });
+
   // Invite Subscriber — this function only ever calls the deployed
   // admin-invite-subscriber Edge Function via supabase.functions.invoke(),
   // which automatically attaches the current admin's own session token.
@@ -1953,7 +2083,7 @@
   // come from the admin-only RPC when installed; otherwise the table still
   // renders from data this page already loads (section_access names/emails),
   // with status "Unknown" and no Resend button — nothing is guessed.
-  const ACCESS_LEADERSHIP = ['Headteacher', 'Executive Headteacher', 'CEO', 'School Improvement Director'];
+  const ACCESS_LEADERSHIP = ['Headteacher', 'multi_school_leader', 'Executive Headteacher', 'CEO', 'School Improvement Director'];
   function accessCategory(role, hasGrants) {
     if (ACCESS_LEADERSHIP.indexOf(role) !== -1) return 'Leadership';
     if (role === 'Viewer') return 'Viewer';
@@ -2027,7 +2157,7 @@
         <tr>
           <td data-label="Name"><span class="acc-person-name">${r.full_name ? escapeHtml(r.full_name) : '<span style="color:#8FA0B3;">—</span>'}</span><span class="acc-person-id">ID: ${escapeHtml(r.auth_user_id)}</span></td>
           <td data-label="Email"><span class="acc-person-email">${r.email ? escapeHtml(r.email) : '<span style="color:#8FA0B3;">—</span>'}</span></td>
-          <td data-label="Role"><span class="acc-cat acc-cat-${r.category.toLowerCase()}">${r.category}</span> ${escapeHtml(r.role ?? '—')}${r.sections.length ? `<span class="acc-role-desc">${r.sections.map(escapeHtml).join(', ')}</span>` : ''}</td>
+          <td data-label="Role"><span class="acc-cat acc-cat-${r.category.toLowerCase()}">${r.category}</span> ${escapeHtml(r.role ? roleLabel(r.role) : '—')}${r.sections.length ? `<span class="acc-role-desc">${r.sections.map(escapeHtml).join(', ')}</span>` : ''}</td>
           <td data-label="Status">${statusCell}</td>
           <td data-label="Actions">${action}</td>
         </tr>`;
@@ -2337,7 +2467,7 @@
     const supportContent = document.getElementById('supportContent');
     const schoolOptions = MSG_SCHOOLS_REF.map(s => `<option value="${s.id}" ${MSG_COMPOSE_SCHOOL_ID === s.id ? 'selected' : ''}>${escapeHtml(s.name)}</option>`).join('');
     const recipientOptions = MSG_COMPOSE_RECIPIENTS.length
-      ? MSG_COMPOSE_RECIPIENTS.map(r => `<option value="${r.auth_user_id}">${escapeHtml(r.email)} (${escapeHtml(r.role)})</option>`).join('')
+      ? MSG_COMPOSE_RECIPIENTS.map(r => `<option value="${r.auth_user_id}">${escapeHtml(r.email)} (${escapeHtml(roleLabel(r.role))})</option>`).join('')
       : '<option value="">No registered leadership users found for this school</option>';
     const recipientErrorBanner = MSG_COMPOSE_ERROR
       ? `<div style="background:#F3B8B8;color:#7A1F1F;border-radius:6px;padding:8px 12px;font-size:12px;font-weight:700;margin:6px 0 14px;">Lookup failed: ${escapeHtml(MSG_COMPOSE_ERROR)}</div>`

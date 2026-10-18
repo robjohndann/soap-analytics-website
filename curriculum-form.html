@@ -263,7 +263,7 @@
       return;
     }
 
-    const FULL_ACCESS_ROLES = ['Headteacher', 'Executive Headteacher', 'CEO', 'School Improvement Director'];
+    const FULL_ACCESS_ROLES = ['Headteacher', 'multi_school_leader', 'Executive Headteacher', 'CEO', 'School Improvement Director'];
     if (!FULL_ACCESS_ROLES.includes(linkRow.role) && linkRow.role !== 'Curriculum & Teaching') {
       // V60: a Contributor with a specific section_access grant for THIS
       // exact school+section is also allowed in, even though their

@@ -727,7 +727,9 @@
     window.location.href = 'login.html';
   }
 
-  const FULL_ACCESS_ROLES = ['Headteacher', 'Executive Headteacher', 'CEO', 'School Improvement Director'];
+  // V71-01: stored role identifiers are shown with a friendly label.
+  function roleLabel(role) { return role === 'multi_school_leader' ? 'Multi-School Leader' : role; }
+  const FULL_ACCESS_ROLES = ['Headteacher', 'multi_school_leader', 'Executive Headteacher', 'CEO', 'School Improvement Director'];
   // V63 messaging state (leadership thread view only — Contributor's panel
   // stays a single stateless textarea, no fetch, no state needed for it).
   let MSG_THREADS = [];
@@ -749,6 +751,7 @@
   ];
   const FORM_ACCESS = {
     'Headteacher': FULL_ACCESS_FORMS,
+    'multi_school_leader': FULL_ACCESS_FORMS, // V71-01: same forms as Headteacher
     'Executive Headteacher': FULL_ACCESS_FORMS,
     'CEO': FULL_ACCESS_FORMS,
     'School Improvement Director': FULL_ACCESS_FORMS,
@@ -819,7 +822,7 @@
           <h1>Choose a school</h1>
           <p>Your account has access to more than one school. Select the school you want to work with.</p>
           <div style="margin-top:18px;display:grid;gap:10px;">
-            ${linkRows.map(r => `<a href="portal.html?school_id=${encodeURIComponent(r.school_id)}" style="display:block;padding:14px 16px;border-radius:8px;background:#0D2B4E;color:#fff;text-decoration:none;font-weight:700;">${escapeHtml(schoolNameById[r.school_id] || 'School')} <span style="opacity:.7;font-weight:500;">— ${escapeHtml(r.role)}</span></a>`).join('')}
+            ${linkRows.map(r => `<a href="portal.html?school_id=${encodeURIComponent(r.school_id)}" style="display:block;padding:14px 16px;border-radius:8px;background:#0D2B4E;color:#fff;text-decoration:none;font-weight:700;">${escapeHtml(schoolNameById[r.school_id] || 'School')} <span style="opacity:.7;font-weight:500;">— ${escapeHtml(roleLabel(r.role))}</span></a>`).join('')}
           </div>
         </div>`;
       return;
@@ -1097,7 +1100,7 @@
 
     document.getElementById('statusArea').innerHTML = `
       <div class="eyebrow">SOAP Analytics</div>
-      <div class="greeting">${escapeHtml(school.name || 'Your school')} — <strong>${escapeHtml(linkRow.role)}</strong></div>
+      <div class="greeting">${escapeHtml(school.name || 'Your school')} — <strong>${escapeHtml(roleLabel(linkRow.role))}</strong></div>
       <div class="accordion">${accordionHtml}</div>
     `;
 
