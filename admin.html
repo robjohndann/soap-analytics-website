@@ -596,6 +596,11 @@
   let MSG_THREADS = [];
   let MSG_ALL_MESSAGES = [];
   let MSG_SCHOOLS_REF = [];
+  // V72 RC-2: IDSR state shared by the page loader and the global publish/import handlers
+  let IDSR_UPLOADS = [], IDSR_SUBS = [], IDSR_PUBS = [], IDSR_SCHOOLS = [];
+  const idsrUploadFor = (id) => IDSR_UPLOADS.find(u => u.school_id === id) || null;   // V71 legacy row
+  const idsrSubsFor = (id) => IDSR_SUBS.filter(x => x.school_id === id);
+  const idsrPubsFor = (id) => IDSR_PUBS.filter(x => x.school_id === id);
   let MSG_ACTIVE_THREAD_ID = null;
   let MSG_COMPOSE_SCHOOL_ID = null;
   let MSG_COMPOSE_RECIPIENTS = [];
@@ -1006,7 +1011,7 @@
     accessNotice.style.display = 'none';
     protectedArea.style.display = '';
 
-    const [schoolsRes, contactsRes, ofstedRes, periodsRes, assessRes, trackerRes, contextRes, safeguardingRes, inclusionRes, curriculumRes, achievementRes, attendanceRes, pdwRes, leadershipRes, financeRes, supportRes, idsrUploadsRes, schoolUsersRes, sectionAccessRes, threadsRes] = await Promise.all([
+    const [schoolsRes, contactsRes, ofstedRes, periodsRes, assessRes, trackerRes, contextRes, safeguardingRes, inclusionRes, curriculumRes, achievementRes, attendanceRes, pdwRes, leadershipRes, financeRes, supportRes, idsrUploadsRes, schoolUsersRes, sectionAccessRes, threadsRes, idsrSubsRes, idsrPubsAdminRes] = await Promise.all([
       sb.from('schools').select('*').order('created_at', { ascending: false }),
       sb.from('key_contacts').select('*'),
       sb.from('ofsted_judgements').select('*'),
@@ -1026,13 +1031,16 @@
       sb.from('idsr_uploads').select('*'),
       sb.from('school_users').select('*'),
       sb.from('section_access').select('*'),
-      sb.from('message_threads').select('*')
+      sb.from('message_threads').select('*'),
+      // V72 RC-2: every submission (admin policy) and every publication's metadata (no snapshots), including retracted ones
+      Promise.resolve(sb.from('idsr_submissions').select('*').order('created_at', { ascending: false })).then(r => r, () => ({ data: null })),
+      Promise.resolve(sb.rpc('admin_list_idsr_publications')).then(r => r, () => ({ data: null }))
     ]);
 
     const schools = schoolsRes.data || [];
     const bySchool = (rows, id) => (rows || []).filter(r => r.school_id === id);
     const idsrUploads = idsrUploadsRes.data || [];
-    const idsrUploadFor = (id) => idsrUploads.find(u => u.school_id === id) || null;
+    IDSR_UPLOADS = idsrUploads; IDSR_SUBS = idsrSubsRes.data || []; IDSR_PUBS = idsrPubsAdminRes.data || []; IDSR_SCHOOLS = schools;   // module-level so the (global) publish/import handlers can reach them
     const schoolUsers = schoolUsersRes.data || [];
     const sectionAccessRows = sectionAccessRes.data || [];
 
@@ -1101,29 +1109,26 @@
     }
 
     function renderIdsrFragment(s, pageFile, publishFn, iframeId) {
-      const upload = idsrUploadFor(s.id);
-      let statusHtml, actionsHtml;
-      if (!upload) {
-        statusHtml = '<span style="color:#5A6B80;">No IDSR uploaded yet.</span>';
-        actionsHtml = '';
-      } else if (upload.status === 'pending') {
-        statusHtml = `<strong>${escapeHtml(upload.file_name || 'IDSR')}</strong> uploaded ${new Date(upload.uploaded_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })} — awaiting review.`;
-        actionsHtml = `
-          <a href="${pageFile}?school_id=${s.id}" target="_blank" style="color:#0D7377;font-weight:700;font-size:13px;text-decoration:none;">Preview →</a>
-          <button type="button" class="save-amend-btn" style="padding:8px 16px;" data-school-name="${escapeHtml(s.name)}" onclick="${publishFn}('${s.id}', this.dataset.schoolName)" id="adminIdsrPublishBtn-${iframeId}-${s.id}">Publish to school</button>
-        `;
-      } else {
-        statusHtml = `<strong>${escapeHtml(upload.file_name || 'IDSR')}</strong> published ${new Date(upload.published_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}.`;
-        actionsHtml = `<a href="${pageFile}?school_id=${s.id}" target="_blank" style="color:#0D7377;font-weight:700;font-size:13px;text-decoration:none;">View →</a>`;
-      }
+      const dt = (d) => new Date(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+      const link = 'color:#0D7377;font-weight:700;font-size:13px;text-decoration:none;';
+      const legacy = idsrUploadFor(s.id), subs = idsrSubsFor(s.id), pubs = idsrPubsFor(s.id);
+      const pending = subs.filter(x => x.status === 'pending'), cur = pubs.filter(p => p.is_current)[0] || null;
+      let html = '';
+      html += cur ? `<div style="margin-bottom:8px;"><strong>Current published:</strong> ${escapeHtml(cur.period_label)} \u2014 published ${dt(cur.published_at)}${cur.out_of_sequence ? ' (out of sequence)' : ''} <a href="${pageFile}?school_id=${s.id}&publication_id=${cur.id}" target="_blank" style="${link}">View \u2192</a>${pubs.length > 1 ? ` \u00b7 ${pubs.length} versions (select in the viewer)` : ''}</div>` : `<div style="margin-bottom:8px;color:#5A6B80;">Nothing published yet.</div>`;
+      if (!pending.length) html += `<div style="margin-bottom:8px;color:#5A6B80;">No submissions awaiting review.</div>`;
+      pending.forEach(sub => { html += `<div style="display:flex;gap:14px;flex-wrap:wrap;align-items:center;margin-bottom:8px;" data-submission="${sub.id}"><span><strong>${escapeHtml(sub.file_name || 'IDSR')}</strong> uploaded ${sub.uploaded_at ? dt(sub.uploaded_at) : ''}${sub.legacy_import ? ' (imported from V71)' : ''} \u2014 awaiting review.</span>
+        <a href="${pageFile}?school_id=${s.id}&submission_id=${sub.id}" target="_blank" style="${link}">Preview \u2192</a>
+        <button type="button" class="save-amend-btn" style="padding:8px 16px;" data-school-name="${escapeHtml(s.name)}" onclick="${publishFn}('${s.id}', this.dataset.schoolName, '${sub.id}')" id="adminIdsrPublishBtn-${iframeId}-${sub.id}">Publish to school</button>${(sub.notify_state === 'failed' || (sub.notify_state === 'not_requested' && !sub.legacy_import)) ? `<span style="color:#B3261E;font-weight:700;font-size:12px;">Admin email notification was not queued.</span> <button type="button" class="save-amend-btn" style="padding:6px 12px;" onclick="adminRetryIdsrNotification('${s.id}', '${sub.id}')" id="adminIdsrRetryBtn-${sub.id}">Retry notification</button>` : ''}</div>`; });
+      const imported = subs.some(x => x.legacy_import);
+      if (legacy && !imported && !pubs.length) html += `<div style="margin-bottom:8px;"><span style="color:#5A6B80;">V71 upload <strong>${escapeHtml(legacy.file_name || 'IDSR')}</strong> (${legacy.status}) has not been imported.</span> <button type="button" class="save-amend-btn" style="padding:6px 12px;" onclick="adminImportLegacyIdsr('${s.id}')" id="adminIdsrImportBtn-${iframeId}-${s.id}">Import as submission</button> <a href="${pageFile}?school_id=${s.id}" target="_blank" style="${link}">View legacy \u2192</a></div>`;
       return `
         <div style="background:#F0F4F8;border:1px solid #DCE3EA;border-radius:8px;padding:12px 14px;">
-          <div style="font-size:13px;color:#1B2A4A;margin-bottom:8px;">${statusHtml}</div>
-          <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:center;">${actionsHtml}</div>
+          <div style="font-size:13px;color:#1B2A4A;">${html}</div>
           <div id="adminIdsrNote-${iframeId}-${s.id}" style="font-size:12px;font-weight:700;margin-top:8px;"></div>
         </div>
       `;
     }
+    window.renderIdsrFragment = renderIdsrFragment;   // V72 RC-2: the global publish/import handlers re-render the panel (V71 referenced it out of scope)
 
     function renderPackageFragment(s) {
       return `
@@ -1795,8 +1800,8 @@
   // calls its own publishIdsr() function directly. Both pages write to the
   // same shared idsr_uploads row, so publishing from either has the same
   // effect and both admin lists refresh together.
-  async function adminPublishIdsrGeneric(schoolId, schoolName, pageFile, iframeId, readyFlagName) {
-    const btn = document.getElementById(`adminIdsrPublishBtn-${iframeId}-${schoolId}`);
+  async function adminPublishIdsrGeneric(schoolId, schoolName, pageFile, iframeId, readyFlagName, submissionId) {
+    const btn = document.getElementById(`adminIdsrPublishBtn-${iframeId}-${submissionId}`);
     const note = document.getElementById(`adminIdsrNote-${iframeId}-${schoolId}`);
     btn.disabled = true;
     btn.textContent = 'Publishing…';
@@ -1804,7 +1809,7 @@
     note.textContent = 'Loading ' + pageFile + '…';
 
     const frame = document.getElementById(iframeId);
-    frame.src = `${pageFile}?school_id=${schoolId}`;
+    frame.src = `${pageFile}?school_id=${schoolId}&submission_id=${submissionId}`;
 
     const TIMEOUT_MS = 20000;
     const start = Date.now();
@@ -1827,12 +1832,9 @@
       await win.publishIdsr();
 
       // reflect the new published state locally without a full page reload
-      const upload = idsrUploadFor(schoolId);
-      if (upload) {
-        upload.status = 'published';
-        upload.published_at = new Date().toISOString();
-      }
-      const publishedSchool = schools.find(sc => sc.id === schoolId);
+      const subRow = IDSR_SUBS.find(x => x.id === submissionId); if (subRow) subRow.status = 'approved';
+      try { const pr = await sb.rpc('admin_list_idsr_publications'); if (pr && pr.data) IDSR_PUBS = pr.data; } catch (e) { /* the list refreshes on next load */ }
+      const publishedSchool = IDSR_SCHOOLS.find(sc => sc.id === schoolId);
       if (publishedSchool) {
         const soapPanel = document.getElementById(`panel-${schoolId}-idsrsoap`);
         const dashPanel = document.getElementById(`panel-${schoolId}-idsrdash`);
@@ -1840,8 +1842,9 @@
         if (dashPanel) dashPanel.innerHTML = renderIdsrFragment(publishedSchool, 'idsr-dashboard.html', 'adminPublishIdsr', 'adminIdsrFrame');
       }
 
-      note.style.color = '#0D7377';
-      note.textContent = `Published for ${schoolName} — now visible in their Headteacher's IDSR sections.`;
+      const note2 = document.getElementById(`adminIdsrNote-${iframeId}-${schoolId}`) || note;   // the panel was re-rendered above, so look the note up again
+      note2.style.color = '#0D7377';
+      note2.textContent = `Published for ${schoolName} — now visible in their Headteacher's IDSR sections.`;
     } catch (err) {
       note.style.color = '#B3261E';
       note.textContent = 'Publish failed: ' + err.message;
@@ -1853,12 +1856,38 @@
     }
   }
 
-  async function adminPublishIdsrSoap(schoolId, schoolName) {
-    return adminPublishIdsrGeneric(schoolId, schoolName, 'idsr-soap.html', 'adminIdsrSoapFrame', 'idsrSoapReady');
+  async function adminPublishIdsrSoap(schoolId, schoolName, submissionId) {
+    return adminPublishIdsrGeneric(schoolId, schoolName, 'idsr-soap.html', 'adminIdsrSoapFrame', 'idsrSoapReady', submissionId);
   }
 
-  async function adminPublishIdsr(schoolId, schoolName) {
-    return adminPublishIdsrGeneric(schoolId, schoolName, 'idsr-dashboard.html', 'adminIdsrFrame', 'idsrDashboardReady');
+  async function adminPublishIdsr(schoolId, schoolName, submissionId) {
+    return adminPublishIdsrGeneric(schoolId, schoolName, 'idsr-dashboard.html', 'adminIdsrFrame', 'idsrDashboardReady', submissionId);
+  }
+
+  // V72 RC-2: copy a school's V71 upload into the new write-once store as a PENDING submission (admin only), so it can be previewed and published as a frozen version.
+  // V72 RC-3 (B1): recovery for a failed notification enqueue (administrator only; idempotent on the server)
+  async function adminRetryIdsrNotification(schoolId, submissionId) {
+    const btn = document.getElementById(`adminIdsrRetryBtn-${submissionId}`); if (btn) { btn.disabled = true; btn.textContent = 'Retrying\u2026'; }
+    const r = await sb.rpc('retry_idsr_notification', { p_submission_id: submissionId });
+    const subRow = IDSR_SUBS.find(x => x.id === submissionId);
+    if (r && !r.error && subRow && r.data) subRow.notify_state = r.data;
+    const sc = IDSR_SCHOOLS.find(x => x.id === schoolId); if (sc) { const a = document.getElementById(`panel-${schoolId}-idsrsoap`), b = document.getElementById(`panel-${schoolId}-idsrdash`); if (a) a.innerHTML = renderIdsrFragment(sc, 'idsr-soap.html', 'adminPublishIdsrSoap', 'adminIdsrSoapFrame'); if (b) b.innerHTML = renderIdsrFragment(sc, 'idsr-dashboard.html', 'adminPublishIdsr', 'adminIdsrFrame'); }
+    for (const id of ['adminIdsrSoapFrame', 'adminIdsrFrame']) { const n = document.getElementById(`adminIdsrNote-${id}-${schoolId}`); if (n) { n.style.color = (r && !r.error && r.data === 'queued') ? '#0D7377' : '#B3261E'; n.textContent = (r && !r.error) ? (r.data === 'queued' ? 'Notification queued.' : r.data === 'disabled' ? 'Notifications are switched off, so none was queued.' : 'Still not queued (state: ' + r.data + ') \u2014 see the audit log.') : 'Retry failed: ' + ((r && r.error && r.error.message) || 'unknown'); } }
+  }
+
+  async function adminImportLegacyIdsr(schoolId) {
+    const legacy = idsrUploadFor(schoolId); const note = document.getElementById(`adminIdsrNote-adminIdsrSoapFrame-${schoolId}`);
+    const say = (m, bad) => { for (const id of ['adminIdsrSoapFrame', 'adminIdsrFrame']) { const n = document.getElementById(`adminIdsrNote-${id}-${schoolId}`); if (n) { n.style.color = bad ? '#B3261E' : '#0D7377'; n.textContent = m; } } };
+    if (!legacy) { say('No V71 upload found for this school.', true); return; }
+    say('Importing\u2026');
+    const dl = await sb.storage.from('idsr-uploads').download(legacy.storage_path); if (!dl || dl.error || !dl.data) { say('Could not read the V71 file.', true); return; }
+    const begun = await sb.rpc('begin_idsr_upload', { p_school_id: schoolId, p_file_name: legacy.file_name || 'idsr.html', p_file_size: dl.data.size, p_legacy_import: true });
+    const row = begun && begun.data ? (Array.isArray(begun.data) ? begun.data[0] : begun.data) : null; if (!row) { say('Import failed: ' + ((begun && begun.error && begun.error.message) || 'unknown'), true); return; }
+    const up = await sb.storage.from('idsr-submissions').upload(row.storage_path, dl.data, { upsert: false, contentType: 'text/html'}); if (up.error) { try { await sb.rpc('abandon_idsr_upload', { p_submission_id: row.submission_id }); } catch (e) {} say('Import failed: ' + up.error.message, true); return; }
+    const done = await sb.rpc('complete_idsr_upload', { p_submission_id: row.submission_id }); if (done.error) { say('Import failed: ' + done.error.message, true); return; }
+    IDSR_SUBS.unshift({ id: row.submission_id, school_id: schoolId, status: 'pending', file_name: legacy.file_name, uploaded_at: new Date().toISOString(), legacy_import: true });
+    const sc = IDSR_SCHOOLS.find(x => x.id === schoolId); if (sc) { const a = document.getElementById(`panel-${schoolId}-idsrsoap`), b = document.getElementById(`panel-${schoolId}-idsrdash`); if (a) a.innerHTML = renderIdsrFragment(sc, 'idsr-soap.html', 'adminPublishIdsrSoap', 'adminIdsrSoapFrame'); if (b) b.innerHTML = renderIdsrFragment(sc, 'idsr-dashboard.html', 'adminPublishIdsr', 'adminIdsrFrame'); }
+    say('Imported as a pending submission \u2014 preview it and publish.');
   }
 
   function renderInviteSchoolOptions(schools) {
