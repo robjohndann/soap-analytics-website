@@ -168,8 +168,8 @@
   // these four exact names (e.g. old test data, or a school never assigned a
   // package yet) falls through to everything locked, which is the safe default.
   const PACKAGE_FEATURES = {
-    'IDSR Intelligence Summary': { soap: false, soapDashboard: false, idsrSoap: true, idsrDashboard: false },
-    'IDSR Intelligence Summary + Dashboard': { soap: false, soapDashboard: false, idsrSoap: true, idsrDashboard: true },
+    'IDSR Intelligence Summary': { soap: false, soapDashboard: false, idsrSoap: true, idsrDashboard: false, dataEntry: false },
+    'IDSR Intelligence Summary + Dashboard': { soap: false, soapDashboard: false, idsrSoap: true, idsrDashboard: true, dataEntry: false },
     'SOAP Performance Summary': { soap: true, soapDashboard: false, idsrSoap: true, idsrDashboard: true },
     'SOAP Performance Suite': { soap: true, soapDashboard: true, idsrSoap: true, idsrDashboard: true }
   };
@@ -614,59 +614,42 @@
     const btn = document.getElementById('idsrUploadBtn');
     const note = document.getElementById('idsrUploadNote');
     const file = input.files[0];
-    if (!file) {
-      note.style.color = '#F3B8B8';
-      note.textContent = 'Choose a file first.';
-      return;
-    }
+    const fail = (msg, label) => { note.style.color = '#F3B8B8'; note.textContent = msg; btn.disabled = false; btn.textContent = label || 'Upload IDSR'; };
+    if (!file) { note.style.color = '#F3B8B8'; note.textContent = 'Choose a file first.'; return; }
+    if (file.size < 1 || file.size > 30 * 1024 * 1024) { note.style.color = '#F3B8B8'; note.textContent = 'That file is empty or larger than 30 MB, so it cannot be an IDSR export.'; return; }
+    const label = btn.textContent;
     btn.disabled = true;
-    btn.textContent = 'Uploading…';
+    btn.textContent = 'Uploading\u2026';
     note.style.color = '#5A6B80';
-    note.textContent = 'Uploading your IDSR…';
+    note.textContent = 'Uploading your IDSR\u2026';
 
-    const storagePath = `${schoolId}/idsr.html`;
-
-    const { error: uploadError } = await sb.storage.from('idsr-uploads').upload(storagePath, file, {
-      upsert: true,
-      contentType: 'text/html'
-    });
+    // V72 RC-2: every upload is its own submission (never overwrites). 1) the server issues an id and a write-once path, 2) the file is stored there, 3) the server confirms the file arrived.
+    const begun = await sb.rpc('begin_idsr_upload', { p_school_id: schoolId, p_file_name: file.name, p_file_size: file.size, p_legacy_import: false });
+    const row = begun && begun.data ? (Array.isArray(begun.data) ? begun.data[0] : begun.data) : null;
+    if (!begun || begun.error || !row) {
+      console.error(begun && begun.error);
+      const m = String(begun && begun.error && begun.error.message || '');
+      return fail(/too many/.test(m) ? 'You already have several unfinished uploads. Please try again later or contact support.' : /not permitted/.test(m) ? 'Your account is not permitted to upload an IDSR for this school.' : 'Upload failed \u2014 please try again.', label);
+    }
+    const { error: uploadError } = await sb.storage.from('idsr-submissions').upload(row.storage_path, file, { upsert: false, contentType: 'text/html' });
     if (uploadError) {
       console.error(uploadError);
-      note.style.color = '#F3B8B8';
-      note.textContent = 'Upload failed — please try again.';
-      btn.disabled = false;
-      btn.textContent = 'Upload IDSR';
-      return;
+      try { await sb.rpc('abandon_idsr_upload', { p_submission_id: row.submission_id }); } catch (e) { /* best effort */ }
+      return fail('Upload failed \u2014 please try again.', label);
+    }
+    const done = await sb.rpc('complete_idsr_upload', { p_submission_id: row.submission_id });
+    if (!done || done.error) {
+      console.error(done && done.error);
+      return fail('Uploaded, but we could not confirm it \u2014 please try again, or contact support.', label);
     }
 
-    const { error: dbError } = await sb.from('idsr_uploads').upsert({
-      school_id: schoolId,
-      storage_path: storagePath,
-      file_name: file.name,
-      file_size: file.size,
-      status: 'pending',
-      uploaded_at: new Date().toISOString(),
-      published_at: null
-    }, { onConflict: 'school_id' });
-    if (dbError) {
-      console.error(dbError);
-      note.style.color = '#F3B8B8';
-      note.textContent = 'Uploaded, but something went wrong saving the record — contact support.';
-      btn.disabled = false;
-      btn.textContent = 'Upload IDSR';
-      return;
-    }
-
-    // V70-04: ask the server-side worker to send the administrator notification.
-    // The notification itself was already queued by a database trigger when the row above
-    // was written; this call only wakes the worker. Fire-and-forget: never awaited, never
-    // shown to the user, and any failure (function not deployed, offline) is ignored.
+    // V70-04 worker wake-up kept as in V71 (fire-and-forget). RC-3: the notification is QUEUED on the server inside complete_idsr_upload() (V70 queue); this call only wakes the worker and is not needed for queueing.
     try {
       Promise.resolve(sb.functions.invoke('idsr-upload-notifications', { body: {} })).catch(() => {});
     } catch (e) { /* ignore */ }
 
     note.style.color = '#3DCFB8';
-    note.textContent = 'Uploaded — awaiting review.';
+    note.textContent = 'Uploaded \u2014 awaiting review.';
     await checkLogin();
   }
 
@@ -868,7 +851,7 @@
     const [
       schoolRes, periodsRes, contextRes, safeguardingRes, inclusionRes, curriculumRes,
       achievementRes, assessRes, attendanceRes, pdwRes, leadershipRes, financeRes, publishedRes, idsrRes,
-      threadsRes, messagesRes
+      threadsRes, messagesRes, idsrPubsRes, idsrSubsRes
     ] = await Promise.all([
       sb.from('schools').select('*').eq('id', linkRow.school_id).maybeSingle(),
       sb.from('reporting_periods').select('*').eq('school_id', linkRow.school_id),
@@ -885,12 +868,19 @@
       sb.from('published_soaps').select('*').eq('school_id', linkRow.school_id).order('published_at', { ascending: false }),
       sb.from('idsr_uploads').select('*').eq('school_id', linkRow.school_id).maybeSingle(),
       sb.from('message_threads').select('*').eq('school_id', linkRow.school_id).eq('notify_user_id', session.user.id),
-      sb.from('support_messages').select('*').eq('school_id', linkRow.school_id)
+      sb.from('support_messages').select('*').eq('school_id', linkRow.school_id),
+      // V72 RC-2: published IDSR versions (server filters by role/package) and this school's pending submissions (leadership only, enforced by RLS). Failures are tolerated.
+      Promise.resolve(sb.rpc('list_idsr_publications', { p_school_id: linkRow.school_id })).then(r => r, () => ({ data: null })),
+      Promise.resolve(sb.from('idsr_submissions').select('id, status, file_name, uploaded_at').eq('school_id', linkRow.school_id).in('status', ['pending', 'uploading']).order('created_at', { ascending: false })).then(r => r, () => ({ data: null }))
     ]);
 
     const school = schoolRes.data || {};
     const periods = periodsRes.data || [];
     const features = featuresFor(school.package_tier);
+    // RC-3.2: IDSR-only packages lose the nine SOAP data-entry forms but keep School Setup
+    // (school profile, key contacts and Viewer management). Only an explicit dataEntry:false locks.
+    const formsLocked = features.dataEntry === false;
+    const shownForms = formsLocked ? availableForms.filter(f => f.key === 'schoolSetup') : availableForms;
 
     const PCT = {
       schoolSetup: schoolInfoCompletion(school),
@@ -912,7 +902,12 @@
     // full portal at the first and the narrow one at the second. Never account-wide.
     const isViewer = linkRow.role === 'Viewer';
     const publishedSoaps = publishedRes.data || [];
-    const idsrUpload = idsrRes.data || null;
+    const idsrUpload = idsrRes.data || null;   // V71 legacy row (kept readable for the fallback viewer only)
+    const idsrPubs = (idsrPubsRes && idsrPubsRes.data) || [];
+    const idsrCurrent = idsrPubs.filter(p => p.is_current)[0] || null;
+    const idsrPending = ((idsrSubsRes && idsrSubsRes.data) || []).filter(s => s.status === 'pending')[0] || null;
+    const idsrLegacyPublished = !idsrCurrent && !!(idsrUpload && idsrUpload['status'] === 'published');
+    const idsrHasPublished = !!idsrCurrent || idsrLegacyPublished;
 
     // V64 Stage 6 — a Viewer gets NEITHER the Data Entry Forms accordion NOR the
     // Support accordion: the whole initial string is '' for them, so nothing is
@@ -920,19 +915,19 @@
     // availableForms is built from section_access for ANY role, so a Viewer with a
     // stale/erroneous grant would otherwise get Data Entry. No FORM_ACCESS entry
     // for 'Viewer' exists or is added.
-    let accordionHtml = isViewer ? '' : `
+    let accordionHtml = isViewer ? '' : (formsLocked && !shownForms.length) ? lockedBar('forms', 'SOAP Data Entry Forms') : `
       <div>
         <button type="button" class="bar" id="bar-forms" onclick="toggleAccordion('forms');">
-          <span class="bar-label">SOAP Data Entry Forms</span>
-          <span class="bar-right"><span class="badge forms-average" id="formsAverageBadge" title="Mean of completion percentages for forms available to this user">${availableForms.length ? Math.round(availableForms.reduce((sum, f) => sum + (PCT[f.key] || 0), 0) / availableForms.length) + '% average' : 'No forms assigned'}</span>
+          <span class="bar-label">${formsLocked ? 'Manage Viewers' : 'SOAP Data Entry Forms'}</span>
+          <span class="bar-right"><span class="badge forms-average" id="formsAverageBadge" title="Mean of completion percentages for forms available to this user">${formsLocked ? 'Viewers' : shownForms.length ? Math.round(shownForms.reduce((sum, f) => sum + (PCT[f.key] || 0), 0) / shownForms.length) + '% average' : 'No forms assigned'}</span>
             <i class="chev" id="chev-forms">▾</i>
           </span>
         </button>
         <div class="panel" id="panel-forms">
-          ${availableForms.map(f => `
+          ${shownForms.map(f => `
             <a class="form-row" href="${f.href}?school_id=${encodeURIComponent(linkRow.school_id)}">
-              <span class="name">${f.label}</span>
-              <span class="pct-badge" style="background:${pctColor(PCT[f.key] || 0)};">${PCT[f.key] || 0}%</span>
+              <span class="name">${formsLocked ? 'Manage Viewers' : f.label}</span>
+              ${formsLocked ? '' : `<span class="pct-badge" style="background:${pctColor(PCT[f.key] || 0)};">${PCT[f.key] || 0}%</span>`}
             </a>
           `).join('')}
         </div>
@@ -1014,39 +1009,25 @@
       // IDSR SOAP
       if (features.idsrSoap) {
         let idsrPanelBody;
+        const idsrDate = (d) => new Date(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+        const idsrPublishedLine = idsrCurrent
+          ? `<p style="margin:0; color:#fff;"><strong>Current IDSR:</strong> ${escapeHtml(idsrCurrent.period_label || 'IDSR')} \u2014 published ${idsrDate(idsrCurrent.published_at)}${idsrPubs.length > 1 ? ` \u00b7 ${idsrPubs.length} versions available` : ''}.</p>`
+          : (idsrLegacyPublished ? `<p style="margin:0; color:#fff;"><strong>${escapeHtml(idsrUpload.file_name || 'IDSR')}</strong> published ${idsrDate(idsrUpload.published_at)}.</p>` : '');
+        const idsrOpenLink = idsrHasPublished ? `<a href="idsr-soap.html?school_id=${linkRow.school_id}" target="_blank" style="color:#3DCFB8;font-weight:700;font-size:13px;text-decoration:none;">Open IDSR SOAP${idsrPubs.length > 1 ? ' and earlier versions' : ''} \u2192</a>` : '';
         if (isViewer) {
           // V64 Stage 7 — Viewer: read-only. No upload input/button, ever.
-          idsrPanelBody = (idsrUpload && idsrUpload.status === 'published')
-            ? `
-            <div class="form-row" style="flex-direction:column; align-items:flex-start; gap:6px;">
-              <p style="margin:0; color:#fff;">Published ${new Date(idsrUpload.published_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}.</p>
-              <a href="idsr-soap.html?school_id=${linkRow.school_id}" target="_blank" style="color:#3DCFB8;font-weight:700;font-size:13px;text-decoration:none;">Open IDSR SOAP →</a>
-            </div>`
+          idsrPanelBody = idsrHasPublished
+            ? `<div class="form-row" style="flex-direction:column; align-items:flex-start; gap:6px;">${idsrPublishedLine}${idsrOpenLink}</div>`
             : `<div class="empty-note">Your school's IDSR SOAP will appear here once it has been published.</div>`;
-        } else if (!idsrUpload) {
-          idsrPanelBody = `
-            <div class="form-row" style="flex-direction:column; align-items:flex-start; gap:10px;">
-              <p style="margin:0; color:#fff;">Upload your school's raw DfE IDSR HTML export to get started.</p>
-              <input type="file" id="idsrFileInput" accept=".html,.htm" style="font-size:13px;">
-              <button type="button" id="idsrUploadBtn" onclick="uploadIdsr('${linkRow.school_id}')" style="background:#3DCFB8;color:#0D2B4E;border:none;border-radius:6px;padding:10px 20px;font-weight:700;font-size:14px;cursor:pointer;">Upload IDSR</button>
-              <div id="idsrUploadNote" style="font-size:12px;font-weight:700;"></div>
-            </div>`;
-        } else if (idsrUpload.status === 'pending') {
-          idsrPanelBody = `
-            <div class="form-row" style="flex-direction:column; align-items:flex-start; gap:6px;">
-              <p style="margin:0; color:#fff;"><strong>${escapeHtml(idsrUpload.file_name || 'IDSR')}</strong> uploaded ${new Date(idsrUpload.uploaded_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })} — awaiting review.</p>
-              <p style="margin:0; color:rgba(255,255,255,0.6); font-size:13px;">We'll let you know once it's ready to view in IDSR Dashboard below.</p>
-              <input type="file" id="idsrFileInput" accept=".html,.htm" style="font-size:13px; margin-top:8px;">
-              <button type="button" id="idsrUploadBtn" onclick="uploadIdsr('${linkRow.school_id}')" style="background:#3DCFB8;color:#0D2B4E;border:none;border-radius:6px;padding:10px 20px;font-weight:700;font-size:14px;cursor:pointer;">Upload a different file</button>
-              <div id="idsrUploadNote" style="font-size:12px;font-weight:700;"></div>
-            </div>`;
         } else {
+          const pendingLine = idsrPending ? `<p style="margin:0; color:#fff;"><strong>${escapeHtml(idsrPending.file_name || 'IDSR')}</strong> uploaded ${idsrPending.uploaded_at ? idsrDate(idsrPending.uploaded_at) : ''} \u2014 awaiting review.${idsrHasPublished ? ' Your current published IDSR stays available until the new one is approved.' : ''}</p>` : '';
+          const intro = !idsrHasPublished && !idsrPending ? `<p style="margin:0; color:#fff;">Upload your school's raw DfE IDSR HTML export to get started.</p>` : '';
+          const btnText = idsrPending ? 'Upload another file' : (idsrHasPublished ? 'Upload a new IDSR (the current one stays visible until the new one is approved)' : 'Upload IDSR');
           idsrPanelBody = `
             <div class="form-row" style="flex-direction:column; align-items:flex-start; gap:6px;">
-              <p style="margin:0; color:#fff;"><strong>${escapeHtml(idsrUpload.file_name || 'IDSR')}</strong> published ${new Date(idsrUpload.published_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}.</p>
-              <a href="idsr-soap.html?school_id=${linkRow.school_id}" target="_blank" style="color:#3DCFB8;font-weight:700;font-size:13px;text-decoration:none;">Open IDSR SOAP →</a>
+              ${intro}${idsrPublishedLine}${idsrOpenLink}${pendingLine}
               <input type="file" id="idsrFileInput" accept=".html,.htm" style="font-size:13px; margin-top:8px;">
-              <button type="button" id="idsrUploadBtn" onclick="uploadIdsr('${linkRow.school_id}')" style="background:#3DCFB8;color:#0D2B4E;border:none;border-radius:6px;padding:10px 20px;font-weight:700;font-size:14px;cursor:pointer;">Upload a new IDSR (replaces this one)</button>
+              <button type="button" id="idsrUploadBtn" onclick="uploadIdsr('${linkRow.school_id}')" style="background:#3DCFB8;color:#0D2B4E;border:none;border-radius:6px;padding:10px 20px;font-weight:700;font-size:14px;cursor:pointer;">${btnText}</button>
               <div id="idsrUploadNote" style="font-size:12px;font-weight:700;"></div>
             </div>`;
         }
@@ -1067,11 +1048,11 @@
       // V69: Separate published IDSR output from the leadership upload interface.
       // Uses the existing published idsr_uploads record and existing idsr-soap.html viewer.
       if (!isViewer) {
-        const viewIdsrBody = (idsrUpload && idsrUpload.status === 'published')
+        const viewIdsrBody = idsrHasPublished
           ? `<a class="form-row" href="idsr-soap.html?school_id=${encodeURIComponent(linkRow.school_id)}" target="_blank"><span class="name">Open published IDSR SOAP →</span></a>`
           : `<div class="empty-note">No published IDSR SOAP is available yet. Once your uploaded IDSR has been reviewed and published, it will appear here.</div>`;
         if (features.idsrSoap) {
-          accordionHtml += `<div><button type="button" class="bar" id="bar-viewidsr" onclick="toggleAccordion('viewidsr');"><span class="bar-label">View My IDSR</span><span class="bar-right"><span class="badge">${idsrUpload && idsrUpload.status === 'published' ? 'Published' : 'Awaiting publication'}</span><i class="chev" id="chev-viewidsr">▾</i></span></button><div class="panel" id="panel-viewidsr">${viewIdsrBody}</div></div>`;
+          accordionHtml += `<div><button type="button" class="bar" id="bar-viewidsr" onclick="toggleAccordion('viewidsr');"><span class="bar-label">View My IDSR</span><span class="bar-right"><span class="badge">${idsrHasPublished ? 'Published' : 'Awaiting publication'}</span><i class="chev" id="chev-viewidsr">▾</i></span></button><div class="panel" id="panel-viewidsr">${viewIdsrBody}</div></div>`;
         } else {
           accordionHtml += lockedBar('viewidsr', 'View My IDSR');
         }
@@ -1079,7 +1060,7 @@
 
       // IDSR Dashboard
       if (features.idsrDashboard) {
-        const idsrDashBody = (idsrUpload && idsrUpload.status === 'published')
+        const idsrDashBody = idsrHasPublished
           ? `<a class="form-row" href="idsr-dashboard.html?school_id=${linkRow.school_id}" target="_blank"><span class="name">Open IDSR Dashboard</span></a>`
           : (isViewer
               ? `<div class="empty-note">Your IDSR Dashboard will appear here once your school's IDSR has been published.</div>`

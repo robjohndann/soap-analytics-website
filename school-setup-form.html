@@ -573,6 +573,7 @@
 
   let currentUserId = null;
   let existingSchoolId = null;
+  let viewersOnly = false;   // RC-3.3: IDSR-only packages see the Viewer Tracker only
 
   async function requireLogin() {
     const banner = document.getElementById('statusBanner');
@@ -615,6 +616,27 @@
     }
 
     existingSchoolId = linkRow.school_id;
+
+    // RC-3.3: schools on an IDSR-only package see ONLY the Viewer Tracker (their actual package decides).
+    // UI simplification only; the Viewer functions below are unchanged. If the package cannot be read the full page is shown as before.
+    {
+      const { data: pkgRow } = await sb.from('schools').select('package_tier').eq('id', existingSchoolId).maybeSingle();
+      if (pkgRow && ['IDSR Intelligence Summary', 'IDSR Intelligence Summary + Dashboard'].includes(pkgRow.package_tier)) {
+        viewersOnly = true;
+        document.querySelectorAll('#setupForm > .card').forEach(c => { if (c.id !== 'viewerTrackerCard') c.style.display = 'none'; });
+        const h1 = document.querySelector('.page-head h1'); if (h1) h1.textContent = 'Manage Viewers';
+        const eyebrow = document.querySelector('.page-head .eyebrow'); if (eyebrow) eyebrow.textContent = 'SOAP Analytics \u2014 Viewer Access';
+        const sub = document.querySelector('.page-head p'); if (sub) sub.textContent = 'Choose who can view your school\'s published reports.';
+        document.title = 'SOAP Analytics \u2014 Manage Viewers';
+        const vp = document.querySelector('#viewerTrackerCard .card-body > p');
+        if (vp) vp.textContent = 'Viewers can log in to view this school\'s published reports. They cannot upload or edit anything.';
+        banner.textContent = `Logged in as ${session.user.email}. Manage the people who can view your school's published reports.`;
+        loadViewers(existingSchoolId);   // V64 function, unchanged
+        document.getElementById('setupForm').style.display = '';
+        return;                          // no prefill, no Save bar
+      }
+    }
+
     banner.textContent = `Logged in as ${session.user.email}. You're editing the selected school's record.`;
     await prefillForm(existingSchoolId);
     loadViewers(existingSchoolId); // V64 — not awaited; catches its own errors, so it can never block the form
@@ -948,6 +970,7 @@
   requireLogin();
 
   async function saveForm() {
+    if (viewersOnly) return;   // RC-3.3: nothing to save in Viewer-only mode
     if (!currentUserId) {
       showToast('⚠ You need to be logged in to save', true);
       return;
