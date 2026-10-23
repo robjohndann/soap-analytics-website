@@ -519,6 +519,15 @@
       }
     }
 
+    // RC-3.2: IDSR-only packages do not include SOAP data entry (the database enforces this too).
+    {
+      const { data: pkgRow } = await sb.from('schools').select('package_tier').eq('id', linkRow.school_id).maybeSingle();
+      if (pkgRow && ['IDSR Intelligence Summary', 'IDSR Intelligence Summary + Dashboard'].includes(pkgRow.package_tier)) {
+        statusMsg.innerHTML = '\u{1F512} This SOAP data entry form is not included in your school\'s current package. <a href="portal.html">Return to the portal</a>.';
+        return;
+      }
+    }
+
     currentSchoolId = linkRow.school_id;
     await showResponsiblePerson(currentSchoolId);
     await loadAssessmentSetup(currentSchoolId);

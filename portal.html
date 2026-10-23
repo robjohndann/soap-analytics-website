@@ -168,8 +168,8 @@
   // these four exact names (e.g. old test data, or a school never assigned a
   // package yet) falls through to everything locked, which is the safe default.
   const PACKAGE_FEATURES = {
-    'IDSR Intelligence Summary': { soap: false, soapDashboard: false, idsrSoap: true, idsrDashboard: false },
-    'IDSR Intelligence Summary + Dashboard': { soap: false, soapDashboard: false, idsrSoap: true, idsrDashboard: true },
+    'IDSR Intelligence Summary': { soap: false, soapDashboard: false, idsrSoap: true, idsrDashboard: false, dataEntry: false },
+    'IDSR Intelligence Summary + Dashboard': { soap: false, soapDashboard: false, idsrSoap: true, idsrDashboard: true, dataEntry: false },
     'SOAP Performance Summary': { soap: true, soapDashboard: false, idsrSoap: true, idsrDashboard: true },
     'SOAP Performance Suite': { soap: true, soapDashboard: true, idsrSoap: true, idsrDashboard: true }
   };
@@ -877,6 +877,10 @@
     const school = schoolRes.data || {};
     const periods = periodsRes.data || [];
     const features = featuresFor(school.package_tier);
+    // RC-3.2: IDSR-only packages lose the nine SOAP data-entry forms but keep School Setup
+    // (school profile, key contacts and Viewer management). Only an explicit dataEntry:false locks.
+    const formsLocked = features.dataEntry === false;
+    const shownForms = formsLocked ? availableForms.filter(f => f.key === 'schoolSetup') : availableForms;
 
     const PCT = {
       schoolSetup: schoolInfoCompletion(school),
@@ -911,21 +915,22 @@
     // availableForms is built from section_access for ANY role, so a Viewer with a
     // stale/erroneous grant would otherwise get Data Entry. No FORM_ACCESS entry
     // for 'Viewer' exists or is added.
-    let accordionHtml = isViewer ? '' : `
+    let accordionHtml = isViewer ? '' : (formsLocked && !shownForms.length) ? lockedBar('forms', 'SOAP Data Entry Forms') : `
       <div>
         <button type="button" class="bar" id="bar-forms" onclick="toggleAccordion('forms');">
           <span class="bar-label">SOAP Data Entry Forms</span>
-          <span class="bar-right"><span class="badge forms-average" id="formsAverageBadge" title="Mean of completion percentages for forms available to this user">${availableForms.length ? Math.round(availableForms.reduce((sum, f) => sum + (PCT[f.key] || 0), 0) / availableForms.length) + '% average' : 'No forms assigned'}</span>
+          <span class="bar-right"><span class="badge forms-average" id="formsAverageBadge" title="Mean of completion percentages for forms available to this user">${shownForms.length ? Math.round(shownForms.reduce((sum, f) => sum + (PCT[f.key] || 0), 0) / shownForms.length) + '% average' : 'No forms assigned'}</span>
             <i class="chev" id="chev-forms">▾</i>
           </span>
         </button>
         <div class="panel" id="panel-forms">
-          ${availableForms.map(f => `
+          ${shownForms.map(f => `
             <a class="form-row" href="${f.href}?school_id=${encodeURIComponent(linkRow.school_id)}">
               <span class="name">${f.label}</span>
               <span class="pct-badge" style="background:${pctColor(PCT[f.key] || 0)};">${PCT[f.key] || 0}%</span>
             </a>
           `).join('')}
+          ${formsLocked ? '<div class="locked-note" style="grid-column:1/-1;">The other SOAP data entry forms are not included in your current package — contact us to upgrade.</div>' : ''}
         </div>
       </div>
 
