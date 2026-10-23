@@ -918,19 +918,18 @@
     let accordionHtml = isViewer ? '' : (formsLocked && !shownForms.length) ? lockedBar('forms', 'SOAP Data Entry Forms') : `
       <div>
         <button type="button" class="bar" id="bar-forms" onclick="toggleAccordion('forms');">
-          <span class="bar-label">SOAP Data Entry Forms</span>
-          <span class="bar-right"><span class="badge forms-average" id="formsAverageBadge" title="Mean of completion percentages for forms available to this user">${shownForms.length ? Math.round(shownForms.reduce((sum, f) => sum + (PCT[f.key] || 0), 0) / shownForms.length) + '% average' : 'No forms assigned'}</span>
+          <span class="bar-label">${formsLocked ? 'Manage Viewers' : 'SOAP Data Entry Forms'}</span>
+          <span class="bar-right"><span class="badge forms-average" id="formsAverageBadge" title="Mean of completion percentages for forms available to this user">${formsLocked ? 'Viewers' : shownForms.length ? Math.round(shownForms.reduce((sum, f) => sum + (PCT[f.key] || 0), 0) / shownForms.length) + '% average' : 'No forms assigned'}</span>
             <i class="chev" id="chev-forms">▾</i>
           </span>
         </button>
         <div class="panel" id="panel-forms">
           ${shownForms.map(f => `
             <a class="form-row" href="${f.href}?school_id=${encodeURIComponent(linkRow.school_id)}">
-              <span class="name">${f.label}</span>
-              <span class="pct-badge" style="background:${pctColor(PCT[f.key] || 0)};">${PCT[f.key] || 0}%</span>
+              <span class="name">${formsLocked ? 'Manage Viewers' : f.label}</span>
+              ${formsLocked ? '' : `<span class="pct-badge" style="background:${pctColor(PCT[f.key] || 0)};">${PCT[f.key] || 0}%</span>`}
             </a>
           `).join('')}
-          ${formsLocked ? '<div class="locked-note" style="grid-column:1/-1;">The other SOAP data entry forms are not included in your current package — contact us to upgrade.</div>' : ''}
         </div>
       </div>
 
