@@ -1112,15 +1112,20 @@
       const dt = (d) => new Date(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
       const link = 'color:#0D7377;font-weight:700;font-size:13px;text-decoration:none;';
       const legacy = idsrUploadFor(s.id), subs = idsrSubsFor(s.id), pubs = idsrPubsFor(s.id);
-      const pending = subs.filter(x => x.status === 'pending'), cur = pubs.filter(p => p.is_current)[0] || null;
+      const pending = subs.filter(x => x.status === 'pending'), approved = subs.filter(x => x.status === 'approved'), cur = pubs.filter(p => p.is_current)[0] || null;
       let html = '';
       html += cur ? `<div style="margin-bottom:8px;"><strong>Current published:</strong> ${escapeHtml(cur.period_label)} \u2014 published ${dt(cur.published_at)}${cur.out_of_sequence ? ' (out of sequence)' : ''} <a href="${pageFile}?school_id=${s.id}&publication_id=${cur.id}" target="_blank" style="${link}">View \u2192</a>${pubs.length > 1 ? ` \u00b7 ${pubs.length} versions (select in the viewer)` : ''}</div>` : `<div style="margin-bottom:8px;color:#5A6B80;">Nothing published yet.</div>`;
       if (!pending.length) html += `<div style="margin-bottom:8px;color:#5A6B80;">No submissions awaiting review.</div>`;
       pending.forEach(sub => { html += `<div style="display:flex;gap:14px;flex-wrap:wrap;align-items:center;margin-bottom:8px;" data-submission="${sub.id}"><span><strong>${escapeHtml(sub.file_name || 'IDSR')}</strong> uploaded ${sub.uploaded_at ? dt(sub.uploaded_at) : ''}${sub.legacy_import ? ' (imported from V71)' : ''} \u2014 awaiting review.</span>
         <a href="${pageFile}?school_id=${s.id}&submission_id=${sub.id}" target="_blank" style="${link}">Preview \u2192</a>
+        <button type="button" class="save-amend-btn" style="padding:6px 12px;" onclick="adminDownloadOriginalIdsr('${s.id}', '${sub.id}', this)">Download Original IDSR</button>
         <button type="button" class="save-amend-btn" style="padding:8px 16px;" data-school-name="${escapeHtml(s.name)}" onclick="${publishFn}('${s.id}', this.dataset.schoolName, '${sub.id}')" id="adminIdsrPublishBtn-${iframeId}-${sub.id}">Publish to school</button>${(sub.notify_state === 'failed' || (sub.notify_state === 'not_requested' && !sub.legacy_import)) ? `<span style="color:#B3261E;font-weight:700;font-size:12px;">Admin email notification was not queued.</span> <button type="button" class="save-amend-btn" style="padding:6px 12px;" onclick="adminRetryIdsrNotification('${s.id}', '${sub.id}')" id="adminIdsrRetryBtn-${sub.id}">Retry notification</button>` : ''}</div>`; });
+      if (approved.length) {
+        html += `<div style="margin-top:10px;font-weight:700;">Published IDSR originals</div>`;
+        approved.forEach(sub => { html += `<div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-top:6px;"><span>${escapeHtml(sub.file_name || 'IDSR')}${sub.uploaded_at ? ' — uploaded ' + dt(sub.uploaded_at) : ''}</span><button type="button" class="save-amend-btn" style="padding:6px 12px;" onclick="adminDownloadOriginalIdsr('${s.id}', '${sub.id}', this)">Download Original IDSR</button></div>`; });
+      }
       const imported = subs.some(x => x.legacy_import);
-      if (legacy && !imported && !pubs.length) html += `<div style="margin-bottom:8px;"><span style="color:#5A6B80;">V71 upload <strong>${escapeHtml(legacy.file_name || 'IDSR')}</strong> (${legacy.status}) has not been imported.</span> <button type="button" class="save-amend-btn" style="padding:6px 12px;" onclick="adminImportLegacyIdsr('${s.id}')" id="adminIdsrImportBtn-${iframeId}-${s.id}">Import as submission</button> <a href="${pageFile}?school_id=${s.id}" target="_blank" style="${link}">View legacy \u2192</a></div>`;
+      if (legacy && !imported && !pubs.length) html += `<div style="margin-bottom:8px;"><span style="color:#5A6B80;">V71 upload <strong>${escapeHtml(legacy.file_name || 'IDSR')}</strong> (${legacy.status}) has not been imported.</span> <button type="button" class="save-amend-btn" style="padding:6px 12px;" onclick="adminImportLegacyIdsr('${s.id}')" id="adminIdsrImportBtn-${iframeId}-${s.id}">Import as submission</button> <a href="${pageFile}?school_id=${s.id}" target="_blank" style="${link}">View legacy \u2192</a> <button type="button" class="save-amend-btn" style="padding:6px 12px;" onclick="adminDownloadOriginalIdsr('${s.id}', null, this)">Download Original IDSR</button></div>`;
       return `
         <div style="background:#F0F4F8;border:1px solid #DCE3EA;border-radius:8px;padding:12px 14px;">
           <div style="font-size:13px;color:#1B2A4A;">${html}</div>
@@ -1873,6 +1878,35 @@
     if (r && !r.error && subRow && r.data) subRow.notify_state = r.data;
     const sc = IDSR_SCHOOLS.find(x => x.id === schoolId); if (sc) { const a = document.getElementById(`panel-${schoolId}-idsrsoap`), b = document.getElementById(`panel-${schoolId}-idsrdash`); if (a) a.innerHTML = renderIdsrFragment(sc, 'idsr-soap.html', 'adminPublishIdsrSoap', 'adminIdsrSoapFrame'); if (b) b.innerHTML = renderIdsrFragment(sc, 'idsr-dashboard.html', 'adminPublishIdsr', 'adminIdsrFrame'); }
     for (const id of ['adminIdsrSoapFrame', 'adminIdsrFrame']) { const n = document.getElementById(`adminIdsrNote-${id}-${schoolId}`); if (n) { n.style.color = (r && !r.error && r.data === 'queued') ? '#0D7377' : '#B3261E'; n.textContent = (r && !r.error) ? (r.data === 'queued' ? 'Notification queued.' : r.data === 'disabled' ? 'Notifications are switched off, so none was queued.' : 'Still not queued (state: ' + r.data + ') \u2014 see the audit log.') : 'Retry failed: ' + ((r && r.error && r.error.message) || 'unknown'); } }
+  }
+
+  // V73 amendment 1: download the unmodified original IDSR HTML from private storage.
+  // Existing Supabase admin read/storage policies enforce access; no public URL is generated.
+  async function adminDownloadOriginalIdsr(schoolId, submissionId, btn) {
+    if (!ADMIN_VERIFIED) { alert('Administrator access is required.'); return; }
+    const row = submissionId
+      ? IDSR_SUBS.find(x => x.id === submissionId && x.school_id === schoolId && ['pending', 'approved'].includes(x.status))
+      : idsrUploadFor(schoolId);
+    if (!row || !row.storage_path) { alert('The original IDSR file is not available.'); return; }
+    const bucket = submissionId ? 'idsr-submissions' : 'idsr-uploads';
+    const oldText = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = 'Downloading…'; }
+    try {
+      const result = await sb.storage.from(bucket).download(row.storage_path);
+      if (!result || result.error || !result.data) throw new Error((result && result.error && result.error.message) || 'Storage download failed');
+      // Preserve bytes exactly; only the local download filename is sanitised.
+      const blobUrl = URL.createObjectURL(result.data);
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      const originalName = (row.file_name || 'original-idsr.html').split(/[\/]/).pop().replace(/[<>:"|?*\x00-\x1f]/g, '_');
+      a.download = originalName.toLowerCase().endsWith('.html') || originalName.toLowerCase().endsWith('.htm') ? originalName : originalName + '.html';
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
+    } catch (e) {
+      alert('Could not download the original IDSR: ' + (e && e.message ? e.message : 'Unknown error'));
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = oldText; }
+    }
   }
 
   async function adminImportLegacyIdsr(schoolId) {
