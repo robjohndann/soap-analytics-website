@@ -347,6 +347,41 @@
     'Sixth Form College': ['Y12','Y13']
   };
 
+  // V74: Completion follows the previous reporting period, not entry unlocking.
+  // SUM2 rollover is deliberately deferred until the future academic-year project.
+  function completionDuePeriods(schoolReportingPeriods, asOf = new Date()) {
+    const due = new Set();
+    const today = `${asOf.getFullYear()}-${String(asOf.getMonth() + 1).padStart(2, '0')}-${String(asOf.getDate()).padStart(2, '0')}`;
+    for (let i = 0; i < CONTEXT_PERIODS.length - 1; i++) {
+      const nextName = PERIOD_TO_REPORTING_NAME[CONTEXT_PERIODS[i + 1]];
+      const next = (schoolReportingPeriods || []).find(r => r.period_name === nextName);
+      const start = typeof next?.start_date === 'string' ? next.start_date.slice(0, 10) : '';
+      if (/^\d{4}-\d{2}-\d{2}$/.test(start) && start <= today) due.add(CONTEXT_PERIODS[i]);
+    }
+    return due;
+  }
+
+  // Count only saved cells which exist in the denominator; ignore calculated YTD,
+  // extra PAL/PAH, future periods and duplicate stored cells.
+  function countEligibleCompletionRows(rows, duePeriods, kind, yearGroups = []) {
+    const seen = new Set();
+    for (const r of (rows || [])) {
+      const period = r.period, category = r.category, metric = r.metric;
+      let eligible = false;
+      if (duePeriods.has(period)) {
+        if (kind === 'context') eligible = (category === 'Whole School' && ['Number on Roll','PAN'].includes(metric)) || (category === 'Year Group Profile' && yearGroups.includes(metric)) || (category === 'Pupil Profile' && ['Boys %','FSM %','Pupil Premium %','Mobility %'].includes(metric)) || (category === 'Workforce' && ['Number of Teachers','Number of Support Staff','Number of SLT','Number of ECTs','Number of UPS Teachers'].includes(metric));
+        if (kind === 'safeguarding') eligible = category === 'Vulnerability Numbers';
+        if (kind === 'inclusion') eligible = category === 'Inclusion Numbers';
+        if (kind === 'attendance') eligible = category === 'Attendance Percentages' || category === 'Behaviour Numbers';
+      } else if (kind === 'context') eligible = category === 'Year Group Profile' && yearGroups.includes(metric) && period === 'PAN';
+      else if (kind === 'safeguarding') eligible = (category === 'Compliance' && ['Status','Date'].includes(period)) || (category === 'Overall Rating' && period === 'Rating');
+      else if (kind === 'inclusion') eligible = (category === 'Inclusion Evaluation' && period === 'Rating') || (category === 'Key Dates' && period === 'Date') || (category === 'Overall Rating' && period === 'Rating');
+      else if (kind === 'attendance') eligible = category === 'Overall Rating' && period === 'Rating';
+      if (eligible) seen.add(JSON.stringify([category,metric,period]));
+    }
+    return seen.size;
+  }
+
   function contextCompletion(school, schoolReportingPeriods, contextRows) {
     const yearGroups = PHASE_YEAR_GROUPS[school.phase] || ALL_YEAR_GROUPS;
     const sections = [
@@ -355,23 +390,17 @@
       { rows: ['Boys %', 'FSM %', 'Pupil Premium %', 'Mobility %'], hasPan: false },
       { rows: ['Number of Teachers', 'Number of Support Staff', 'Number of SLT', 'Number of ECTs', 'Number of UPS Teachers'], hasPan: false }
     ];
-    const today = new Date();
-    const lockedPeriods = {};
-    CONTEXT_PERIODS.forEach(p => {
-      const reportingName = PERIOD_TO_REPORTING_NAME[p];
-      const match = (schoolReportingPeriods || []).find(r => r.period_name === reportingName);
-      lockedPeriods[p] = !(match && match.start_date) || (new Date(match.start_date) > today);
-    });
+    const duePeriods = completionDuePeriods(schoolReportingPeriods);
     let total = 0;
     sections.forEach(section => {
       section.rows.forEach(() => {
-        CONTEXT_PERIODS.forEach(p => { if (!lockedPeriods[p]) total++; });
+        CONTEXT_PERIODS.forEach(p => { if (duePeriods.has(p)) total++; });
         if (section.hasPan) total++;
       });
     });
-    const filled = (contextRows || []).length;
+    const filled = countEligibleCompletionRows(contextRows, duePeriods, 'context', yearGroups);
     const pct = total ? Math.round((Math.min(filled, total) / total) * 100) : 0;
-    return { pct, filled, total };
+    return { pct, filled: Math.min(filled, total), total };
   }
 
   // Simple completion calculator for flat, non-period-locked tabs — just compares
@@ -393,39 +422,25 @@
     return { pct, filled, total };
   }
 
-  // Shared period-locking calculation, reused by Safeguarding and Inclusion completion below
-  function calcLockedPeriods(schoolReportingPeriods) {
-    const today = new Date();
-    const lockedPeriods = {};
-    CONTEXT_PERIODS.forEach(p => {
-      const reportingName = PERIOD_TO_REPORTING_NAME[p];
-      const match = (schoolReportingPeriods || []).find(r => r.period_name === reportingName);
-      lockedPeriods[p] = !(match && match.start_date) || (new Date(match.start_date) > today);
-    });
-    return lockedPeriods;
+  function safeguardingCompletion(schoolReportingPeriods, rows) {
+    const duePeriods = completionDuePeriods(schoolReportingPeriods);
+    let total = 0;
+    CONTEXT_PERIODS.forEach(p => { if (duePeriods.has(p)) total += 5; });
+    total += 3 * 2;
+    total += 1;
+    const filled = countEligibleCompletionRows(rows, duePeriods, 'safeguarding');
+    const pct = total ? Math.round((Math.min(filled, total) / total) * 100) : 0;
+    return { pct, filled: Math.min(filled, total), total };
   }
 
-  function safeguardingCompletion(schoolReportingPeriods, safeguardingRows) {
-    const lockedPeriods = calcLockedPeriods(schoolReportingPeriods);
+  function inclusionCompletion(schoolReportingPeriods, rows) {
+    const duePeriods = completionDuePeriods(schoolReportingPeriods);
     let total = 0;
-    CONTEXT_PERIODS.forEach(p => { if (!lockedPeriods[p]) total += 5; }); // Vulnerability Numbers: 5 rows
-    total += 3 * 2; // Compliance: 3 rows x Status/Date
-    total += 1; // Overall Rating
-    const filled = (safeguardingRows || []).length;
+    CONTEXT_PERIODS.forEach(p => { if (duePeriods.has(p)) total += 5; });
+    total += 6; total += 4; total += 1;
+    const filled = countEligibleCompletionRows(rows, duePeriods, 'inclusion');
     const pct = total ? Math.round((Math.min(filled, total) / total) * 100) : 0;
-    return { pct, filled, total };
-  }
-
-  function inclusionCompletion(schoolReportingPeriods, inclusionRows) {
-    const lockedPeriods = calcLockedPeriods(schoolReportingPeriods);
-    let total = 0;
-    CONTEXT_PERIODS.forEach(p => { if (!lockedPeriods[p]) total += 5; }); // Inclusion Numbers: 5 rows
-    total += 6; // Inclusion Evaluation: 6 rows
-    total += 4; // Key Dates: 4 rows
-    total += 1; // Overall Rating
-    const filled = (inclusionRows || []).length;
-    const pct = total ? Math.round((Math.min(filled, total) / total) * 100) : 0;
-    return { pct, filled, total };
+    return { pct, filled: Math.min(filled, total), total };
   }
 
   function curriculumCompletion(curriculumRows) {
@@ -506,15 +521,14 @@
     return { pct, filled, total };
   }
 
-  function attendanceCompletion(schoolReportingPeriods, attendanceRows) {
-    const lockedPeriods = calcLockedPeriods(schoolReportingPeriods);
+  function attendanceCompletion(schoolReportingPeriods, rows) {
+    const duePeriods = completionDuePeriods(schoolReportingPeriods);
     let total = 0;
-    CONTEXT_PERIODS.forEach(p => { if (!lockedPeriods[p]) total += 13; }); // Attendance %: 13 rows per period (National Attendance % removed — now sourced centrally from National Averages, not entered per school)
-    CONTEXT_PERIODS.forEach(p => { if (!lockedPeriods[p]) total += 10; }); // Behaviour Numbers: 10 rows per period
-    total += 1; // Overall Rating
-    const filled = (attendanceRows || []).length;
+    CONTEXT_PERIODS.forEach(p => { if (duePeriods.has(p)) total += 23; }); // 13 attendance % rows + 10 behaviour rows per period (National Attendance % removed — now sourced centrally, not entered per school)
+    total += 1;
+    const filled = countEligibleCompletionRows(rows, duePeriods, 'attendance');
     const pct = total ? Math.round((Math.min(filled, total) / total) * 100) : 0;
-    return { pct, filled, total };
+    return { pct, filled: Math.min(filled, total), total };
   }
 
   async function logout(e) {
