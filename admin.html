@@ -227,6 +227,24 @@
   .v69-revoke-btn:hover { background:#fff1f1; }
   .v69-revoke-btn:disabled { opacity:.55; cursor:wait; }
   @media(max-width:850px){.v69-grant-grid{grid-template-columns:1fr;}}
+
+  /* V76-01 Completion reminders */
+  .rem-banner { border-radius: 8px; padding: 10px 14px; font-size: 13px; font-weight: 700; margin: 14px 0 6px; }
+  .rem-banner.test { background: #FFF6E0; color: #7A5200; border: 1px solid #F0D58A; }
+  .rem-banner.live { background: #FDECEA; color: #8A1C14; border: 1px solid #F1B7B1; }
+  .rem-banner.off { background: #EEF1F5; color: #44546A; border: 1px solid #D5DCE5; }
+  .rem-sum { display: flex; flex-wrap: wrap; gap: 10px; margin: 12px 0; }
+  .rem-sum span { background: #F3F7FB; border: 1px solid #DCE3EA; border-radius: 8px; padding: 6px 12px; font-size: 13px; color: #1B2A4A; }
+  .rem-sum b { font-size: 16px; }
+  .rem-school { border: 1px solid #DCE3EA; border-radius: 10px; margin: 10px 0; background: #fff; }
+  .rem-school > summary { cursor: pointer; padding: 10px 14px; font-weight: 700; color: #1B2A4A; }
+  .rem-school .rem-body { padding: 0 14px 12px; overflow-x: auto; }
+  .rem-pill { display: inline-block; border-radius: 10px; padding: 1px 8px; font-size: 12px; font-weight: 700; white-space: nowrap; }
+  .rem-pill.ok { background: #E3F4EE; color: #0F6B52; } .rem-pill.warn { background: #FFF1D6; color: #7A5200; } .rem-pill.bad { background: #FDECEA; color: #8A1C14; } .rem-pill.mute { background: #EEF1F5; color: #44546A; }
+  .rem-confirm { border: 2px solid #0D7377; border-radius: 10px; padding: 14px 16px; margin: 16px 0; background: #F3FBFA; }
+  .rem-confirm.live { border-color: #B3261E; background: #FEF6F5; }
+  .rem-secondary-btn { background: #fff; color: #0D7377; border: 1px solid #0D7377; border-radius: 8px; padding: 9px 18px; font-weight: 700; font-size: 13px; cursor: pointer; }
+  .rem-secondary-btn:disabled, .save-amend-btn:disabled { opacity: .55; cursor: not-allowed; }
 </style>
 </head>
 <body>
@@ -325,210 +343,200 @@
     <div id="mslMsg" style="margin-top:12px; font-size:13px; font-weight:700;"></div>
   </div>
 
+  <div class="page-title" id="remSection">Completion Reminders</div>
+  <div class="page-sub">Email contributors who are assigned to SOAP sections below 100%. You always see exactly who will be emailed, and confirm, before anything is sent. Sent by the admin-send-completion-reminders Edge Function — not by this page directly.</div>
+  <div class="school-card" style="margin-bottom:40px; padding:20px 22px;">
+    <div class="amend-field-grid">
+      <div class="field">
+        <label>Send to</label>
+        <div style="display:flex;flex-direction:column;gap:6px;font-size:14px;">
+          <label style="font-weight:400;"><input type="radio" name="remScope" value="all" checked onchange="remScopeChanged()"> All schools</label>
+          <label style="font-weight:400;"><input type="radio" name="remScope" value="school" onchange="remScopeChanged()"> One school</label>
+        </div>
+      </div>
+      <div class="field">
+        <label for="remSchool">School</label>
+        <select id="remSchool" disabled onchange="remInvalidate()"><option value="">Loading schools…</option></select>
+      </div>
+    </div>
+    <button type="button" class="save-amend-btn" id="remPreviewBtn" style="margin-top:18px;" onclick="remPreview()">Preview Reminders</button>
+    <div id="remMsg" role="status" style="margin-top:12px; font-size:13px; font-weight:700;"></div>
+    <div id="remPreview"></div>
+    <div id="remProgress" role="status" aria-live="polite"></div>
+    <h4 style="margin:26px 0 8px;color:#1B2A4A;">Reminder history</h4>
+    <div id="remHistory"><div class="status-msg">Loading…</div></div>
+    <div id="remRunDetail"></div>
+  </div>
+
 </div>
 
+<script src="completion-core.js"></script>
 <script>
   const SUPABASE_URL = 'https://caopycszjzrmwhxxvtpx.supabase.co';
   const SUPABASE_KEY = 'sb_publishable_2CTGR0PKyRPpSk59lcr3sA_hvvUDX97';
   const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
-  const CONTEXT_PERIODS = ['AUT1 26', 'AUT2 26', 'SPR1 27', 'SPR2 27', 'SUM1 27', 'SUM2 27'];
-  const PERIOD_TO_REPORTING_NAME = {
-    'AUT1 26': 'Autumn 1', 'AUT2 26': 'Autumn 2',
-    'SPR1 27': 'Spring 1', 'SPR2 27': 'Spring 2',
-    'SUM1 27': 'Summer 1', 'SUM2 27': 'Summer 2'
+  // V76: the completion calculations (V74 rules: cumulative, next-period start_date <= today,
+  // future periods and duplicate cells excluded) moved UNCHANGED into completion-core.js so
+  // Admin, Portal and the server-side reminder function share one implementation.
+  const { CONTEXT_PERIODS, PERIOD_TO_REPORTING_NAME, ALL_YEAR_GROUPS, PHASE_YEAR_GROUPS,
+          completionDuePeriods, countEligibleCompletionRows, contextCompletion, rowCountCompletion,
+          schoolInfoCompletion, safeguardingCompletion, inclusionCompletion, curriculumCompletion,
+          achievementCompletion, pdwCompletion, leadershipCompletion, financeCompletion,
+          attendanceCompletion } = window.SoapCompletion;
+
+  // =====================================================================
+  // V76-01 Completion Reminders (Admin). All sending, recipient selection and
+  // completion maths happen in the admin-send-completion-reminders Edge Function;
+  // this page only previews, asks for confirmation and shows results/history.
+  // =====================================================================
+  let REM_PLAN = null, REM_BUSY = false, REM_REQ = null, REM_RUN = null;
+  const REM_OUTCOME = {
+    will_send: ['Will send', 'ok'], pending: ['Queued', 'mute'], sending: ['Sending…', 'mute'], accepted: ['Accepted by Microsoft Graph', 'ok'], failed: ['Failed to submit', 'bad'], unknown: ['Submission outcome unknown', 'warn'],
+    skipped_mode: ['Skipped – test mode', 'mute'], skipped_invalid_email: ['Invalid email', 'bad'], skipped_no_email: ['No email address', 'bad'],
+    skipped_no_account: ['No account/invitation', 'warn'], skipped_inactive: ['Inactive / removed', 'warn']
   };
-  const ALL_YEAR_GROUPS = ['EYFS','Y1','Y2','Y3','Y4','Y5','Y6','Y7','Y8','Y9','Y10','Y11','Y12','Y13'];
-  const PHASE_YEAR_GROUPS = {
-    'Primary': ['EYFS','Y1','Y2','Y3','Y4','Y5','Y6'],
-    'Infant': ['EYFS','Y1','Y2'],
-    'Junior': ['Y3','Y4','Y5','Y6'],
-    'Secondary': ['Y7','Y8','Y9','Y10','Y11','Y12','Y13'],
-    'Sixth Form College': ['Y12','Y13']
-  };
-
-  // V74: Completion follows the previous reporting period, not entry unlocking.
-  // SUM2 rollover is deliberately deferred until the future academic-year project.
-  function completionDuePeriods(schoolReportingPeriods, asOf = new Date()) {
-    const due = new Set();
-    const today = `${asOf.getFullYear()}-${String(asOf.getMonth() + 1).padStart(2, '0')}-${String(asOf.getDate()).padStart(2, '0')}`;
-    for (let i = 0; i < CONTEXT_PERIODS.length - 1; i++) {
-      const nextName = PERIOD_TO_REPORTING_NAME[CONTEXT_PERIODS[i + 1]];
-      const next = (schoolReportingPeriods || []).find(r => r.period_name === nextName);
-      const start = typeof next?.start_date === 'string' ? next.start_date.slice(0, 10) : '';
-      if (/^\d{4}-\d{2}-\d{2}$/.test(start) && start <= today) due.add(CONTEXT_PERIODS[i]);
-    }
-    return due;
+  const remPill = o => { const x = REM_OUTCOME[o] || [o, 'mute']; return `<span class="rem-pill ${x[1]}">${escapeHtml(x[0])}</span>`; };
+  const remMsg = (t, kind) => { const el = document.getElementById('remMsg'); if (!el) return; el.style.color = kind === 'error' ? '#B3261E' : kind === 'ok' ? '#1A7A6E' : '#5A6B80'; el.textContent = t || ''; };
+  const remUuid = () => (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : 'xxxxxxxx-xxxx-4xxx-8xxx-xxxxxxxxxxxx'.replace(/[x]/g, () => (Math.random() * 16 | 0).toString(16));
+  function renderReminderSchoolOptions(schools) {
+    const sel = document.getElementById('remSchool'); if (!sel) return;
+    const keep = sel.value;
+    sel.innerHTML = '<option value="">Choose a school…</option>' + (schools || []).slice().sort((a, b) => (a.name || '').localeCompare(b.name || '')).map(s => `<option value="${s.id}">${escapeHtml(s.name)}</option>`).join('');
+    if (keep) sel.value = keep;
+    remScopeChanged(true);
+    remLoadHistory();
   }
-
-  // Count only saved cells which exist in the denominator; ignore calculated YTD,
-  // extra PAL/PAH, future periods and duplicate stored cells.
-  function countEligibleCompletionRows(rows, duePeriods, kind, yearGroups = []) {
-    const seen = new Set();
-    for (const r of (rows || [])) {
-      const period = r.period, category = r.category, metric = r.metric;
-      let eligible = false;
-      if (duePeriods.has(period)) {
-        if (kind === 'context') eligible = (category === 'Whole School' && ['Number on Roll','PAN'].includes(metric)) || (category === 'Year Group Profile' && yearGroups.includes(metric)) || (category === 'Pupil Profile' && ['Boys %','FSM %','Pupil Premium %','Mobility %'].includes(metric)) || (category === 'Workforce' && ['Number of Teachers','Number of Support Staff','Number of SLT','Number of ECTs','Number of UPS Teachers'].includes(metric));
-        if (kind === 'safeguarding') eligible = category === 'Vulnerability Numbers';
-        if (kind === 'inclusion') eligible = category === 'Inclusion Numbers';
-        if (kind === 'attendance') eligible = category === 'Attendance Percentages' || category === 'Behaviour Numbers';
-      } else if (kind === 'context') eligible = category === 'Year Group Profile' && yearGroups.includes(metric) && period === 'PAN';
-      else if (kind === 'safeguarding') eligible = (category === 'Compliance' && ['Status','Date'].includes(period)) || (category === 'Overall Rating' && period === 'Rating');
-      else if (kind === 'inclusion') eligible = (category === 'Inclusion Evaluation' && period === 'Rating') || (category === 'Key Dates' && period === 'Date') || (category === 'Overall Rating' && period === 'Rating');
-      else if (kind === 'attendance') eligible = category === 'Overall Rating' && period === 'Rating';
-      if (eligible) seen.add(JSON.stringify([category,metric,period]));
+  function remScope() { const r = document.querySelector('input[name="remScope"]:checked'); return r ? r.value : 'all'; }
+  function remScopeChanged(silent) { document.getElementById('remSchool').disabled = remScope() !== 'school'; if (!silent) remInvalidate(); }
+  function remInvalidate() { if (REM_BUSY) return; REM_PLAN = null; REM_REQ = null; const p = document.getElementById('remPreview'); if (p) p.innerHTML = ''; }
+  async function remInvoke(body) {
+    const { data, error } = await sb.functions.invoke('admin-send-completion-reminders', { body });
+    if (error) {
+      let detail = '';
+      try { const j = await error.context.json(); detail = j && (j.message || j.error) ? j.message || j.error : ''; if (j && j.error) error.code = j.error; } catch (e) {}
+      if (!detail && error.name === 'FunctionsFetchError') detail = 'Network problem — the request may not have reached the server. Check the run history before trying again.';
+      if (!detail && error.context && error.context.status === 404) detail = 'The reminder function is not deployed yet.';
+      const e = new Error(detail || error.message || 'Unknown error'); e.code = error.code; throw e;
     }
-    return seen.size;
+    if (data && data.ok === false) { const e = new Error(data.message || data.error || 'Unknown error'); e.code = data.error; throw e; }
+    return data;
   }
-
-  function contextCompletion(school, schoolReportingPeriods, contextRows) {
-    const yearGroups = PHASE_YEAR_GROUPS[school.phase] || ALL_YEAR_GROUPS;
-    const sections = [
-      { rows: ['Number on Roll', 'PAN'], hasPan: false },
-      { rows: yearGroups, hasPan: true },
-      { rows: ['Boys %', 'FSM %', 'Pupil Premium %', 'Mobility %'], hasPan: false },
-      { rows: ['Number of Teachers', 'Number of Support Staff', 'Number of SLT', 'Number of ECTs', 'Number of UPS Teachers'], hasPan: false }
-    ];
-    const duePeriods = completionDuePeriods(schoolReportingPeriods);
-    let total = 0;
-    sections.forEach(section => {
-      section.rows.forEach(() => {
-        CONTEXT_PERIODS.forEach(p => { if (duePeriods.has(p)) total++; });
-        if (section.hasPan) total++;
-      });
+  async function remPreview() {
+    if (REM_BUSY) return;
+    const scope = remScope(), school_id = document.getElementById('remSchool').value;
+    if (scope === 'school' && !school_id) { remMsg('Please choose a school.', 'error'); return; }
+    const btn = document.getElementById('remPreviewBtn'); btn.disabled = true; btn.textContent = 'Checking…'; remMsg('Calculating who needs a reminder…'); document.getElementById('remPreview').innerHTML = '';
+    try {
+      const plan = await remInvoke({ action: 'preview', scope, school_id: scope === 'school' ? school_id : undefined });
+      REM_PLAN = plan; REM_REQ = null; remMsg(''); remRenderPlan(plan);
+    } catch (err) { console.error(err); REM_PLAN = null; remMsg('Could not prepare the preview: ' + err.message, 'error'); }
+    finally { btn.disabled = false; btn.textContent = 'Preview Reminders'; }
+  }
+  function remRenderPlan(p) {
+    const t = p.totals, mode = p.notify_mode;
+    const banner = mode === 'live' ? '<div class="rem-banner live">LIVE MODE — real emails will be sent to the real contributors listed below.</div>'
+      : mode === 'allowlist' ? '<div class="rem-banner test">TEST MODE (allowlist) — only addresses on the test allowlist will receive an email. Everyone else is listed as skipped.</div>'
+      : '<div class="rem-banner off">Email sending is switched OFF (REMINDER_MODE=off). You can preview, but nothing can be sent.</div>';
+    const skipped = Object.values(t.skipped || {}).reduce((a, b) => a + b, 0);
+    let html = banner + `<div class="rem-sum"><span><b>${t.schools_with_incomplete}</b> school${t.schools_with_incomplete === 1 ? '' : 's'} with incomplete sections</span><span><b>${t.will_send}</b> email${t.will_send === 1 ? '' : 's'} will be submitted</span><span><b>${skipped}</b> assigned but skipped</span><span><b>${t.pending_activation}</b> awaiting account activation</span><span>${t.schools_complete} school${t.schools_complete === 1 ? '' : 's'} fully complete</span><span>Figures as of ${escapeHtml(p.as_of_date)}</span></div>`;
+    if (!p.schools.length) html += '<p class="empty-note">Every checked school is complete for the reporting periods currently due — no reminders are needed.</p>';
+    p.schools.forEach(s => {
+      const sendN = s.recipients.filter(r => r.outcome === 'will_send').length;
+      html += `<details class="rem-school" ${p.schools.length <= 3 ? 'open' : ''}><summary>${escapeHtml(s.school_name)} — ${sendN} to email${s.recipients.length - sendN ? `, ${s.recipients.length - sendN} skipped` : ''} · incomplete: ${s.incomplete.map(i => escapeHtml(i.section) + ' ' + i.pct + '%').join(', ')}</summary><div class="rem-body"><table class="mini-table"><thead><tr><th>Recipient</th><th>Email</th><th>Account</th><th>Sections to complete</th><th>Result</th></tr></thead><tbody>` +
+        (s.unassigned_sections && s.unassigned_sections.length ? `<tr><td colspan="5"><span class="rem-pill warn">Nobody assigned</span> ${s.unassigned_sections.map(escapeHtml).join(', ')} — below 100% but no contributor is assigned, so nobody can be emailed about ${s.unassigned_sections.length === 1 ? 'it' : 'them'}.</td></tr>` : '') + s.recipients.map(r => `<tr><td>${escapeHtml(r.name || '—')}</td><td>${escapeHtml(r.email || '—')}</td><td>${r.activation === 'pending' ? '<span class="rem-pill warn">Activation pending</span>' : r.activation === 'active' ? 'Active' : '—'}</td><td>${r.sections.map(x => escapeHtml(x.section) + ' ' + x.pct + '%' + (x.role === 'additional' ? ' (additional)' : '')).join('<br>')}</td><td>${remPill(r.outcome)}${r.detail ? `<div class="school-meta">${escapeHtml(r.detail)}</div>` : ''}</td></tr>`).join('') + '</tbody></table></div></details>';
     });
-    const filled = countEligibleCompletionRows(contextRows, duePeriods, 'context', yearGroups);
-    const pct = total ? Math.round((Math.min(filled, total) / total) * 100) : 0;
-    return { pct, filled: Math.min(filled, total), total };
+    if (t.will_send > 0 && mode !== 'off') html += `<div style="margin-top:14px;"><button type="button" class="save-amend-btn" id="remSendBtn" onclick="remAskConfirm()">Send ${t.will_send} reminder email${t.will_send === 1 ? '' : 's'}…</button></div><div id="remConfirmBox"></div>`;
+    else if (mode !== 'off' && p.schools.length) html += '<p class="school-meta" style="margin-top:12px;">There is nobody eligible to email, so nothing can be sent.</p>';
+    document.getElementById('remPreview').innerHTML = html;
   }
-
-  // Simple completion calculator for flat, non-period-locked tabs — just compares
-  // how many rows actually got saved against how many are genuinely expected.
-  function rowCountCompletion(rows, totalExpected) {
-    const filled = Math.min((rows || []).length, totalExpected);
-    const pct = totalExpected ? Math.round((filled / totalExpected) * 100) : 0;
-    return { pct, filled, total: totalExpected };
+  function remAskConfirm() {
+    if (!REM_PLAN || REM_BUSY) return;
+    const p = REM_PLAN, t = p.totals, live = p.notify_mode === 'live', where = p.scope === 'school' ? (p.schools[0] ? p.schools[0].school_name : 'the selected school') : `${t.schools_with_incomplete} school${t.schools_with_incomplete === 1 ? '' : 's'}`;
+    REM_REQ = remUuid();     // one id per confirmation: a double-click or retry can never create a second send
+    document.getElementById('remConfirmBox').innerHTML = `<div class="rem-confirm ${live ? 'live' : ''}" role="alertdialog" aria-labelledby="remConfirmTitle">
+      <div id="remConfirmTitle" style="font-weight:700;margin-bottom:6px;">Confirm: send ${t.will_send} email${t.will_send === 1 ? '' : 's'} to ${escapeHtml(where)}?</div>
+      <div class="school-meta" style="margin-bottom:10px;">${live ? '<b>This will email real contributors now.</b> ' : 'Test mode: only allowlisted addresses will be emailed. '}Each person receives one email listing their incomplete sections. This cannot be undone.</div>
+      <button type="button" class="save-amend-btn" id="remConfirmBtn" onclick="remSend()">Yes, send now</button>
+      <button type="button" class="rem-secondary-btn" id="remCancelBtn" style="margin-left:8px;" onclick="remCancelConfirm()">Cancel</button></div>`;
+    const b = document.getElementById('remConfirmBtn'); if (b) b.focus();
   }
-
-  // School Information isn't stored as rows — it's individual fields on the school itself
-  function schoolInfoCompletion(s) {
-    // Trust is excluded — many schools genuinely aren't part of a trust, so
-    // leaving it blank shouldn't ever cap completion below 100%.
-    const fields = [s.urn, s.school_type, s.number_on_roll, s.pan, s.person_responsible];
-    const filled = fields.filter(f => f !== null && f !== undefined && f !== '').length;
-    const total = fields.length;
-    const pct = total ? Math.round((filled / total) * 100) : 0;
-    return { pct, filled, total };
+  function remCancelConfirm() { if (REM_BUSY) return; REM_REQ = null; const b = document.getElementById('remConfirmBox'); if (b) b.innerHTML = ''; }
+  function remProgress(prog, extra) {
+    const el = document.getElementById('remProgress'); if (!el || !prog) return;
+    el.innerHTML = `<div class="rem-sum"><span><b>${prog.accepted}</b> accepted by Microsoft Graph</span><span><b>${prog.pending + prog.sending}</b> waiting</span><span><b>${prog.failed}</b> failed to submit</span><span><b>${prog.unknown}</b> submission outcome unknown</span><span><b>${prog.skipped}</b> skipped</span></div><div class="school-meta">Accepted by Microsoft Graph means the message was handed to Microsoft 365 for sending. It is not confirmation that it reached the recipient's inbox.</div>${extra ? `<div class="school-meta">${escapeHtml(extra)}</div>` : ''}`;
   }
-
-  function safeguardingCompletion(schoolReportingPeriods, rows) {
-    const duePeriods = completionDuePeriods(schoolReportingPeriods);
-    let total = 0;
-    CONTEXT_PERIODS.forEach(p => { if (duePeriods.has(p)) total += 5; });
-    total += 3 * 2;
-    total += 1;
-    const filled = countEligibleCompletionRows(rows, duePeriods, 'safeguarding');
-    const pct = total ? Math.round((Math.min(filled, total) / total) * 100) : 0;
-    return { pct, filled: Math.min(filled, total), total };
+  const remSleep = ms => new Promise(r => setTimeout(r, ms));
+  async function remDrive(first, liveFlag) {
+    // Keep asking the function to continue until the run is finished (it sends in paced slices to respect Microsoft's rate limits).
+    let res = first, guard = 0;
+    while (res) {
+      REM_RUN = res.run; remProgress(res.progress, res.done ? '' : 'Sending in paced batches — please keep this page open.');
+      if (res.done) return res;
+      if (res.stopped && res.stopped.reason && !['budget', 'rate_limited'].includes(res.stopped.reason)) return res;
+      if (++guard > 400) return res;
+      if (res.retry_after_seconds) { for (let s = Math.min(res.retry_after_seconds, 120); s > 0; s--) { remProgress(res.progress, `Microsoft asked us to slow down — resuming in ${s}s…`); await remSleep(1000); } }
+      res = await remInvoke({ action: 'continue', run_id: res.run.id, confirm_live: liveFlag });
+    }
+    return res;
   }
-
-  function inclusionCompletion(schoolReportingPeriods, rows) {
-    const duePeriods = completionDuePeriods(schoolReportingPeriods);
-    let total = 0;
-    CONTEXT_PERIODS.forEach(p => { if (duePeriods.has(p)) total += 5; });
-    total += 6; total += 4; total += 1;
-    const filled = countEligibleCompletionRows(rows, duePeriods, 'inclusion');
-    const pct = total ? Math.round((Math.min(filled, total) / total) * 100) : 0;
-    return { pct, filled: Math.min(filled, total), total };
+  async function remSend() {
+    if (!REM_PLAN || !REM_REQ || REM_BUSY) return;
+    REM_BUSY = true;
+    const p = REM_PLAN, request_id = REM_REQ, live = p.notify_mode === 'live';
+    ['remConfirmBtn', 'remCancelBtn', 'remSendBtn', 'remPreviewBtn'].forEach(id => { const b = document.getElementById(id); if (b) b.disabled = true; });
+    remMsg('Sending…'); remProgress({ accepted: 0, pending: p.totals.will_send, sending: 0, failed: 0, unknown: 0, skipped: 0 }, 'Starting…');
+    try {
+      const first = await remInvoke({ action: 'send', scope: p.scope, school_id: p.scope === 'school' ? p.school_id : undefined, plan_hash: p.plan_hash, request_id, confirm_live: live });
+      const fin = await remDrive(first, live);
+      const pr = fin.progress; const bad = pr.failed + pr.unknown;
+      remMsg(fin.done ? (bad ? `Finished with problems: ${pr.accepted} accepted by Microsoft Graph, ${pr.failed} failed to submit, ${pr.unknown} submission outcome unknown. See the history below.` : `Done: ${pr.accepted} reminder email${pr.accepted === 1 ? '' : 's'} accepted by Microsoft Graph (acceptance is not confirmation of delivery).`) : (fin.stopped && fin.stopped.reason === 'mode_off' ? 'Stopped: email sending was switched off (REMINDER_MODE=off). No further emails were submitted.' : fin.stopped && fin.stopped.reason === 'mode_changed' ? 'Stopped: the server email mode changed after this send began. No further emails were submitted; start a new send instead.' : 'Stopped before finishing — see the history below to resume.'), fin.done && !bad ? 'ok' : 'error');
+      REM_PLAN = null; REM_REQ = null; document.getElementById('remPreview').innerHTML = '';
+    } catch (err) {
+      console.error(err);
+      remMsg((err.code === 'plan_changed' ? 'The data changed since you previewed it, so nothing was sent. Please preview again. ' : 'Sending stopped: ') + (err.code === 'plan_changed' ? '' : err.message) + (err.code === 'plan_changed' || err.code === 'run_in_progress' || err.code === 'mode_off' || err.code === 'confirm_live_required' ? '' : ' Check the history below before trying again — some emails may already have gone out.'), 'error');
+      if (err.code === 'plan_changed') { REM_PLAN = null; document.getElementById('remPreview').innerHTML = ''; } else { const b = document.getElementById('remConfirmBox'); if (b) b.innerHTML = ''; REM_REQ = null; const sb2 = document.getElementById('remSendBtn'); if (sb2) sb2.disabled = false; }
+    } finally {
+      REM_BUSY = false; const pb = document.getElementById('remPreviewBtn'); if (pb) pb.disabled = false; remLoadHistory();
+    }
   }
-
-  function curriculumCompletion(curriculumRows) {
-    let total = 12; // Intent, Implementation & Assurance: 12 rows
-    total += 1; // Overall Rating
-    const filled = (curriculumRows || []).length;
-    const pct = total ? Math.round((Math.min(filled, total) / total) * 100) : 0;
-    return { pct, filled, total };
+  async function remLoadHistory() {
+    const box = document.getElementById('remHistory'); if (!box) return;
+    try {
+      const { data, error } = await sb.from('reminder_runs').select('*').order('created_at', { ascending: false }).limit(25);
+      if (error) throw error;
+      const schoolName = id => { const h = (typeof USERS_ACCESS_HOOKS !== 'undefined' && USERS_ACCESS_HOOKS && USERS_ACCESS_HOOKS.schools) || []; const s = h.find(x => x.id === id); return s ? s.name : ''; };
+      if (!data.length) { box.innerHTML = '<p class="empty-note">No reminders have been sent yet.</p>'; return; }
+      box.innerHTML = '<div style="overflow-x:auto;"><table class="mini-table"><thead><tr><th>When</th><th>Started by</th><th>Scope</th><th>Mode</th><th>Status</th><th>Accepted by Graph</th><th>Failed to submit / outcome unknown</th><th>Skipped</th><th></th></tr></thead><tbody>' + data.map(r => {
+        const c = r.counts || {}; const when = new Date(r.created_at).toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+        const open = r.status === 'sending' || r.status === 'interrupted';
+        return `<tr><td>${escapeHtml(when)}</td><td>${escapeHtml(r.created_by_email || '—')}</td><td>${r.scope === 'school' ? escapeHtml(schoolName(r.school_id) || 'One school') : 'All schools'}</td><td>${escapeHtml(r.mode)}</td><td>${escapeHtml(r.status)}</td><td>${c.accepted ?? '—'}</td><td>${(c.failed || 0) + (c.unknown || 0)}</td><td>${c.skipped ?? '—'}</td><td><button type="button" class="rem-secondary-btn" style="padding:4px 10px;" onclick="remShowRun('${r.id}')">Details</button>${open ? ` <button type="button" class="rem-secondary-btn" style="padding:4px 10px;" onclick="remResume('${r.id}','${r.mode}')">Resume</button>` : ''}</td></tr>`;
+      }).join('') + '</tbody></table></div>';
+    } catch (err) {
+      const missing = err && (err.code === '42P01' || err.code === 'PGRST205' || /does not exist|schema cache|relation/i.test(err.message || ''));
+      box.innerHTML = `<p class="empty-note">${missing ? 'Reminder history is not available yet (the V76 database update has not been applied).' : 'Could not load reminder history: ' + escapeHtml((err && err.message) || 'unknown error')}</p>`;
+    }
   }
-
-  function achievementCompletion(assessmentSetupRows, reportingPeriods, rows) {
-    const today = (() => {
-      const d = new Date();
-      const y = d.getFullYear();
-      const m = String(d.getMonth() + 1).padStart(2, '0');
-      const day = String(d.getDate()).padStart(2, '0');
-      return `${y}-${m}-${day}`;
-    })();
-    const assessment = (name) => (assessmentSetupRows || []).find(a => a.assessment_name === name);
-    const planned = (name) => {
-      const row = assessment(name);
-      return !!(row && row.planned === 'Yes');
-    };
-    const live = (name) => {
-      const row = assessment(name);
-      return !!(row && row.planned === 'Yes' && row.assessment_date && row.assessment_date <= today);
-    };
-    const gcsePeriods = new Set(['2022/23', '2023/24', '2024/25', '2025/26']);
-    const post16Periods = new Set(['2022/23', '2023/24', '2024/25', '2025/26']);
-    if (planned('Year 11 PPE 1') && live('Year 11 PPE 1')) gcsePeriods.add('PPE1');
-    if (planned('Year 11 PPE 2') && live('Year 11 PPE 2')) gcsePeriods.add('PPE2');
-    if (planned('Year 13 PPE 1') && live('Year 13 PPE 1')) post16Periods.add('PPE1');
-    if (planned('Year 13 PPE 2') && live('Year 13 PPE 2')) post16Periods.add('PPE2');
-
-    let total = 4; // Foundational Knowledge
-    total += 10 * gcsePeriods.size;
-    total -= 4; // Progress 8 rows have four historical cells intentionally unavailable
-    total += 8 * post16Periods.size;
-    total += 1; // Overall Rating
-
-    const filled = (rows || []).filter(r => {
-      if (r.category === 'GCSE Outcomes') return gcsePeriods.has(r.period);
-      if (r.category === 'Post-16 Outcomes') return post16Periods.has(r.period);
-      return true;
-    }).length;
-    const pct = total ? Math.round((Math.min(filled, total) / total) * 100) : 0;
-    return { pct, filled, total };
+  async function remShowRun(runId) {
+    const box = document.getElementById('remRunDetail'); box.innerHTML = '<div class="status-msg">Loading…</div>';
+    const { data, error } = await sb.from('reminder_deliveries').select('*').eq('run_id', runId).order('school_name').order('recipient_email');
+    if (error) { box.innerHTML = '<p class="empty-note">Could not load the run: ' + escapeHtml(error.message) + '</p>'; return; }
+    const failed = data.filter(d => d.outcome === 'failed').length;
+    box.innerHTML = `<h4 style="margin:18px 0 8px;color:#1B2A4A;">Run details (${data.length} recipient${data.length === 1 ? '' : 's'})</h4>${failed ? `<button type="button" class="save-amend-btn" style="margin-bottom:10px;" onclick="remRetry('${runId}')">Retry ${failed} failed</button>` : ''}<div style="overflow-x:auto;"><table class="mini-table"><thead><tr><th>School</th><th>Recipient</th><th>Sections</th><th>Result</th><th>Accepted at</th></tr></thead><tbody>` + data.map(d => `<tr><td>${escapeHtml(d.school_name)}</td><td>${escapeHtml(d.recipient_name || '')}<div class="school-meta">${escapeHtml(d.recipient_email || '—')}</div></td><td>${(d.sections || []).map(x => escapeHtml(x.section) + ' ' + x.pct + '%').join('<br>')}</td><td>${remPill(d.outcome)}${d.detail || d.error_code ? `<div class="school-meta">${escapeHtml(d.detail || d.error_code)}</div>` : ''}</td><td>${d.accepted_at ? escapeHtml(new Date(d.accepted_at).toLocaleString('en-GB')) : '—'}</td></tr>`).join('') + '</tbody></table></div>';
+    box.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }
-
-  function pdwCompletion(pdwRows) {
-    let total = 6 * 4; // Stakeholder Voice: 6 rows x 4 columns
-    total += 6 * 3; // Year 11 Destinations: 6 rows x 3 years
-    total += 7 * 3; // Year 13 Destinations: 7 rows x 3 years (includes Retention Y12 to Y13 %)
-    total += 6 * 3; // Enrichment & Clubs: 6 rows x 3 terms
-    total += 8; // Gatsby Benchmarks: 8 rows
-    total += 1; // Overall Rating
-    const filled = (pdwRows || []).length;
-    const pct = total ? Math.round((Math.min(filled, total) / total) * 100) : 0;
-    return { pct, filled, total };
-  }
-
-  function leadershipCompletion(lgRows) {
-    let total = 7; // Evaluation: 7 rows
-    total += 1; // Overall Rating
-    const filled = (lgRows || []).length;
-    const pct = total ? Math.round((Math.min(filled, total) / total) * 100) : 0;
-    return { pct, filled, total };
-  }
-
-  function financeCompletion(financeRows) {
-    let total = 5 * 3; // Financial Health: 5 rows x 3 years
-    total += 6 * 3; // Recruitment & Retention: 6 rows x 3 years
-    total += 3 * 6; // Staff Absence & Cover: 3 rows x 6 periods
-    total += 5; // Resource Effectiveness: 5 rows
-    total += 1; // Overall Rating
-    const filled = (financeRows || []).length;
-    const pct = total ? Math.round((Math.min(filled, total) / total) * 100) : 0;
-    return { pct, filled, total };
-  }
-
-  function attendanceCompletion(schoolReportingPeriods, rows) {
-    const duePeriods = completionDuePeriods(schoolReportingPeriods);
-    let total = 0;
-    CONTEXT_PERIODS.forEach(p => { if (duePeriods.has(p)) total += 23; }); // 13 attendance % rows + 10 behaviour rows per period (National Attendance % removed — now sourced centrally, not entered per school)
-    total += 1;
-    const filled = countEligibleCompletionRows(rows, duePeriods, 'attendance');
-    const pct = total ? Math.round((Math.min(filled, total) / total) * 100) : 0;
-    return { pct, filled: Math.min(filled, total), total };
+  async function remResume(runId, mode) { await remContinueRun('continue', runId, mode); }
+  async function remRetry(runId) { const r = await sb.from('reminder_runs').select('mode').eq('id', runId).maybeSingle(); await remContinueRun('retry_failed', runId, r.data && r.data.mode); }
+  async function remContinueRun(action, runId, mode) {
+    if (REM_BUSY) return; REM_BUSY = true;
+    if (mode === 'live' && !window.confirm('This run is in LIVE mode and will email real contributors. Continue?')) { REM_BUSY = false; return; }
+    remMsg(action === 'retry_failed' ? 'Retrying failed recipients…' : 'Resuming…');
+    try {
+      const first = await remInvoke({ action, run_id: runId, confirm_live: mode === 'live' });
+      const fin = await remDrive(first, mode === 'live'); const pr = fin.progress;
+      remMsg(fin.done ? `Finished: ${pr.accepted} accepted by Microsoft Graph, ${pr.failed} failed to submit, ${pr.unknown} submission outcome unknown.` : 'Stopped before finishing — see the history to resume.', fin.done && !(pr.failed + pr.unknown) ? 'ok' : 'error');
+    } catch (err) { console.error(err); remMsg('Could not continue: ' + err.message, 'error'); }
+    finally { REM_BUSY = false; await remLoadHistory(); await remShowRun(runId); }
   }
 
   async function logout(e) {
@@ -1242,6 +1250,7 @@
     USERS_ACCESS_HOOKS = { schools, schoolUsers, sectionAccessRows, renderFragment: renderUsersAccessFragment };
 
     renderInviteSchoolOptions(schools);
+    renderReminderSchoolOptions(schools);   // V76-01
     renderLeaders();   // V71-01
 
     await loadResources();
