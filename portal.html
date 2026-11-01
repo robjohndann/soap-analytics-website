@@ -144,25 +144,14 @@
   </div>
 </div>
 
+<script src="completion-core.js"></script>
 <script>
   const SUPABASE_URL = 'https://caopycszjzrmwhxxvtpx.supabase.co';
   const SUPABASE_KEY = 'sb_publishable_2CTGR0PKyRPpSk59lcr3sA_hvvUDX97';
   const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
-  const CONTEXT_PERIODS = ['AUT1 26', 'AUT2 26', 'SPR1 27', 'SPR2 27', 'SUM1 27', 'SUM2 27'];
-  const PERIOD_TO_REPORTING_NAME = {
-    'AUT1 26': 'Autumn 1', 'AUT2 26': 'Autumn 2',
-    'SPR1 27': 'Spring 1', 'SPR2 27': 'Spring 2',
-    'SUM1 27': 'Summer 1', 'SUM2 27': 'Summer 2'
-  };
-  const ALL_YEAR_GROUPS = ['EYFS','Y1','Y2','Y3','Y4','Y5','Y6','Y7','Y8','Y9','Y10','Y11','Y12','Y13'];
-  const PHASE_YEAR_GROUPS = {
-    'Primary': ['EYFS','Y1','Y2','Y3','Y4','Y5','Y6'],
-    'Infant': ['EYFS','Y1','Y2'],
-    'Junior': ['Y3','Y4','Y5','Y6'],
-    'Secondary': ['Y7','Y8','Y9','Y10','Y11','Y12','Y13'],
-    'Sixth Form College': ['Y12','Y13']
-  };
+  // V76: shared with Admin and the server-side reminder function (completion-core.js).
+  const { CONTEXT_PERIODS, PERIOD_TO_REPORTING_NAME, ALL_YEAR_GROUPS, PHASE_YEAR_GROUPS } = window.SoapCompletion;
 
   // Package tier -> which sections are unlocked. Anything not matching one of
   // these four exact names (e.g. old test data, or a school never assigned a
@@ -188,158 +177,19 @@
     return lockedPeriods;
   }
 
-  // V74: Completion follows the previous reporting period, not entry unlocking.
-  // SUM2 rollover is deliberately deferred until the future academic-year project.
-  function completionDuePeriods(schoolReportingPeriods, asOf = new Date()) {
-    const due = new Set();
-    const today = `${asOf.getFullYear()}-${String(asOf.getMonth() + 1).padStart(2, '0')}-${String(asOf.getDate()).padStart(2, '0')}`;
-    for (let i = 0; i < CONTEXT_PERIODS.length - 1; i++) {
-      const nextName = PERIOD_TO_REPORTING_NAME[CONTEXT_PERIODS[i + 1]];
-      const next = (schoolReportingPeriods || []).find(r => r.period_name === nextName);
-      const start = typeof next?.start_date === 'string' ? next.start_date.slice(0, 10) : '';
-      if (/^\d{4}-\d{2}-\d{2}$/.test(start) && start <= today) due.add(CONTEXT_PERIODS[i]);
-    }
-    return due;
-  }
-
-  // Count only saved cells which exist in the denominator; ignore calculated YTD,
-  // extra PAL/PAH, future periods and duplicate stored cells.
-  function countEligibleCompletionRows(rows, duePeriods, kind, yearGroups = []) {
-    const seen = new Set();
-    for (const r of (rows || [])) {
-      const period = r.period, category = r.category, metric = r.metric;
-      let eligible = false;
-      if (duePeriods.has(period)) {
-        if (kind === 'context') eligible = (category === 'Whole School' && ['Number on Roll','PAN'].includes(metric)) || (category === 'Year Group Profile' && yearGroups.includes(metric)) || (category === 'Pupil Profile' && ['Boys %','FSM %','Pupil Premium %','Mobility %'].includes(metric)) || (category === 'Workforce' && ['Number of Teachers','Number of Support Staff','Number of SLT','Number of ECTs','Number of UPS Teachers'].includes(metric));
-        if (kind === 'safeguarding') eligible = category === 'Vulnerability Numbers';
-        if (kind === 'inclusion') eligible = category === 'Inclusion Numbers';
-        if (kind === 'attendance') eligible = category === 'Attendance Percentages' || category === 'Behaviour Numbers';
-      } else if (kind === 'context') eligible = category === 'Year Group Profile' && yearGroups.includes(metric) && period === 'PAN';
-      else if (kind === 'safeguarding') eligible = (category === 'Compliance' && ['Status','Date'].includes(period)) || (category === 'Overall Rating' && period === 'Rating');
-      else if (kind === 'inclusion') eligible = (category === 'Inclusion Evaluation' && period === 'Rating') || (category === 'Key Dates' && period === 'Date') || (category === 'Overall Rating' && period === 'Rating');
-      else if (kind === 'attendance') eligible = category === 'Overall Rating' && period === 'Rating';
-      if (eligible) seen.add(JSON.stringify([category,metric,period]));
-    }
-    return seen.size;
-  }
-
-  function contextCompletion(school, schoolReportingPeriods, contextRows) {
-    const yearGroups = PHASE_YEAR_GROUPS[school.phase] || ALL_YEAR_GROUPS;
-    const sections = [
-      { rows: ['Number on Roll', 'PAN'], hasPan: false },
-      { rows: yearGroups, hasPan: true },
-      { rows: ['Boys %', 'FSM %', 'Pupil Premium %', 'Mobility %'], hasPan: false },
-      { rows: ['Number of Teachers', 'Number of Support Staff', 'Number of SLT', 'Number of ECTs', 'Number of UPS Teachers'], hasPan: false }
-    ];
-    const duePeriods = completionDuePeriods(schoolReportingPeriods);
-    let total = 0;
-    sections.forEach(section => {
-      section.rows.forEach(() => {
-        CONTEXT_PERIODS.forEach(p => { if (duePeriods.has(p)) total++; });
-        if (section.hasPan) total++;
-      });
-    });
-    const filled = countEligibleCompletionRows(contextRows, duePeriods, 'context', yearGroups);
-    const pct = total ? Math.round((Math.min(filled, total) / total) * 100) : 0;
-    return pct;
-  }
-
-  function schoolInfoCompletion(s) {
-    const fields = [s.urn, s.school_type, s.number_on_roll, s.pan, s.person_responsible];
-    const filled = fields.filter(f => f !== null && f !== undefined && f !== '').length;
-    return Math.round((filled / fields.length) * 100);
-  }
-
-  function safeguardingCompletion(schoolReportingPeriods, rows) {
-    const duePeriods = completionDuePeriods(schoolReportingPeriods);
-    let total = 0;
-    CONTEXT_PERIODS.forEach(p => { if (duePeriods.has(p)) total += 5; });
-    total += 3 * 2;
-    total += 1;
-    const filled = countEligibleCompletionRows(rows, duePeriods, 'safeguarding');
-    return total ? Math.round((Math.min(filled, total) / total) * 100) : 0;
-  }
-
-  function inclusionCompletion(schoolReportingPeriods, rows) {
-    const duePeriods = completionDuePeriods(schoolReportingPeriods);
-    let total = 0;
-    CONTEXT_PERIODS.forEach(p => { if (duePeriods.has(p)) total += 5; });
-    total += 6; total += 4; total += 1;
-    const filled = countEligibleCompletionRows(rows, duePeriods, 'inclusion');
-    return total ? Math.round((Math.min(filled, total) / total) * 100) : 0;
-  }
-
-  function curriculumCompletion(rows) {
-    const total = 12 + 1;
-    const filled = (rows || []).length;
-    return Math.round((Math.min(filled, total) / total) * 100);
-  }
-
-  function achievementCompletion(assessmentSetupRows, reportingPeriods, rows) {
-    const today = (() => {
-      const d = new Date();
-      const y = d.getFullYear();
-      const m = String(d.getMonth() + 1).padStart(2, '0');
-      const day = String(d.getDate()).padStart(2, '0');
-      return `${y}-${m}-${day}`;
-    })();
-    const assessment = (name) => (assessmentSetupRows || []).find(a => a.assessment_name === name);
-    const planned = (name) => {
-      const row = assessment(name);
-      return !!(row && row.planned === 'Yes');
-    };
-    const live = (name) => {
-      const row = assessment(name);
-      return !!(row && row.planned === 'Yes' && row.assessment_date && row.assessment_date <= today);
-    };
-    const gcsePeriods = new Set(['2022/23', '2023/24', '2024/25', '2025/26']);
-    const post16Periods = new Set(['2022/23', '2023/24', '2024/25', '2025/26']);
-    if (planned('Year 11 PPE 1') && live('Year 11 PPE 1')) gcsePeriods.add('PPE1');
-    if (planned('Year 11 PPE 2') && live('Year 11 PPE 2')) gcsePeriods.add('PPE2');
-    if (planned('Year 13 PPE 1') && live('Year 13 PPE 1')) post16Periods.add('PPE1');
-    if (planned('Year 13 PPE 2') && live('Year 13 PPE 2')) post16Periods.add('PPE2');
-
-    let total = 4; // Foundational Knowledge
-    total += 10 * gcsePeriods.size;
-    total -= 4; // Progress 8 rows have four historical cells intentionally unavailable
-    total += 8 * post16Periods.size;
-    total += 1; // Overall Rating
-
-    const filled = (rows || []).filter(r => {
-      if (r.category === 'GCSE Outcomes') return gcsePeriods.has(r.period);
-      if (r.category === 'Post-16 Outcomes') return post16Periods.has(r.period);
-      return true;
-    }).length;
-    const pct = total ? Math.round((Math.min(filled, total) / total) * 100) : 0;
-    return pct;
-  }
-
-  function pdwCompletion(rows) {
-    let total = 6*4 + 6*3 + 7*3 + 6*3 + 8 + 1;
-    const filled = (rows || []).length;
-    return Math.round((Math.min(filled, total) / total) * 100);
-  }
-
-  function leadershipCompletion(rows) {
-    const total = 7 + 1;
-    const filled = (rows || []).length;
-    return Math.round((Math.min(filled, total) / total) * 100);
-  }
-
-  function financeCompletion(rows) {
-    const total = 5*3 + 6*3 + 3*6 + 5 + 1;
-    const filled = (rows || []).length;
-    return Math.round((Math.min(filled, total) / total) * 100);
-  }
-
-  function attendanceCompletion(schoolReportingPeriods, rows) {
-    const duePeriods = completionDuePeriods(schoolReportingPeriods);
-    let total = 0;
-    CONTEXT_PERIODS.forEach(p => { if (duePeriods.has(p)) total += 23; }); // 13 attendance % rows + 10 behaviour rows per period (National Attendance % removed — now sourced centrally, not entered per school)
-    total += 1;
-    const filled = countEligibleCompletionRows(rows, duePeriods, 'attendance');
-    return total ? Math.round((Math.min(filled, total) / total) * 100) : 0;
-  }
+  // V76: completion calculations come from completion-core.js (identical rules). The Portal
+  // has always used bare percentages, so these wrappers return only .pct.
+  const { completionDuePeriods, countEligibleCompletionRows } = window.SoapCompletion;
+  const contextCompletion = (school, periods, rows) => window.SoapCompletion.contextCompletion(school, periods, rows).pct;
+  const schoolInfoCompletion = s => window.SoapCompletion.schoolInfoCompletion(s).pct;
+  const safeguardingCompletion = (periods, rows) => window.SoapCompletion.safeguardingCompletion(periods, rows).pct;
+  const inclusionCompletion = (periods, rows) => window.SoapCompletion.inclusionCompletion(periods, rows).pct;
+  const curriculumCompletion = rows => window.SoapCompletion.curriculumCompletion(rows).pct;
+  const achievementCompletion = (assess, periods, rows) => window.SoapCompletion.achievementCompletion(assess, periods, rows).pct;
+  const pdwCompletion = rows => window.SoapCompletion.pdwCompletion(rows).pct;
+  const leadershipCompletion = rows => window.SoapCompletion.leadershipCompletion(rows).pct;
+  const financeCompletion = rows => window.SoapCompletion.financeCompletion(rows).pct;
+  const attendanceCompletion = (periods, rows) => window.SoapCompletion.attendanceCompletion(periods, rows).pct;
 
   function pctColor(pct) {
     if (pct >= 90) return '#1D9E75';
