@@ -621,8 +621,11 @@
   // V72 RC-2: IDSR state shared by the page loader and the global publish/import handlers
   let IDSR_UPLOADS = [], IDSR_SUBS = [], IDSR_PUBS = [], IDSR_SCHOOLS = [];
   const idsrUploadFor = (id) => IDSR_UPLOADS.find(u => u.school_id === id) || null;   // V71 legacy row
-  const idsrSubsFor = (id) => IDSR_SUBS.filter(x => x.school_id === id);
-  const idsrPubsFor = (id) => IDSR_PUBS.filter(x => x.school_id === id);
+  const idsrSameId = (a, b) => String(a || '').toLowerCase() === String(b || '').toLowerCase();   // V77-02: id comparison never depends on letter case
+  const idsrSubsFor = (id) => IDSR_SUBS.filter(x => idsrSameId(x.school_id, id));
+  const idsrPubsFor = (id) => IDSR_PUBS.filter(x => idsrSameId(x.school_id, id));
+  function idsrReadProblem(res) { if (!res) return 'no response'; if (res.error) return String(res.error.message || res.error.code || 'database error'); if (!Array.isArray(res.data)) return 'no data returned'; return null; }
+  let IDSR_READ = { subs: null, pubs: null, capped: false };   // V77-02: a failed or possibly truncated read is reported, never shown as an empty list
   let MSG_ACTIVE_THREAD_ID = null;
   let MSG_COMPOSE_SCHOOL_ID = null;
   let MSG_COMPOSE_RECIPIENTS = [];
@@ -1062,7 +1065,8 @@
     const schools = schoolsRes.data || [];
     const bySchool = (rows, id) => (rows || []).filter(r => r.school_id === id);
     const idsrUploads = idsrUploadsRes.data || [];
-    IDSR_UPLOADS = idsrUploads; IDSR_SUBS = idsrSubsRes.data || []; IDSR_PUBS = idsrPubsAdminRes.data || []; IDSR_SCHOOLS = schools;   // module-level so the (global) publish/import handlers can reach them
+    IDSR_UPLOADS = idsrUploads; IDSR_SUBS = idsrSubsRes.data || []; IDSR_PUBS = idsrPubsAdminRes.data || []; IDSR_SCHOOLS = schools;
+    IDSR_READ = { subs: idsrReadProblem(idsrSubsRes), pubs: idsrReadProblem(idsrPubsAdminRes), capped: (idsrSubsRes.data || []).length >= 1000 };   // module-level so the (global) publish/import handlers can reach them
     const schoolUsers = schoolUsersRes.data || [];
     const sectionAccessRows = sectionAccessRes.data || [];
 
@@ -1135,9 +1139,9 @@
       const link = 'color:#0D7377;font-weight:700;font-size:13px;text-decoration:none;';
       const legacy = idsrUploadFor(s.id), subs = idsrSubsFor(s.id), pubs = idsrPubsFor(s.id);
       const pending = subs.filter(x => x.status === 'pending'), approved = subs.filter(x => x.status === 'approved'), cur = pubs.filter(p => p.is_current)[0] || null;
-      let html = '';
+      let html = idsrDiagnosticsHtml(s);
       html += cur ? `<div style="margin-bottom:8px;"><strong>Current published:</strong> ${escapeHtml(cur.period_label)} \u2014 published ${dt(cur.published_at)}${cur.out_of_sequence ? ' (out of sequence)' : ''} <a href="${pageFile}?school_id=${s.id}&publication_id=${cur.id}" target="_blank" style="${link}">View \u2192</a>${pubs.length > 1 ? ` \u00b7 ${pubs.length} versions (select in the viewer)` : ''}</div>` : `<div style="margin-bottom:8px;color:#5A6B80;">Nothing published yet.</div>`;
-      if (!pending.length) html += `<div style="margin-bottom:8px;color:#5A6B80;">No submissions awaiting review.</div>`;
+      if (!pending.length) html += IDSR_READ.subs ? `<div style="margin-bottom:8px;color:#B3261E;font-weight:700;">Awaiting-review list unavailable (see the warning above) \u2014 do not assume nothing is waiting.</div>` : `<div style="margin-bottom:8px;color:#5A6B80;">No submissions awaiting review.</div>`;
       pending.forEach(sub => { html += `<div style="display:flex;gap:14px;flex-wrap:wrap;align-items:center;margin-bottom:8px;" data-submission="${sub.id}"><span><strong>${escapeHtml(sub.file_name || 'IDSR')}</strong> uploaded ${sub.uploaded_at ? dt(sub.uploaded_at) : ''}${sub.legacy_import ? ' (imported from V71)' : ''} \u2014 awaiting review.</span>
         <a href="${pageFile}?school_id=${s.id}&submission_id=${sub.id}" target="_blank" style="${link}">Preview \u2192</a>
         <button type="button" class="save-amend-btn" style="padding:6px 12px;" onclick="adminDownloadOriginalIdsr('${s.id}', '${sub.id}', this)">Download Original IDSR</button>
@@ -1148,6 +1152,7 @@
       }
       const imported = subs.some(x => x.legacy_import);
       if (legacy && !imported && !pubs.length) html += `<div style="margin-bottom:8px;"><span style="color:#5A6B80;">V71 upload <strong>${escapeHtml(legacy.file_name || 'IDSR')}</strong> (${legacy.status}) has not been imported.</span> <button type="button" class="save-amend-btn" style="padding:6px 12px;" onclick="adminImportLegacyIdsr('${s.id}')" id="adminIdsrImportBtn-${iframeId}-${s.id}">Import as submission</button> <a href="${pageFile}?school_id=${s.id}" target="_blank" style="${link}">View legacy \u2192</a> <button type="button" class="save-amend-btn" style="padding:6px 12px;" onclick="adminDownloadOriginalIdsr('${s.id}', null, this)">Download Original IDSR</button></div>`;
+      if (pageFile === 'idsr-soap.html') html += idsrAdminUploadHtml(s);   // V77-02: one upload control per school (SOAP panel only, so element ids stay unique)
       return `
         <div style="background:#F0F4F8;border:1px solid #DCE3EA;border-radius:8px;padding:12px 14px;">
           <div style="font-size:13px;color:#1B2A4A;">${html}</div>
@@ -1945,6 +1950,123 @@
     IDSR_SUBS.unshift({ id: row.submission_id, school_id: schoolId, status: 'pending', file_name: legacy.file_name, uploaded_at: new Date().toISOString(), legacy_import: true });
     const sc = IDSR_SCHOOLS.find(x => x.id === schoolId); if (sc) { const a = document.getElementById(`panel-${schoolId}-idsrsoap`), b = document.getElementById(`panel-${schoolId}-idsrdash`); if (a) a.innerHTML = renderIdsrFragment(sc, 'idsr-soap.html', 'adminPublishIdsrSoap', 'adminIdsrSoapFrame'); if (b) b.innerHTML = renderIdsrFragment(sc, 'idsr-dashboard.html', 'adminPublishIdsr', 'adminIdsrFrame'); }
     say('Imported as a pending submission \u2014 preview it and publish.');
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // V77-02: IDSR list diagnostics, and "Upload IDSR on behalf of school".
+  // The upload uses exactly the schools' own server workflow under the administrator's own session and Row Level Security:
+  // begin_idsr_upload -> Storage (write-once) -> complete_idsr_upload. Result: a PENDING submission. Nothing here ever publishes.
+  // ---------------------------------------------------------------------------------------------
+  function idsrDiagnosticsHtml(s) {
+    const warn = (t) => `<div role="alert" style="margin-bottom:8px;padding:8px 10px;border-radius:6px;background:#FDECEA;border:1px solid #F5C6C2;color:#6B1410;font-weight:600;">${t}</div>`;
+    let h = '';
+    if (IDSR_READ.subs) h += warn(`The list of IDSR submissions could not be loaded (${escapeHtml(IDSR_READ.subs)}). Submissions awaiting review may exist but are not shown. <button type="button" class="save-amend-btn" style="padding:4px 10px;margin-left:8px;" onclick="adminReloadIdsrLists(this)">Reload submissions</button>`);
+    if (IDSR_READ.pubs) h += warn(`The list of published IDSR versions could not be loaded (${escapeHtml(IDSR_READ.pubs)}). "Nothing published yet" may be wrong. <button type="button" class="save-amend-btn" style="padding:4px 10px;margin-left:8px;" onclick="adminReloadIdsrLists(this)">Reload</button>`);
+    if (!IDSR_READ.subs && IDSR_READ.capped) h += warn('The submissions list reached the 1,000-row server limit and may be incomplete.');
+    const twins = IDSR_SCHOOLS.filter(x => !idsrSameId(x.id, s.id) && ((s.urn && x.urn && String(x.urn).trim() === String(s.urn).trim()) || (x.name && s.name && String(x.name).trim().toLowerCase() === String(s.name).trim().toLowerCase())));
+    if (twins.length) h += warn('Another school record has the same ' + (twins.some(x => s.urn && String(x.urn).trim() === String(s.urn).trim()) ? 'URN' : 'name') + ': ' + twins.map(x => escapeHtml(x.name || '') + ' (' + escapeHtml(String(x.urn || 'no URN')) + ', id ' + escapeHtml(String(x.id).slice(0, 8)) + '…, ' + idsrSubsFor(x.id).filter(y => y.status === 'pending').length + ' pending)').join('; ') + '. Uploads and submissions are attached to one record only — check you are on the right one.');
+    const known = new Set(IDSR_SCHOOLS.map(x => String(x.id).toLowerCase()));
+    const orphans = IDSR_SUBS.filter(x => x.status === 'pending' && !known.has(String(x.school_id).toLowerCase()));
+    if (orphans.length) h += warn(orphans.length + ' pending submission(s) belong to a school id that is not in this list (e.g. ' + escapeHtml(String(orphans[0].school_id).slice(0, 8)) + '…).');
+    return h;
+  }
+
+  async function adminReloadIdsrLists(btn) {
+    if (btn) { btn.disabled = true; btn.textContent = 'Reloading…'; }
+    try {
+      const [sr, pr] = await Promise.all([
+        Promise.resolve(sb.from('idsr_submissions').select('*').order('created_at', { ascending: false })).then(r => r, e => ({ data: null, error: e })),
+        Promise.resolve(sb.rpc('admin_list_idsr_publications')).then(r => r, e => ({ data: null, error: e }))
+      ]);
+      IDSR_READ = { subs: idsrReadProblem(sr), pubs: idsrReadProblem(pr), capped: (sr.data || []).length >= 1000 };
+      if (!IDSR_READ.subs) IDSR_SUBS = sr.data; if (!IDSR_READ.pubs) IDSR_PUBS = pr.data;
+    } finally { idsrRerenderAll(); }
+  }
+  function idsrRerenderAll(onlySchoolId) {
+    for (const sc of IDSR_SCHOOLS) {
+      if (onlySchoolId && !idsrSameId(sc.id, onlySchoolId)) continue;
+      const a = document.getElementById(`panel-${sc.id}-idsrsoap`), b = document.getElementById(`panel-${sc.id}-idsrdash`);
+      if (a) a.innerHTML = renderIdsrFragment(sc, 'idsr-soap.html', 'adminPublishIdsrSoap', 'adminIdsrSoapFrame');
+      if (b) b.innerHTML = renderIdsrFragment(sc, 'idsr-dashboard.html', 'adminPublishIdsr', 'adminIdsrFrame');
+    }
+  }
+
+  const idsrFmtSize = (n) => n >= 1048576 ? (n / 1048576).toFixed(2) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB';
+  function idsrAdminUploadHtml(s) {
+    const id = s.id;
+    return `<div id="adminIdsrUp-${id}" style="margin-top:14px;padding-top:12px;border-top:1px solid #DCE3EA;">
+      <div style="font-weight:700;margin-bottom:6px;">Upload IDSR on behalf of this school</div>
+      <div style="color:#5A6B80;margin-bottom:8px;">Adds the file as a <strong>pending</strong> submission, recorded under your administrator account. It is not published until you review it and press Publish.</div>
+      <input type="file" id="adminIdsrFile-${id}" accept=".html,.htm" onchange="adminIdsrFileChosen('${id}')" style="font-size:13px;">
+      <div id="adminIdsrUpInfo-${id}" style="font-size:12px;margin-top:6px;"></div>
+      <div id="adminIdsrUpConfirm-${id}" style="display:none;margin-top:8px;padding:10px;border:2px solid #0D7377;border-radius:6px;background:#fff;"></div>
+      <button type="button" class="save-amend-btn" style="padding:8px 16px;margin-top:8px;" id="adminIdsrUpBtn-${id}" onclick="adminIdsrUploadStart('${id}')">Upload for this school…</button>
+      <div id="adminIdsrUpNote-${id}" role="status" style="font-size:12px;font-weight:700;margin-top:8px;"></div>
+    </div>`;
+  }
+  const idsrUpEls = (id) => ({ input: document.getElementById(`adminIdsrFile-${id}`), info: document.getElementById(`adminIdsrUpInfo-${id}`), conf: document.getElementById(`adminIdsrUpConfirm-${id}`), btn: document.getElementById(`adminIdsrUpBtn-${id}`), note: document.getElementById(`adminIdsrUpNote-${id}`) });
+  function adminIdsrFileChosen(id) {
+    const e = idsrUpEls(id); if (window.__adminIdsrUploading) return;
+    e.conf.style.display = 'none'; e.note.textContent = '';
+    const f = e.input.files && e.input.files[0];
+    e.info.style.color = '#0D7377'; e.info.textContent = f ? 'Selected: ' + f.name + ' (' + idsrFmtSize(f.size) + ')' : '';
+  }
+  // Step 1: validate the selection and ask for explicit confirmation naming the school and URN. Nothing is sent yet.
+  function adminIdsrUploadStart(id) {
+    const e = idsrUpEls(id), sc = IDSR_SCHOOLS.find(x => idsrSameId(x.id, id)); if (window.__adminIdsrUploading) return;
+    const bad = (m) => { e.note.style.color = '#B3261E'; e.note.textContent = m; e.conf.style.display = 'none'; };
+    if (!sc) return bad('This school is not in the loaded list. Reload Admin and try again.');
+    if (IDSR_READ.subs) return bad('The submissions list could not be loaded, so duplicate checks are not possible. Use "Reload submissions" first.');
+    const f = e.input.files && e.input.files[0];
+    if (!f) return bad('Choose a file first.');
+    if (!/\.html?$/i.test(f.name)) return bad('Please choose an IDSR .html or .htm file.');
+    if (f.size < 1 || f.size > 30 * 1024 * 1024) return bad('That file is empty or larger than 30 MB, so it cannot be an IDSR export.');
+    const dupe = idsrSubsFor(id).find(x => ['pending', 'approved'].includes(x.status) && x.file_name === f.name && Number(x.file_size) === f.size);
+    const pend = idsrSubsFor(id).filter(x => x.status === 'pending').length;
+    e.note.textContent = ''; e.conf.style.display = 'block';
+    e.conf.innerHTML = `<div style="font-weight:700;margin-bottom:6px;">Confirm upload</div>
+      <div>School: <strong>${escapeHtml(sc.name || '')}</strong> · URN: <strong>${escapeHtml(String(sc.urn || 'none recorded'))}</strong></div>
+      <div>File: <strong>${escapeHtml(f.name)}</strong> (${idsrFmtSize(f.size)})</div>
+      ${dupe ? `<div style="color:#B3261E;font-weight:700;margin-top:6px;">A submission with the same file name and size already exists for this school (${escapeHtml(dupe.status)}). Uploading again creates another, separate submission.</div>` : ''}
+      ${pend && !dupe ? `<div style="color:#5A6B80;margin-top:6px;">This school already has ${pend} submission(s) awaiting review.</div>` : ''}
+      <div style="margin-top:8px;"><button type="button" class="save-amend-btn" style="padding:6px 14px;" id="adminIdsrUpGo-${id}" onclick="adminIdsrUploadRun('${id}')">${dupe ? 'Upload anyway' : 'Confirm and upload'}</button>
+      <button type="button" class="rem-secondary-btn" style="padding:6px 14px;margin-left:8px;" onclick="document.getElementById('adminIdsrUpConfirm-${id}').style.display='none'">Cancel</button></div>`;
+  }
+  // Step 2: the three server calls. Any failure after begin_idsr_upload abandons the unfinished submission; a failed final step is never hidden.
+  async function adminIdsrUploadRun(id) {
+    if (window.__adminIdsrUploading) return;                       // double-click guard: one upload at a time, so one click = one submission
+    const e = idsrUpEls(id), sc = IDSR_SCHOOLS.find(x => idsrSameId(x.id, id)); const f = e.input && e.input.files && e.input.files[0]; if (!sc || !f) return;
+    window.__adminIdsrUploading = true; e.conf.style.display = 'none'; e.btn.disabled = true; e.input.disabled = true;
+    const say = (m, good) => { e.note.style.color = good ? '#0D7377' : '#B3261E'; e.note.textContent = m; };
+    const t0 = Date.now(); const tick = () => say('Uploading ' + f.name + ' (' + idsrFmtSize(f.size) + ')… ' + Math.round((Date.now() - t0) / 1000) + 's. Keep this page open.', true); tick(); const timer = setInterval(tick, 1000);
+    let submissionId = null, stored = false, ok = false;
+    try {
+      const begun = await sb.rpc('begin_idsr_upload', { p_school_id: sc.id, p_file_name: f.name, p_file_size: f.size, p_legacy_import: false });
+      const row = begun && begun.data ? (Array.isArray(begun.data) ? begun.data[0] : begun.data) : null;
+      if (!begun || begun.error || !row) throw (begun && begun.error) || new Error('begin failed');
+      submissionId = row.submission_id;
+      const up = await sb.storage.from('idsr-submissions').upload(row.storage_path, f, { upsert: false, contentType: 'text/html' });
+      if (up && up.error) throw up.error;
+      stored = true;
+      let done = await sb.rpc('complete_idsr_upload', { p_submission_id: submissionId });
+      if (!done || done.error) done = await sb.rpc('complete_idsr_upload', { p_submission_id: submissionId });
+      if (!done || done.error) throw Object.assign(new Error((done && done.error && done.error.message) || 'confirm failed'), { confirmFailed: true });
+      ok = true;
+    } catch (err) {
+      console.error(err);
+      if (submissionId && !stored) { try { await sb.rpc('abandon_idsr_upload', { p_submission_id: submissionId }); } catch (x) { /* best effort */ } }
+      const m = String((err && err.message) || err || '');
+      say(err && err.confirmFailed ? 'The file was stored but could not be confirmed (' + m + '). Submission ' + submissionId + ' is left unfinished — do not upload again; check it in the database or retry confirmation.'
+        : 'Upload failed' + (submissionId ? ' (the unfinished submission was abandoned)' : '') + ': ' + (/not permitted/i.test(m) ? 'not permitted for this account.' : /too many/i.test(m) ? 'too many unfinished uploads for this school; wait and retry.' : m || 'unknown error') + ' Nothing was published.');
+    } finally {
+      clearInterval(timer); window.__adminIdsrUploading = false; e.btn.disabled = false; e.input.disabled = false;
+    }
+    if (!ok) return;
+    try { Promise.resolve(sb.functions.invoke('idsr-upload-notifications', { body: {} })).catch(() => {}); } catch (x) { /* ignore */ }
+    let row2 = null; try { const r = await sb.from('idsr_submissions').select('*').eq('id', submissionId).maybeSingle(); row2 = r && r.data; } catch (x) { /* fall back below */ }
+    IDSR_SUBS.unshift(row2 || { id: submissionId, school_id: sc.id, status: 'pending', file_name: f.name, file_size: f.size, uploaded_at: new Date().toISOString(), legacy_import: false });
+    idsrRerenderAll(sc.id);
+    const n = document.getElementById(`adminIdsrUpNote-${sc.id}`); if (n) { n.style.color = '#0D7377'; n.textContent = 'Uploaded as a pending submission for ' + (sc.name || 'this school') + '. It has NOT been published — use Preview, then Publish to school when ready.'; }
   }
 
   function renderInviteSchoolOptions(schools) {
