@@ -494,48 +494,81 @@
     renderLeadershipSupportPanel();
   }
 
+  // V77-02: shared upload helpers. Same three server steps as before (begin_idsr_upload -> Storage -> complete_idsr_upload); only feedback and failure handling changed.
+  function idsrFmtSize(n) { return n >= 1048576 ? (n / 1048576).toFixed(2) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB'; }
+  function idsrFileChosen() {
+    const input = document.getElementById('idsrFileInput'), note = document.getElementById('idsrUploadNote');
+    if (!input || !note || window.__idsrUploading) return;
+    const f = input.files && input.files[0];
+    if (!f) { note.textContent = ''; return; }
+    note.style.color = '#3DCFB8';
+    note.textContent = 'Selected: ' + f.name + ' (' + idsrFmtSize(f.size) + '). Press the button to upload.';
+  }
+  function idsrUploadMessage(err) {
+    const m = String(err && (err.message || err.error_description || err) || '');
+    if (/too many/i.test(m)) return 'You already have several unfinished uploads. Please wait a while and try again, or contact support.';
+    if (/not permitted/i.test(m)) return 'Your account is not permitted to upload an IDSR for this school. Please contact support.';
+    if (/not signed in|jwt|expired/i.test(m)) return 'Your session has expired. Please refresh the page and sign in again, then upload again.';
+    if (/file size out of range|too large|payload/i.test(m)) return 'The file is empty or too large to be an IDSR export (the limit is 30 MB).';
+    if (/fetch|network|timeout|load failed|abort/i.test(m)) return 'The upload could not be completed because of a network problem. Nothing was submitted. Please check your connection and try again.';
+    return 'The upload did not complete and nothing was submitted. Please try again, or contact support and quote the time of this attempt.';
+  }
+
   async function uploadIdsr(schoolId) {
     const input = document.getElementById('idsrFileInput');
     const btn = document.getElementById('idsrUploadBtn');
     const note = document.getElementById('idsrUploadNote');
-    const file = input.files[0];
-    const fail = (msg, label) => { note.style.color = '#F3B8B8'; note.textContent = msg; btn.disabled = false; btn.textContent = label || 'Upload IDSR'; };
-    if (!file) { note.style.color = '#F3B8B8'; note.textContent = 'Choose a file first.'; return; }
-    if (file.size < 1 || file.size > 30 * 1024 * 1024) { note.style.color = '#F3B8B8'; note.textContent = 'That file is empty or larger than 30 MB, so it cannot be an IDSR export.'; return; }
-    const label = btn.textContent;
-    btn.disabled = true;
-    btn.textContent = 'Uploading\u2026';
-    note.style.color = '#5A6B80';
-    note.textContent = 'Uploading your IDSR\u2026';
+    if (!input || !btn || !note) return;
+    if (window.__idsrUploading) return;                                   // a second click can never start a second submission
+    const file = input.files && input.files[0];
+    const say = (msg, good) => { note.style.color = good ? '#3DCFB8' : '#F3B8B8'; note.textContent = msg; };
+    if (!file) { say('Choose a file first.'); return; }
+    if (!/\.html?$/i.test(file.name)) { say('Please choose the IDSR .html (or .htm) file exported from the DfE service.'); return; }
+    if (file.size < 1 || file.size > 30 * 1024 * 1024) { say('That file is empty or larger than 30 MB, so it cannot be an IDSR export.'); return; }
 
-    // V72 RC-2: every upload is its own submission (never overwrites). 1) the server issues an id and a write-once path, 2) the file is stored there, 3) the server confirms the file arrived.
-    const begun = await sb.rpc('begin_idsr_upload', { p_school_id: schoolId, p_file_name: file.name, p_file_size: file.size, p_legacy_import: false });
-    const row = begun && begun.data ? (Array.isArray(begun.data) ? begun.data[0] : begun.data) : null;
-    if (!begun || begun.error || !row) {
-      console.error(begun && begun.error);
-      const m = String(begun && begun.error && begun.error.message || '');
-      return fail(/too many/.test(m) ? 'You already have several unfinished uploads. Please try again later or contact support.' : /not permitted/.test(m) ? 'Your account is not permitted to upload an IDSR for this school.' : 'Upload failed \u2014 please try again.', label);
+    const label = btn.textContent;
+    window.__idsrUploading = true;
+    btn.disabled = true; btn.textContent = 'Uploading…';
+    const started = Date.now();
+    const tick = () => { const sec = Math.round((Date.now() - started) / 1000); say('Uploading ' + file.name + ' (' + idsrFmtSize(file.size) + ')… ' + sec + 's. Please keep this page open until it says the upload is complete.', true); note.style.color = '#B9F0E4'; };
+    tick(); const timer = setInterval(tick, 1000);
+    const guard = (e) => { e.preventDefault(); e.returnValue = ''; return ''; };
+    window.addEventListener('beforeunload', guard);
+
+    let submissionId = null, stored = false, success = false;
+    try {
+      // V72 RC-2: every upload is its own submission (never overwrites). 1) the server issues an id and a write-once path, 2) the file is stored there, 3) the server confirms the file arrived.
+      const begun = await sb.rpc('begin_idsr_upload', { p_school_id: schoolId, p_file_name: file.name, p_file_size: file.size, p_legacy_import: false });
+      const row = begun && begun.data ? (Array.isArray(begun.data) ? begun.data[0] : begun.data) : null;
+      if (!begun || begun.error || !row) throw (begun && begun.error) || new Error('begin failed');
+      submissionId = row.submission_id;
+      const up = await sb.storage.from('idsr-submissions').upload(row.storage_path, file, { upsert: false, contentType: 'text/html' });
+      if (up && up.error) throw up.error;
+      stored = true;
+      let done = await sb.rpc('complete_idsr_upload', { p_submission_id: submissionId });
+      if (!done || done.error) done = await sb.rpc('complete_idsr_upload', { p_submission_id: submissionId });   // idempotent on the server; one automatic retry
+      if (!done || done.error) throw Object.assign(new Error('confirm failed'), { confirmFailed: true });
+      success = true;
+    } catch (e) {
+      console.error(e);
+      if (submissionId && !stored) { try { await sb.rpc('abandon_idsr_upload', { p_submission_id: submissionId }); } catch (x) { /* best effort: an unfinished upload is cleaned up by the server limits */ } }
+      if (e && e.confirmFailed) say('Your file reached us but the final confirmation did not complete. Please do not upload it again — contact support so we can check it.');
+      else say(idsrUploadMessage(e));
+    } finally {
+      clearInterval(timer);
+      window.removeEventListener('beforeunload', guard);
+      window.__idsrUploading = false;
+      btn.disabled = false; btn.textContent = label;                      // always restored
     }
-    const { error: uploadError } = await sb.storage.from('idsr-submissions').upload(row.storage_path, file, { upsert: false, contentType: 'text/html' });
-    if (uploadError) {
-      console.error(uploadError);
-      try { await sb.rpc('abandon_idsr_upload', { p_submission_id: row.submission_id }); } catch (e) { /* best effort */ }
-      return fail('Upload failed \u2014 please try again.', label);
-    }
-    const done = await sb.rpc('complete_idsr_upload', { p_submission_id: row.submission_id });
-    if (!done || done.error) {
-      console.error(done && done.error);
-      return fail('Uploaded, but we could not confirm it \u2014 please try again, or contact support.', label);
-    }
+    if (!success) return;
 
     // V70-04 worker wake-up kept as in V71 (fire-and-forget). RC-3: the notification is QUEUED on the server inside complete_idsr_upload() (V70 queue); this call only wakes the worker and is not needed for queueing.
     try {
       Promise.resolve(sb.functions.invoke('idsr-upload-notifications', { body: {} })).catch(() => {});
     } catch (e) { /* ignore */ }
 
-    note.style.color = '#3DCFB8';
-    note.textContent = 'Uploaded \u2014 awaiting review.';
-    await checkLogin();
+    say('Uploaded — awaiting review.', true);
+    try { await checkLogin(); } catch (e) { console.error(e); }
   }
 
   // Published SOAP snapshots, keyed by published_soaps.id. Held in memory rather
@@ -793,6 +826,9 @@
     const idsrPending = ((idsrSubsRes && idsrSubsRes.data) || []).filter(s => s.status === 'pending')[0] || null;
     const idsrLegacyPublished = !idsrCurrent && !!(idsrUpload && idsrUpload['status'] === 'published');
     const idsrHasPublished = !!idsrCurrent || idsrLegacyPublished;
+    // V77-02: accurate IDSR status. 'Awaiting review' only when a submission really is pending; 'Not uploaded yet' only when the submissions read succeeded and found none.
+    const idsrSubsOk = !!(idsrSubsRes && idsrSubsRes.data && !idsrSubsRes.error);
+    const idsrBadgeText = idsrHasPublished ? 'Published' : idsrPending ? 'Awaiting review' : idsrSubsOk ? 'Not uploaded yet' : 'Status unavailable';
 
     // V64 Stage 6 — a Viewer gets NEITHER the Data Entry Forms accordion NOR the
     // Support accordion: the whole initial string is '' for them, so nothing is
@@ -911,7 +947,7 @@
           idsrPanelBody = `
             <div class="form-row" style="flex-direction:column; align-items:flex-start; gap:6px;">
               ${intro}${idsrPublishedLine}${idsrOpenLink}${pendingLine}
-              <input type="file" id="idsrFileInput" accept=".html,.htm" style="font-size:13px; margin-top:8px;">
+              <input type="file" id="idsrFileInput" accept=".html,.htm" onchange="idsrFileChosen()" style="font-size:13px; margin-top:8px;">
               <button type="button" id="idsrUploadBtn" onclick="uploadIdsr('${linkRow.school_id}')" style="background:#3DCFB8;color:#0D2B4E;border:none;border-radius:6px;padding:10px 20px;font-weight:700;font-size:14px;cursor:pointer;">${btnText}</button>
               <div id="idsrUploadNote" style="font-size:12px;font-weight:700;"></div>
             </div>`;
@@ -935,9 +971,9 @@
       if (!isViewer) {
         const viewIdsrBody = idsrHasPublished
           ? `<a class="form-row" href="idsr-soap.html?school_id=${encodeURIComponent(linkRow.school_id)}" target="_blank"><span class="name">Open published IDSR SOAP →</span></a>`
-          : `<div class="empty-note">No published IDSR SOAP is available yet. Once your uploaded IDSR has been reviewed and published, it will appear here.</div>`;
+          : (idsrPending ? `<div class="empty-note">Your uploaded IDSR is awaiting review. Once it has been reviewed and published, it will appear here.</div>` : `<div class="empty-note">No published IDSR SOAP is available yet. Upload your school's IDSR in IDSR SOAP Upload above; once it has been reviewed and published, it will appear here.</div>`);
         if (features.idsrSoap) {
-          accordionHtml += `<div><button type="button" class="bar" id="bar-viewidsr" onclick="toggleAccordion('viewidsr');"><span class="bar-label">View My IDSR</span><span class="bar-right"><span class="badge">${idsrHasPublished ? 'Published' : 'Awaiting publication'}</span><i class="chev" id="chev-viewidsr">▾</i></span></button><div class="panel" id="panel-viewidsr">${viewIdsrBody}</div></div>`;
+          accordionHtml += `<div><button type="button" class="bar" id="bar-viewidsr" onclick="toggleAccordion('viewidsr');"><span class="bar-label">View My IDSR</span><span class="bar-right"><span class="badge">${idsrBadgeText}</span><i class="chev" id="chev-viewidsr">▾</i></span></button><div class="panel" id="panel-viewidsr">${viewIdsrBody}</div></div>`;
         } else {
           accordionHtml += lockedBar('viewidsr', 'View My IDSR');
         }
