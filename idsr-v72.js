@@ -1051,6 +1051,77 @@
     });
     return o;
   }
+  // ───────────── V77-03 (pre-deployment correction): official similar-school AVERAGES from the per-measure detail tables ─────────────
+  // The summary tables give the similar-school verdict only. The Annex detail tables ('Group - Measure', one per measure) carry, per year, the similar-school
+  // average (th id sim_sch_value_rounded) and its banding (sim_sch_banding_table_text). They are read here, by column id, and attached to the matching summary
+  // row as row.simAvg (aligned to yearsSimilar). Nothing is calculated, rounded or substituted; a source dash stays a dash; a measure with no detail table gets null.
+  function colIdsOf(tbl) {
+    var hr = arr(tbl.querySelectorAll('thead tr')); if (!hr.length) return null;
+    if (hr.length === 1) return arr(hr[0].querySelectorAll('th')).map(function (th) { return th.id || null; });
+    var row1 = arr(hr[0].querySelectorAll('th')), row2 = arr(hr[1].querySelectorAll('th')).map(function (th) { return th.id || null; }), ids = [], ptr = 0;
+    row1.forEach(function (th) {
+      var cs = parseInt(th.getAttribute('colspan') || '1', 10), rs = parseInt(th.getAttribute('rowspan') || '1', 10);
+      if (rs > 1) ids.push(th.id || null); else for (var i = 0; i < cs; i++) { ids.push(row2[ptr] !== undefined ? row2[ptr] : null); ptr++; }
+    });
+    return ids;
+  }
+  function simMeasureKey(group, measure) {
+    var m = norm(measure).toLowerCase().replace(/^reading, writing and maths/, 'rwm');
+    return norm(group).toLowerCase() + '|' + m;
+  }
+  /** { 'group|measure' → { rows: { yearLabel → { avg, band, cohort } }, used } } for the detail tables of one H2 block. */
+  function simDetail(doc, h2Re, w) {
+    var out = {}, inScope = false;
+    arr(doc.querySelectorAll('h2,h3')).forEach(function (h) {
+      if (h.tagName === 'H2') { inScope = h2Re.test(norm(h.textContent)); return; }
+      if (!inScope) return;
+      var label = norm(h.textContent), at = label.indexOf(' - '); if (at < 1) return;
+      var tbl = null, cur = h;
+      while (cur && !tbl) { cur = cur.nextElementSibling; if (!cur || /^H[23]$/.test(cur.tagName)) break; tbl = cur.tagName === 'TABLE' ? cur : (cur.querySelector && cur.querySelector('table')); }
+      if (!tbl) return;
+      var ids = colIdsOf(tbl); if (!ids || ids.indexOf('sim_sch_value_rounded') < 0) return;   // not a similar-school detail table
+      var iy = ids.indexOf('datayear'), ia = ids.indexOf('sim_sch_value_rounded'), ib = ids.indexOf('sim_sch_banding_table_text'), ic = ids.indexOf('cohort');
+      var key = simMeasureKey(label.slice(0, at), label.slice(at + 3)), e = out[key];
+      if (e) { w.push('similar-school detail: a duplicate detailed table was ignored'); return; }
+      e = out[key] = { label: label, rows: {}, used: false };
+      arr(tbl.querySelectorAll('tbody tr')).forEach(function (tr) {
+        var cells = arr(tr.querySelectorAll('td,th')); if (cells.length !== ids.length) return;
+        var yr = txt(cells[iy]); if (!/^(20\d\d|3-year)/.test(yr)) return;
+        var a = cellOf(cells[ia].textContent); countUnparsed([a], 'similar-school average ' + yr, w);
+        e.rows[yr] = { avg: a, band: ib >= 0 ? txt(cells[ib]) : '', cohort: ic >= 0 ? txt(cells[ic]) : '' };
+      });
+    });
+    return out;
+  }
+  function yearKey(y) { return /^3-year/i.test(norm(y)) ? '3-year' : norm(y); }
+  /** Attach row.simAvg to every summary row that has a detail table; returns { avgs, rows } and warns on any detail table or year that could not be placed. */
+  function attachSimAvg(out, det, w, label) {
+    var placed = 0, avgs = 0;
+    ['attainment', 'progress'].forEach(function (set) { SUMMARY_GROUPS.forEach(function (g) {
+      var o = out[set][g[0]]; if (!o) return;
+      o.rows.forEach(function (r) {
+        var d = det[simMeasureKey(g[2], r.label)]; r.simAvg = null; if (!d) return;
+        if (d.used) { w.push(label + ': similar-school detail table used twice: ' + d.label); return; }
+        d.used = true;
+        r.simAvg = o.yearsSimilar.map(function (y, i) {
+          var dr = d.rows[yearKey(y)]; if (!dr) return null;
+          var sv = r.similar[i], sb = norm(sv && sv.raw);
+          if (dr.band !== sb) w.push(label + ': a similar-school banding in the detailed tables differs from the summary (' + y + ')');
+          dr.placed = true; if (dr.avg.st === 'value') avgs++; return dr.avg;
+        });
+        placed++;
+      });
+    }); });
+    var lost = 0, lostYears = 0;   // counts only: source text from an unrecognised table is never echoed into a warning
+    Object.keys(det).forEach(function (k) {
+      var d = det[k];
+      if (!d.used) { if (Object.keys(d.rows).some(function (y) { return d.rows[y].avg.st === 'value'; })) lost++; return; }
+      Object.keys(d.rows).forEach(function (y) { if (!d.rows[y].placed && d.rows[y].avg.st === 'value') lostYears++; });
+    });
+    if (lost) w.push(label + ': similar-school averages in ' + lost + ' detailed table(s) have no matching summary row and are not shown');
+    if (lostYears) w.push(label + ': ' + lostYears + ' similar-school average(s) have no matching summary year and are not shown');
+    return { rows: placed, avgs: avgs };
+  }
   function natSimilarSummary(doc, h2Re, K, T, prefixCohorts) {
     var w = [], S = summarySections(doc, h2Re), out = { attainment: {}, progress: {} }, any = false;
     if (!S.present) return null;
@@ -1062,10 +1133,12 @@
       });
     });
     if (!any) return null;
-    return res(K, T, statusFrom(w, true), out, 'Similar-school figures are an official position and significance only; the source gives no similar-school value or average.', w);
+    var det = simDetail(doc, h2Re, w), sa = attachSimAvg(out, det, w, K);
+    out.simAvgCount = sa.avgs;
+    return res(K, T, statusFrom(w, true), out, 'Similar-school figures are official: the verdict (the source publishes only “above” and “below” bandings) and, from the detailed tables, the similar-school average. They are never calculated here, never rated by SOAP and never mixed into the national comparison.', w);
   }
 
-  /** KS4 summaries: versus national AND versus similar schools. Similar-school columns carry NO numeric value in the source. */
+  /** KS4 summaries: versus national AND versus similar schools (official verdict in the summary; official average in the detailed tables). */
   function ks4Summary(doc) {
     var K = 'ks4Summary', T = 'KS4 summary: national and similar-school comparison';
     return natSimilarSummary(doc, KS4_H2, K, T, false) || absent(K, T);
@@ -3867,19 +3940,26 @@
   var SIM_GROUPS = [['all', 'All pupils'], ['disadvantaged', 'Disadvantaged'], ['low', 'Low prior'], ['middle', 'Middle prior'], ['high', 'High prior']];
   function pageSimilar(sec, opt) {
     opt = opt || {}; var tabk = opt.tab || 'sim', idp = opt.prefix || 'x:sim';
-    var h = head(sec, opt.title || 'Similar-School Comparison', opt.sub || 'KS4 results against the national average and, separately, against similar schools — official wording');
+    var h = head(sec, opt.title || 'Similar-School Comparison', opt.sub || 'KS4 results against the national average and, separately, against similar schools — official averages and bandings');
     h += banner(sec, opt.label || 'KS4 summaries'); if (sec.status === 'absent' || sec.status === 'failed') return h + guidance(sec);
-    h += '<div class="notice n-info"><b>How to read this page.</b> The <span class="nathead">national</span> columns carry the SOAP five-colour rating, derived from the official position and significance. The <span class="simhead">similar-school</span> columns show the official wording only: they are never coloured, never mixed into the national rating, and the source gives no similar-school value. An empty cell means the source printed no verdict for that year.</div>';
+    h += '<div class="notice n-info"><b>How to read this page.</b> The <span class="nathead">national</span> columns carry the SOAP five-colour rating, derived from the official position and significance. The <span class="simhead">similar-school</span> columns show the official similar-school average and the official similar-school banding exactly as the source publishes them: they are never coloured, never mixed into the national rating, never calculated by SOAP and are not SOAP ratings. The source publishes only “above” and “below” bandings for similar schools, so a blank banding next to an average means the result is neither above nor below. A dash means the source gives no similar-school figure for that year. A measure with no “average” columns has no similar-school detail table in the source.</div>';
     h += '<div class="xtabs nop" role="tablist" aria-label="Pupil group">' + SIM_GROUPS.map(function (g, i) { return '<button type="button" role="tab" class="xtab' + (i === 0 ? ' active' : '') + '" data-xtab="' + tabk + '" data-i="' + g[0] + '" aria-selected="' + (i === 0 ? 'true' : 'false') + '">' + esc(g[1]) + '</button>'; }).join('') + '</div>';
     SIM_GROUPS.forEach(function (g, gi) {
       h += '<div class="xpane" data-xpane="' + tabk + '" data-i="' + g[0] + '"' + (gi ? ' hidden' : '') + '>';
       [['attainment', 'Attainment'], ['progress', 'Progress']].forEach(function (set) {
         var o = sec.data[set[0]][g[0]]; if (!o) { h += '<div class="notice n-absent"><b>' + esc(set[1] + ' — ' + g[1]) + ':</b> not in this report.</div>'; return; }
         var id = idp + ':' + set[0] + ':' + g[0];
-        var t = '<table class="data-table sim" aria-label="' + esc(set[1] + ' ' + o.title) + '"><thead><tr><th rowspan="2" class="l">' + esc(set[1] + ' — ' + o.title) + '</th><th colspan="' + o.years.length + '" class="nathead">Versus national average</th><th colspan="' + o.yearsSimilar.length + '" class="simhead">Versus similar schools</th></tr><tr>' +
-          o.years.map(function (y) { return th(y, 'nathead2'); }).join('') + o.yearsSimilar.map(function (y) { return th(y, 'simhead2'); }).join('') + '</tr></thead><tbody>';
+        var hasAvg = o.rows.some(function (r) { return r.simAvg; }), nS = o.yearsSimilar.length;
+        var t = '<table class="data-table sim" aria-label="' + esc(set[1] + ' ' + o.title) + '"><thead><tr><th rowspan="2" class="l">' + esc(set[1] + ' — ' + o.title) + '</th><th colspan="' + o.years.length + '" class="nathead">Versus national average</th><th colspan="' + (hasAvg ? nS * 2 : nS) + '" class="simhead">Versus similar schools (official)</th></tr><tr>' +
+          o.years.map(function (y) { return th(y, 'nathead2'); }).join('') + o.yearsSimilar.map(function (y) { return hasAvg ? th(/average$/i.test(y) ? y : y + ' average', 'simhead2') + th(y.replace(/ average$/i, '') + ' banding', 'simhead2') : th(y, 'simhead2'); }).join('') + '</tr></thead><tbody>';
         o.rows.forEach(function (r, ri) {
-          t += '<tr>' + labelTd(r.label) + r.national.map(function (c, i) { return xcell(id + ':' + ri + ':n:' + i, c, { rate: 'verdict', lb: false }); }).join('') + r.similar.map(function (c, i) { return xcell(id + ':' + ri + ':s:' + i, c, { cls: 'simcell' }); }).join('') + '</tr>';
+          t += '<tr>' + labelTd(r.label) + r.national.map(function (c, i) { return xcell(id + ':' + ri + ':n:' + i, c, { rate: 'verdict', lb: false }); }).join('') + r.similar.map(function (c, i) {
+            var bandCell = xcell(id + ':' + ri + ':s:' + i, c, { cls: 'simcell', title: 'official similar-school banding' });
+            if (!hasAvg) return bandCell;
+            var a = r.simAvg && r.simAvg[i];
+            return (a ? xcell(id + ':' + ri + ':a:' + i, a, { cls: 'simcell simavg', title: 'official similar-school average (published by the source; not a national figure, not calculated or rated by SOAP)' })
+              : '<td class="x st-none simcell simavg" title="No similar-school average table in the source for this measure">&ndash;</td>') + bandCell;
+          }).join('') + '</tr>';
         });
         t += '</tbody></table>';
         if (o.cohorts) {
@@ -4053,7 +4133,7 @@
     });
     [['ks4Summary', 'x:sim'], ['ks2Summary', 'x:sim2']].forEach(function (kp) { if (!ok(s = S[kp[0]])) return; ['attainment', 'progress'].forEach(function (set) { SIM_GROUPS.forEach(function (g) {
       var o = s.data[set][g[0]]; if (!o) return; var id = kp[1] + ':' + set + ':' + g[0];
-      o.rows.forEach(function (r, ri) { r.national.forEach(function (c, i) { add(id + ':' + ri + ':n:' + i, c); }); r.similar.forEach(function (c, i) { add(id + ':' + ri + ':s:' + i, c); }); });
+      o.rows.forEach(function (r, ri) { r.national.forEach(function (c, i) { add(id + ':' + ri + ':n:' + i, c); }); r.similar.forEach(function (c, i) { add(id + ':' + ri + ':s:' + i, c); }); if (r.simAvg) r.simAvg.forEach(function (c, i) { if (c) add(id + ':' + ri + ':a:' + i, c); }); });
       if (o.cohorts) o.cohorts.rows.forEach(function (r, ri) { r.cells.forEach(function (c, i) { add(id + ':co:' + ri + ':' + i, c); }); });
     }); }); });
     if (ok(s = S.eyfsNationals)) s.data.rows.forEach(function (r, ri) { add('x:eyfs:' + ri, r.cell); });
@@ -4896,7 +4976,7 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
       else if (k === 'similar') h = X.pages.similar(S('ks4Summary'));
       else if (k === 'destdetail') h = X.pages.destinations(S('destinationsDetail'));
       else if (k === 'findings') h = X.pages.findings(S('officialFindings'), S('trust'), model.context && model.context.staffing);
-      else if (k === 'ks2summary') h = X.pages.similar(S('ks2Summary'), { tab: 'sim2', prefix: 'x:sim2', title: 'KS2 National & Similar Schools', sub: 'Key stage 2 results against the national average and, separately, against similar schools — official wording', label: 'KS2 summaries' }) + atNotPublished(ctx);
+      else if (k === 'ks2summary') h = X.pages.similar(S('ks2Summary'), { tab: 'sim2', prefix: 'x:sim2', title: 'KS2 National & Similar Schools', sub: 'Key stage 2 results against the national average and, separately, against similar schools — official averages and bandings', label: 'KS2 summaries' }) + atNotPublished(ctx);
       else if (k === 'eyfs') h = X.pages.eyfs(S('eyfsNationals'));
       else if (k === 'coverage') h = X.pages.coverage(ex, model);
       var back = k === 'overview' ? '' : '<button type="button" class="back-link nop" data-go="overview">&larr; Back to Overview</button>';
