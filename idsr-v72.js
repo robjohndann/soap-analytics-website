@@ -5553,7 +5553,9 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
     function showEmpty(title, body) { var f = $('frameWrap'); if (f) f.style.display = 'none'; $('emptyState').style.display = 'block'; $('emptyStateTitle').textContent = title; $('emptyStateBody').textContent = body; }
     function notice(text, tone) { var n = $('hostNotice'); if (!n) return; n.textContent = text || ''; n.className = 'notice ' + (tone || 'info'); n.style.display = text ? 'block' : 'none'; }
     function qs(extra) { var o = { school_id: S.viewSchoolId }; for (var k in extra) if (extra[k]) o[k] = extra[k]; return '?' + Object.keys(o).map(function (k) { return k + '=' + encodeURIComponent(o[k]); }).join('&'); }
-    function pubLabel(p) { return (p.period_label || 'IDSR') + ' · published ' + fmtDate(p.published_at) + (p.release_date ? ' · government release ' + fmtDate(p.release_date) : '') + (p.is_current ? ' — Current' : '') + (p.retracted ? ' — RETRACTED' : '') + (S.isAdmin && p.out_of_sequence ? ' — out of sequence' : ''); }
+    function pubBase(p) { return (p.period_label || 'IDSR') + ' · published ' + fmtDate(p.published_at) + (p.release_date ? ' · government release ' + fmtDate(p.release_date) : ''); }
+    // V77-04: every non-current version is labelled as historical so it can never be mistaken for the current report.
+    function pubLabel(p) { return pubBase(p) + (p.is_current ? ' — Current' : (!p.retracted && !p.removed ? ' — historical, not current' : '')) + (p.retracted ? ' — RETRACTED' : '') + (p.removed ? ' — REMOVED' : '') + (S.isAdmin && p.out_of_sequence ? ' — out of sequence' : ''); }
 
     function button(id, text, ghost) { var b = el('button', { class: 'publish-btn', id: id, type: 'button', text: text }); b.style.marginRight = '10px'; if (ghost) { b.style.background = 'transparent'; b.style.border = '1px solid rgba(255,255,255,.6)'; } return b; }
     function topbar() {
@@ -5571,14 +5573,14 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
       } else if (S.mode === 'preview' && S.publishedId) box.appendChild(el('span', { class: 'status-pill published', text: 'Published' }));
       else if (S.mode === 'publication') {
         if (S.isAdmin && S.pub) {
-          var inp = el('input', { type: 'text', id: 'retractReason', placeholder: S.pub.retracted ? 'Reason to reinstate' : 'Reason to retract', 'aria-label': 'Reason' }); inp.style.cssText = 'margin-right:6px;padding:6px;border-radius:6px;border:0;font-size:12px;width:170px;'; box.appendChild(inp);
+          var inp = el('input', { type: 'text', id: 'retractReason', placeholder: S.pub.retracted ? 'Reason to reinstate (stays historical, not current)' : (S.pub.is_current ? 'Reason to retract (leaves no current IDSR)' : 'Reason to retract'), 'aria-label': 'Reason', title: S.pub.retracted ? 'Reinstating does not make this report current. Use Make Current in the Admin IDSR list.' : 'Retracting the current report leaves the school with no current IDSR until one is made current or published.' }); inp.style.cssText = 'margin-right:6px;padding:6px;border-radius:6px;border:0;font-size:12px;width:' + (S.pub.retracted || S.pub.is_current ? '290' : '170') + 'px;'; box.appendChild(inp);
           var rb = button('retractBtn', S.pub.retracted ? 'Reinstate' : 'Retract', true); rb.addEventListener('click', function () { rb.disabled = true; rpc(S.pub.retracted ? 'reinstate_idsr_publication' : 'retract_idsr_publication', { p_publication_id: S.pub.id, p_reason: inp.value }).then(function () { win.location.reload(); }, function (e) { rb.disabled = false; notice((S.pub.retracted ? 'Reinstate' : 'Retract') + ' failed: ' + publishMessage(e), 'bad'); }); }); box.appendChild(rb);
         }
-        box.appendChild(el('span', { class: 'status-pill published', text: S.pub && S.pub.is_current ? 'Current' : 'Earlier version' }));
+        box.appendChild(el('span', { class: 'status-pill published', text: S.pub && S.pub.is_current ? 'Current' : 'Historical (not current)' }));
       }
     }
     function outOfSequence() {
-      if (!S.cand) return null; var latest = null; S.pubs.forEach(function (p) { var rd = p.release_date ? String(p.release_date).slice(0, 10) : null; if (!p.retracted && rd && (!latest || rd > latest)) latest = rd; });
+      if (!S.cand) return null; var latest = null; S.pubs.forEach(function (p) { var rd = p.release_date ? String(p.release_date).slice(0, 10) : null; if (!p.retracted && !p.removed && rd && (!latest || rd > latest)) latest = rd; });
       if (!S.cand.releaseDate) return 'The report does not state a release date.';
       return latest && S.cand.releaseDate <= latest ? 'This release (' + S.cand.releaseDate + ') is not newer than the latest published (' + latest + ').' : null;
     }
@@ -5688,7 +5690,7 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
           S.mode = 'publication'; S.pub = pub; S.html = r.html; $('emptyState').style.display = 'none';
           var rep = pub.report || {}, extra = null;
           if (pub.retracted) extra = { text: 'This publication has been RETRACTED' + (pub.retract_reason ? ' (' + pub.retract_reason + ')' : '') + ' and is hidden from the school. Only administrators can see it.', tone: 'bad' };
-          else if (!pub.is_current) { var cur = S.pubs.filter(function (p) { return p.is_current; })[0]; extra = { text: 'You are viewing an earlier published IDSR (' + pubLabel(pub).replace(/ — Current$/, '') + '). The Current report is ' + (cur ? pubLabel(cur).replace(/ — Current$/, '') : 'a later one') + '.', tone: 'warn' }; }
+          else if (!pub.is_current) { var cur = S.pubs.filter(function (p) { return p.is_current; })[0]; extra = { text: 'HISTORICAL REPORT — NOT CURRENT. You are viewing a previously published IDSR (' + pubBase(pub) + ').' + (pub.removed ? ' It has been REMOVED' + (pub.removed_reason ? ' (' + pub.removed_reason + ')' : '') + ' and is visible to administrators only.' : '') + (cur ? ' The current report is ' + pubBase(cur) + '.' : ' No current IDSR is selected for this school.') + (S.isAdmin && !cur ? ' Use Make Current in the Admin IDSR list to select one.' : ''), tone: 'warn' }; }
           bannerFor(rep, null, extra); versionBar(); topbar(); mountFrame(r.html); return true;
         });
       }, function (e) {
@@ -5702,9 +5704,22 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
         if (!S.pubs.length) return noPublication();
         var pub = pubId ? S.pubs.filter(function (p) { return p.id === pubId; })[0] : null;
         if (pubId && !pub) { showEmpty('Version not available', 'That IDSR version could not be found for this school.'); return null; }
-        pub = pub || S.pubs.filter(function (p) { return p.is_current; })[0] || S.pubs[0];
+        pub = pub || S.pubs.filter(function (p) { return p.is_current; })[0] || null;   // V77-04: NEVER fall back to the newest version; an earlier report is never silently presented as current
+        if (!pub) return noCurrent();
         return showPublication(pub);
       }, function (e) { if (/not available|permission|not permitted/i.test(String(e && e.message))) { showEmpty('Access denied', 'Your account does not have access to this page.'); return null; } throw e; });
+    }
+    // V77-04: published versions exist but none is selected as current. Historical versions are listed, clearly labelled; none is opened automatically.
+    function noCurrent() {
+      var hist = S.pubs.filter(function (p) { return !p.retracted && !p.removed; });
+      showEmpty('No current IDSR is selected', S.isAdmin ? 'This school has published IDSR versions but none is currently selected. Open the Admin IDSR list and use Make Current, or publish a new IDSR. Earlier versions are listed below for reference; they are historical, not current.' : 'Your school does not have a current IDSR selected at the moment. Earlier published versions are listed below for reference; they are historical, not current.');
+      var host = $('emptyState'), old = $('historicalList'); if (old && old.parentNode) old.parentNode.removeChild(old);
+      var list = el('ul', { id: 'historicalList' }); list.style.cssText = 'text-align:left;max-width:640px;margin:14px auto 0;padding-left:18px;';
+      var pubsForList = S.isAdmin ? S.pubs : hist;
+      pubsForList.forEach(function (p) { var li = el('li'); var a = el('a', { href: win.location.pathname.replace(/^.*\//, '') + qs({ publication_id: p.id }) + (win.location.hash || ''), text: pubLabel(p) }); li.appendChild(a); list.appendChild(li); });
+      if (pubsForList.length) host.appendChild(list);
+      S.mode = null; topbar(); versionBar();
+      return null;
     }
     function noPublication() {
       return Promise.resolve(sb.from('idsr_uploads').select('*').eq('school_id', S.viewSchoolId).maybeSingle()).then(function (ur) {
@@ -5733,6 +5748,7 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
       return Promise.resolve(sb.from('idsr_submissions').select('*').eq('id', id).maybeSingle()).then(function (r) {
         var sub = r && r.data; if (!sub || sub.school_id !== S.viewSchoolId) { showEmpty('Submission not found', 'That submission could not be found for this school.'); return null; }
         S.sub = sub;
+        if (sub.removed_at && sub.status !== 'approved') { showEmpty('This upload has been removed', 'Removed by an administrator' + (sub.removed_reason ? ': ' + sub.removed_reason : '') + '. Restore it from the Admin IDSR list to review or publish it.'); return null; }
         return rpc('list_idsr_publications', { p_school_id: S.viewSchoolId }).then(function (rows) { S.pubs = rows || []; }, function () { S.pubs = []; }).then(function () {
           if (sub.status === 'approved') { var pub = S.pubs.filter(function (p) { return p.submission_id === sub.id; })[0]; if (pub) return showPublication(pub).then(function (ok) { if (ok) notice('This submission has already been published.', 'info'); return ok; }); }
           if (sub.status !== 'pending') { showEmpty('Submission not available for review', 'This submission is ' + sub.status + (sub.status === 'uploading' ? ' (the upload has not been completed).' : '.')); return null; }
