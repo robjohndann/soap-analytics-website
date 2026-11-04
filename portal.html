@@ -826,9 +826,11 @@
     const idsrPending = ((idsrSubsRes && idsrSubsRes.data) || []).filter(s => s.status === 'pending')[0] || null;
     const idsrLegacyPublished = !idsrCurrent && !!(idsrUpload && idsrUpload['status'] === 'published');
     const idsrHasPublished = !!idsrCurrent || idsrLegacyPublished;
+    // V77-04: published versions exist but an administrator has not selected (or has cleared) the current one. Earlier versions stay reachable, labelled historical / not current; nothing is promoted automatically.
+    const idsrNoCurrent = !idsrHasPublished && idsrPubs.length > 0;
     // V77-02: accurate IDSR status. 'Awaiting review' only when a submission really is pending; 'Not uploaded yet' only when the submissions read succeeded and found none.
     const idsrSubsOk = !!(idsrSubsRes && idsrSubsRes.data && !idsrSubsRes.error);
-    const idsrBadgeText = idsrHasPublished ? 'Published' : idsrPending ? 'Awaiting review' : idsrSubsOk ? 'Not uploaded yet' : 'Status unavailable';
+    const idsrBadgeText = idsrHasPublished ? 'Published' : idsrNoCurrent ? 'No current IDSR' : idsrPending ? 'Awaiting review' : idsrSubsOk ? 'Not uploaded yet' : 'Status unavailable';
 
     // V64 Stage 6 — a Viewer gets NEITHER the Data Entry Forms accordion NOR the
     // Support accordion: the whole initial string is '' for them, so nothing is
@@ -933,16 +935,17 @@
         const idsrDate = (d) => new Date(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
         const idsrPublishedLine = idsrCurrent
           ? `<p style="margin:0; color:#fff;"><strong>Current IDSR:</strong> ${escapeHtml(idsrCurrent.period_label || 'IDSR')} \u2014 published ${idsrDate(idsrCurrent.published_at)}${idsrPubs.length > 1 ? ` \u00b7 ${idsrPubs.length} versions available` : ''}.</p>`
-          : (idsrLegacyPublished ? `<p style="margin:0; color:#fff;"><strong>${escapeHtml(idsrUpload.file_name || 'IDSR')}</strong> published ${idsrDate(idsrUpload.published_at)}.</p>` : '');
-        const idsrOpenLink = idsrHasPublished ? `<a href="idsr-soap.html?school_id=${linkRow.school_id}" target="_blank" style="color:#3DCFB8;font-weight:700;font-size:13px;text-decoration:none;">Open IDSR SOAP${idsrPubs.length > 1 ? ' and earlier versions' : ''} \u2192</a>` : '';
+          : (idsrLegacyPublished ? `<p style="margin:0; color:#fff;"><strong>${escapeHtml(idsrUpload.file_name || 'IDSR')}</strong> published ${idsrDate(idsrUpload.published_at)}.</p>`
+            : (idsrNoCurrent ? `<p style="margin:0; color:#fff;"><strong>No current IDSR is selected.</strong> Earlier published versions (${idsrPubs.length}) remain available and are labelled historical, not current.</p>` : ''));
+        const idsrOpenLink = (idsrHasPublished || idsrNoCurrent) ? `<a href="idsr-soap.html?school_id=${linkRow.school_id}" target="_blank" style="color:#3DCFB8;font-weight:700;font-size:13px;text-decoration:none;">${idsrNoCurrent ? 'Open earlier (historical) IDSR versions' : 'Open IDSR SOAP' + (idsrPubs.length > 1 ? ' and earlier versions' : '')} \u2192</a>` : '';
         if (isViewer) {
           // V64 Stage 7 — Viewer: read-only. No upload input/button, ever.
-          idsrPanelBody = idsrHasPublished
+          idsrPanelBody = (idsrHasPublished || idsrNoCurrent)
             ? `<div class="form-row" style="flex-direction:column; align-items:flex-start; gap:6px;">${idsrPublishedLine}${idsrOpenLink}</div>`
             : `<div class="empty-note">Your school's IDSR SOAP will appear here once it has been published.</div>`;
         } else {
           const pendingLine = idsrPending ? `<p style="margin:0; color:#fff;"><strong>${escapeHtml(idsrPending.file_name || 'IDSR')}</strong> uploaded ${idsrPending.uploaded_at ? idsrDate(idsrPending.uploaded_at) : ''} \u2014 awaiting review.${idsrHasPublished ? ' Your current published IDSR stays available until the new one is approved.' : ''}</p>` : '';
-          const intro = !idsrHasPublished && !idsrPending ? `<p style="margin:0; color:#fff;">Upload your school's raw DfE IDSR HTML export to get started.</p>` : '';
+          const intro = !idsrHasPublished && !idsrNoCurrent && !idsrPending ? `<p style="margin:0; color:#fff;">Upload your school's raw DfE IDSR HTML export to get started.</p>` : '';
           const btnText = idsrPending ? 'Upload another file' : (idsrHasPublished ? 'Upload a new IDSR (the current one stays visible until the new one is approved)' : 'Upload IDSR');
           idsrPanelBody = `
             <div class="form-row" style="flex-direction:column; align-items:flex-start; gap:6px;">
@@ -969,7 +972,9 @@
       // V69: Separate published IDSR output from the leadership upload interface.
       // Uses the existing published idsr_uploads record and existing idsr-soap.html viewer.
       if (!isViewer) {
-        const viewIdsrBody = idsrHasPublished
+        const viewIdsrBody = idsrNoCurrent
+          ? `<div class="empty-note">No current IDSR is selected.</div><a class="form-row" href="idsr-soap.html?school_id=${encodeURIComponent(linkRow.school_id)}" target="_blank"><span class="name">Open earlier (historical) IDSR versions →</span></a>`
+          : idsrHasPublished
           ? `<a class="form-row" href="idsr-soap.html?school_id=${encodeURIComponent(linkRow.school_id)}" target="_blank"><span class="name">Open published IDSR SOAP →</span></a>`
           : (idsrPending ? `<div class="empty-note">Your uploaded IDSR is awaiting review. Once it has been reviewed and published, it will appear here.</div>` : `<div class="empty-note">No published IDSR SOAP is available yet. Upload your school's IDSR in IDSR SOAP Upload above; once it has been reviewed and published, it will appear here.</div>`);
         if (features.idsrSoap) {
@@ -981,7 +986,9 @@
 
       // IDSR Dashboard
       if (features.idsrDashboard) {
-        const idsrDashBody = idsrHasPublished
+        const idsrDashBody = idsrNoCurrent
+          ? `<div class="empty-note">No current IDSR is selected.</div><a class="form-row" href="idsr-dashboard.html?school_id=${linkRow.school_id}" target="_blank"><span class="name">Open earlier (historical) IDSR Dashboard versions</span></a>`
+          : idsrHasPublished
           ? `<a class="form-row" href="idsr-dashboard.html?school_id=${linkRow.school_id}" target="_blank"><span class="name">Open IDSR Dashboard</span></a>`
           : (isViewer
               ? `<div class="empty-note">Your IDSR Dashboard will appear here once your school's IDSR has been published.</div>`

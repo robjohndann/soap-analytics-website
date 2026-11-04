@@ -1138,9 +1138,10 @@
       const dt = (d) => new Date(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
       const link = 'color:#0D7377;font-weight:700;font-size:13px;text-decoration:none;';
       const legacy = idsrUploadFor(s.id), subs = idsrSubsFor(s.id), pubs = idsrPubsFor(s.id);
-      const pending = subs.filter(x => x.status === 'pending'), approved = subs.filter(x => x.status === 'approved'), cur = pubs.filter(p => p.is_current)[0] || null;
+      const pending = subs.filter(x => x.status === 'pending' && !x.removed_at), approved = subs.filter(x => x.status === 'approved' && !x.removed_at), cur = pubs.filter(p => p.is_current)[0] || null;
+      const liveHist = pubs.filter(p => !p.retracted && !p.removed);   // V77-04: published, not unpublished, not removed
       let html = idsrDiagnosticsHtml(s);
-      html += cur ? `<div style="margin-bottom:8px;"><strong>Current published:</strong> ${escapeHtml(cur.period_label)} \u2014 published ${dt(cur.published_at)}${cur.out_of_sequence ? ' (out of sequence)' : ''} <a href="${pageFile}?school_id=${s.id}&publication_id=${cur.id}" target="_blank" style="${link}">View \u2192</a>${pubs.length > 1 ? ` \u00b7 ${pubs.length} versions (select in the viewer)` : ''}</div>` : `<div style="margin-bottom:8px;color:#5A6B80;">Nothing published yet.</div>`;
+      html += cur ? `<div style="margin-bottom:8px;"><strong>Current published:</strong> ${escapeHtml(cur.period_label)} \u2014 published ${dt(cur.published_at)}${cur.out_of_sequence ? ' (out of sequence)' : ''} <a href="${pageFile}?school_id=${s.id}&publication_id=${cur.id}" target="_blank" style="${link}">View \u2192</a>${pubs.length > 1 ? ` \u00b7 ${pubs.length} versions (select in the viewer)` : ''}</div>` : (liveHist.length ? `<div style="margin-bottom:8px;color:#8A4B00;font-weight:700;" data-no-current="1">No current IDSR is selected for this school. ${liveHist.length} published version${liveHist.length === 1 ? ' is' : 's are'} historical (not current) \u2014 use Make Current below, or publish a new IDSR.</div>` : `<div style="margin-bottom:8px;color:#5A6B80;">Nothing published yet.</div>`);
       if (!pending.length) html += IDSR_READ.subs ? `<div style="margin-bottom:8px;color:#B3261E;font-weight:700;">Awaiting-review list unavailable (see the warning above) \u2014 do not assume nothing is waiting.</div>` : `<div style="margin-bottom:8px;color:#5A6B80;">No submissions awaiting review.</div>`;
       pending.forEach(sub => { html += `<div style="display:flex;gap:14px;flex-wrap:wrap;align-items:center;margin-bottom:8px;" data-submission="${sub.id}"><span><strong>${escapeHtml(sub.file_name || 'IDSR')}</strong> uploaded ${sub.uploaded_at ? dt(sub.uploaded_at) : ''}${sub.legacy_import ? ' (imported from V71)' : ''} \u2014 awaiting review.</span>
         <a href="${pageFile}?school_id=${s.id}&submission_id=${sub.id}" target="_blank" style="${link}">Preview \u2192</a>
@@ -1152,6 +1153,7 @@
       }
       const imported = subs.some(x => x.legacy_import);
       if (legacy && !imported && !pubs.length) html += `<div style="margin-bottom:8px;"><span style="color:#5A6B80;">V71 upload <strong>${escapeHtml(legacy.file_name || 'IDSR')}</strong> (${legacy.status}) has not been imported.</span> <button type="button" class="save-amend-btn" style="padding:6px 12px;" onclick="adminImportLegacyIdsr('${s.id}')" id="adminIdsrImportBtn-${iframeId}-${s.id}">Import as submission</button> <a href="${pageFile}?school_id=${s.id}" target="_blank" style="${link}">View legacy \u2192</a> <button type="button" class="save-amend-btn" style="padding:6px 12px;" onclick="adminDownloadOriginalIdsr('${s.id}', null, this)">Download Original IDSR</button></div>`;
+      html += idsrManageHtml(s, pageFile, iframeId);   // V77-04: every upload, one row each, with state-specific actions
       if (pageFile === 'idsr-soap.html') html += idsrAdminUploadHtml(s);   // V77-02: one upload control per school (SOAP panel only, so element ids stay unique)
       return `
         <div style="background:#F0F4F8;border:1px solid #DCE3EA;border-radius:8px;padding:12px 14px;">
@@ -1913,7 +1915,7 @@
   async function adminDownloadOriginalIdsr(schoolId, submissionId, btn) {
     if (!ADMIN_VERIFIED) { alert('Administrator access is required.'); return; }
     const row = submissionId
-      ? IDSR_SUBS.find(x => x.id === submissionId && x.school_id === schoolId && ['pending', 'approved'].includes(x.status))
+      ? IDSR_SUBS.find(x => x.id === submissionId && x.school_id === schoolId && ['pending', 'approved', 'rejected'].includes(x.status))
       : idsrUploadFor(schoolId);
     if (!row || !row.storage_path) { alert('The original IDSR file is not available.'); return; }
     const bucket = submissionId ? 'idsr-submissions' : 'idsr-uploads';
@@ -1971,6 +1973,141 @@
     return h;
   }
 
+
+  // ======================================================================================================
+  // V77-04: administrator IDSR record management. Remove / Restore / Unpublish (retract) / Reinstate / Make Current.
+  // Every action is by unique id, asks for a reason (10+ characters), is audited on the server, and is reversible. Nothing is deleted.
+  // Server functions: remove_idsr_upload, restore_idsr_upload, retract_idsr_publication, reinstate_idsr_publication, make_idsr_current.
+  // ======================================================================================================
+  const IDSR_MANAGE_OPEN = new Set(), IDSR_REMOVED_OPEN = new Set();   // remembered across re-renders so a list does not collapse under the administrator's hands
+  function idsrManageToggle(schoolId, open) { if (open) IDSR_MANAGE_OPEN.add(schoolId); else IDSR_MANAGE_OPEN.delete(schoolId); }
+  function idsrRemovedToggle(schoolId, open) { if (open) IDSR_REMOVED_OPEN.add(schoolId); else IDSR_REMOVED_OPEN.delete(schoolId); }
+  function idsrRowState(sub, pub) {
+    // returns { key, label, color } — the five visible states
+    if (sub.removed_at) return { key: 'removed', label: 'Removed', color: '#B3261E' };
+    if (pub) {
+      if (pub.retracted) return { key: 'unpublished', label: 'Unpublished', color: '#8A4B00' };
+      if (pub.is_current) return { key: 'current', label: 'Current', color: '#0D7377' };
+      return { key: 'published', label: 'Published (historical, not current)', color: '#1B2A4A' };
+    }
+    return { key: 'upload', label: 'Unpublished upload', color: '#5A6B80' };
+  }
+  function idsrManageRow(s, sub, pub, pageFile) {
+    const dt = (d) => d ? new Date(d).toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—';
+    const link = 'color:#0D7377;font-weight:700;font-size:12px;text-decoration:none;';
+    const st = idsrRowState(sub, pub), sid = String(sub.id).slice(0, 8), btn = 'padding:4px 10px;font-size:12px;';
+    const b = (act, text, extra) => `<button type="button" class="rem-secondary-btn" style="${btn}" data-act="${act}" data-sub="${sub.id}" data-school="${s.id}" ${pub ? `data-pub="${pub.id}"` : ''} onclick="idsrAct('${act}', '${s.id}', '${sub.id}', ${pub ? `'${pub.id}'` : 'null'}, this)">${text}</button>`;
+    let acts = '';
+    const canFile = ['pending', 'approved', 'rejected'].includes(sub.status) && sub.storage_path;
+    if (st.key === 'removed') acts += b('restore', 'Restore');
+    else {
+      if (pub) {
+        acts += `<a href="${pageFile}?school_id=${s.id}&publication_id=${pub.id}" target="_blank" style="${link}">View →</a> `;
+        if (st.key === 'unpublished') acts += b('reinstate', 'Reinstate');
+        else { if (st.key === 'published') acts += b('makecurrent', 'Make Current'); acts += b('unpublish', 'Unpublish'); }
+      }   // pending uploads are previewed from the awaiting-review block above (no duplicate link here)
+      if (sub.status === 'uploading') acts += `<span style="font-size:12px;color:#5A6B80;">Unfinished upload — it must be abandoned before it can be removed.</span>`;
+      else acts += b('remove', 'Remove');
+    }
+    if (canFile) acts += ` <button type="button" class="rem-secondary-btn" style="${btn}" onclick="adminDownloadOriginalIdsr('${s.id}', '${sub.id}', this)">Download original</button>`;
+    return `<div data-manage-row="${sub.id}" data-state="${st.key}" style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;padding:6px 0;border-top:1px solid #DCE3EA;">
+      <span style="min-width:220px;"><strong>${escapeHtml(sub.file_name || 'IDSR')}</strong><br><span style="font-size:11px;color:#5A6B80;">uploaded ${dt(sub.uploaded_at)} · status ${escapeHtml(sub.status)} · id ${escapeHtml(sid)}</span>${sub.removed_at ? `<br><span style="font-size:11px;color:#B3261E;">removed ${dt(sub.removed_at)}: ${escapeHtml(sub.removed_reason || '')}</span>` : ''}</span>
+      <span style="font-weight:700;color:${st.color};min-width:150px;" data-badge="${st.key}">${st.label}</span>
+      <span style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">${acts}</span></div>`;
+  }
+  function idsrManageHtml(s, pageFile, iframeId) {
+    const subs = idsrSubsFor(s.id), pubs = idsrPubsFor(s.id);
+    if (!subs.length) return '';
+    const pubOf = (sub) => pubs.find(p => idsrSameId(p.submission_id, sub.id)) || null;
+    const live = subs.filter(x => !x.removed_at), gone = subs.filter(x => x.removed_at);
+    const open = IDSR_MANAGE_OPEN.has(s.id) ? ' open' : '';
+    return `<details id="adminIdsrManage-${iframeId}-${s.id}" style="margin-top:12px;"${open} ontoggle="idsrManageToggle('${s.id}', this.open)">
+      <summary style="cursor:pointer;font-weight:700;">Manage uploads (${live.length})${gone.length ? ` · ${gone.length} removed` : ''}</summary>
+      <div style="font-size:12px;color:#5A6B80;margin:6px 0;">Remove hides one upload by its own id (schools stop seeing it; nothing is deleted, it can be restored). Unpublish hides a published report from the school. Neither ever promotes another report: choose the current report with Make Current.</div>
+      ${live.map(x => idsrManageRow(s, x, pubOf(x), pageFile)).join('') || '<div style="color:#5A6B80;">No uploads.</div>'}
+      ${gone.length ? `<details style="margin-top:8px;"${IDSR_REMOVED_OPEN.has(s.id) ? ' open' : ''} ontoggle="idsrRemovedToggle('${s.id}', this.open)"><summary style="cursor:pointer;font-weight:700;color:#B3261E;">Removed (${gone.length})</summary>${gone.map(x => idsrManageRow(s, x, pubOf(x), pageFile)).join('')}</details>` : ''}
+    </details>`;
+  }
+
+  // reason dialog (in-page, accessible; no browser prompt)
+  function idsrDialog(opt) {
+    return new Promise((resolve) => {
+      const old = document.getElementById('idsrActDlg'); if (old) old.remove();
+      const ov = document.createElement('div'); ov.id = 'idsrActDlg'; ov.setAttribute('role', 'dialog'); ov.setAttribute('aria-modal', 'true'); ov.setAttribute('aria-labelledby', 'idsrActTitle');
+      ov.style.cssText = 'position:fixed;inset:0;background:rgba(27,42,74,.55);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px;';
+      ov.innerHTML = `<div style="background:#fff;border-radius:10px;max-width:560px;width:100%;padding:18px 20px;font-family:Arial,Helvetica,sans-serif;font-size:13px;color:#1B2A4A;max-height:90vh;overflow:auto;">
+        <h3 id="idsrActTitle" style="margin:0 0 8px;font-size:16px;">${escapeHtml(opt.title)}</h3>
+        <div style="margin-bottom:8px;">${opt.subject}</div>
+        ${opt.warnings.map(w => `<div style="margin:6px 0;padding:8px 10px;border-radius:6px;background:${w.bad ? '#FDECEA' : '#F0F4F8'};border:1px solid ${w.bad ? '#B3261E' : '#DCE3EA'};">${w.text}</div>`).join('')}
+        <label for="idsrActReason" style="display:block;font-weight:700;margin-top:10px;">Reason (at least 10 characters, saved in the audit log)</label>
+        <textarea id="idsrActReason" rows="3" style="width:100%;box-sizing:border-box;margin-top:4px;padding:6px;font:inherit;border:1px solid #9AA8B8;border-radius:6px;"></textarea>
+        ${opt.needConfirm ? `<label style="display:flex;gap:8px;align-items:flex-start;margin-top:8px;"><input type="checkbox" id="idsrActConfirm" style="margin-top:2px;"><span>${escapeHtml(opt.confirmText)}</span></label>` : ''}
+        <div id="idsrActErr" role="alert" style="color:#B3261E;font-weight:700;min-height:18px;margin-top:8px;"></div>
+        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:8px;"><button type="button" class="rem-secondary-btn" id="idsrActCancel">Cancel</button><button type="button" class="save-amend-btn" id="idsrActGo">${escapeHtml(opt.goLabel)}</button></div></div>`;
+      document.body.appendChild(ov);
+      const ta = ov.querySelector('#idsrActReason'), err = ov.querySelector('#idsrActErr'), go = ov.querySelector('#idsrActGo'), cancel = ov.querySelector('#idsrActCancel');
+      const close = (v) => { document.removeEventListener('keydown', onKey); ov.remove(); resolve(v); };
+      const onKey = (e) => { if (e.key === 'Escape') close(null); };
+      document.addEventListener('keydown', onKey); cancel.addEventListener('click', () => close(null));
+      go.addEventListener('click', async () => {
+        const reason = ta.value.trim(); const cf = ov.querySelector('#idsrActConfirm');
+        if (reason.length < 10) { err.textContent = 'Please enter a reason of at least 10 characters.'; ta.focus(); return; }
+        if (opt.needConfirm && !(cf && cf.checked)) { err.textContent = 'Please tick the confirmation box to continue.'; return; }
+        go.disabled = true; cancel.disabled = true; err.textContent = '';
+        try { await opt.run(reason, !!(cf && cf.checked)); close(true); }
+        catch (e) { err.textContent = 'Failed: ' + (e && e.message ? String(e.message).replace(/^idsr:\s*/, '') : 'unknown error'); go.disabled = false; cancel.disabled = false; }
+      });
+      ta.focus();
+    });
+  }
+  async function idsrAct(act, schoolId, subId, pubId, btnEl) {
+    if (!ADMIN_VERIFIED) { alert('Administrator access is required.'); return; }
+    const sc = IDSR_SCHOOLS.find(x => idsrSameId(x.id, schoolId)); const sub = IDSR_SUBS.find(x => idsrSameId(x.id, subId));
+    const pubs = idsrPubsFor(schoolId), pub = pubId ? pubs.find(p => idsrSameId(p.id, pubId)) : null;
+    if (!sc || !sub) return;
+    const subject = `<strong>${escapeHtml(sc.name || '')}</strong> — ${escapeHtml(sub.file_name || 'IDSR')} <span style="color:#5A6B80;">(id ${escapeHtml(String(sub.id).slice(0, 8))}, ${escapeHtml(sub.status)})</span>`;
+    const cur = pubs.find(p => p.is_current) || null;
+    const call = async (fn, args) => { const res = await sb.rpc(fn, args); if (res && res.error) throw new Error(res.error.message || 'request failed'); return res ? res.data : null; };
+    const done = async (msg) => { await idsrRefreshAfterAction(schoolId, msg); };
+    const warnings = []; let opt;
+    if (act === 'remove') {
+      warnings.push({ text: 'Only this one upload (id ' + escapeHtml(String(sub.id).slice(0, 8)) + ') is affected. Other uploads, including identical duplicates, are not touched. Nothing is deleted; it can be restored.' });
+      if (pub) warnings.push({ bad: true, text: 'This upload is <strong>published</strong>: the school will stop seeing this report.' });
+      if (pub && pub.is_current) warnings.push({ bad: true, text: 'This is the <strong>CURRENT</strong> report. After removal the school has <strong>no current IDSR</strong> until you publish a new one or use Make Current. No other report is promoted automatically.' });
+      if (sub.status === 'pending') warnings.push({ text: 'It will leave the awaiting-review list. A not-yet-sent admin notification email will be cancelled; an email that has already been sent cannot be recalled.' });
+      opt = { title: 'Remove this upload', subject, warnings, needConfirm: !!pub, confirmText: 'I understand that this published report will be hidden from the school.', goLabel: 'Remove', run: async (reason, confirm) => { const d = await call('remove_idsr_upload', { p_submission_id: sub.id, p_reason: reason, p_confirm: confirm }); await done(d && d.result === 'already_removed' ? 'Already removed.' : 'Removed.' + (d && d.was_current ? ' The school now has no current IDSR.' : '') + (d && d.notification_queue && /^left_as_/.test(d.notification_queue) ? ' Note: an admin notification email was already in progress or sent and could not be recalled.' : '')); } };
+    } else if (act === 'restore') {
+      warnings.push({ text: 'Restoring makes this upload visible again. <strong>It does not make it the current report.</strong> Use Make Current if that is intended.' });
+      opt = { title: 'Restore this upload', subject, warnings, needConfirm: false, goLabel: 'Restore', run: async (reason) => { await call('restore_idsr_upload', { p_submission_id: sub.id, p_reason: reason }); await done('Restored (not made current).'); } };
+    } else if (act === 'unpublish' && pub) {
+      warnings.push({ text: 'The report is hidden from the school. Administrators can still see it, and it can be reinstated.' });
+      if (pub.is_current) warnings.push({ bad: true, text: 'This is the <strong>CURRENT</strong> report. After unpublishing, the school has <strong>no current IDSR</strong> until you publish a new one or use Make Current. No other report is promoted automatically.' });
+      opt = { title: 'Unpublish this report', subject, warnings, needConfirm: false, goLabel: 'Unpublish', run: async (reason) => { await call('retract_idsr_publication', { p_publication_id: pub.id, p_reason: reason }); await done('Unpublished.' + (pub.is_current ? ' The school now has no current IDSR.' : '')); } };
+    } else if (act === 'reinstate' && pub) {
+      warnings.push({ text: 'Reinstating makes this report visible to the school again as a <strong>historical</strong> version. <strong>It does not make it the current report.</strong>' });
+      opt = { title: 'Reinstate this report', subject, warnings, needConfirm: false, goLabel: 'Reinstate', run: async (reason) => { await call('reinstate_idsr_publication', { p_publication_id: pub.id, p_reason: reason }); await done('Reinstated (not made current).'); } };
+    } else if (act === 'makecurrent' && pub) {
+      const others = pubs.filter(p => p.id !== pub.id && !p.retracted && !p.removed && p.release_date);
+      const later = pub.release_date ? others.filter(p => String(p.release_date) > String(pub.release_date)) : [];
+      if (cur) warnings.push({ bad: true, text: 'This replaces the current report: <strong>' + escapeHtml(cur.period_label || 'IDSR') + '</strong>.' });
+      if (!pub.release_date) warnings.push({ bad: true, text: 'This report has no recorded government release date.' });
+      if (later.length) warnings.push({ bad: true, text: 'A published report with a later release date exists (' + later.map(p => escapeHtml(p.period_label || 'IDSR') + ' ' + escapeHtml(String(p.release_date).slice(0, 10))).join(', ') + ').' });
+      warnings.push({ text: 'The school will see this report as the current one.' });
+      const need = !!cur || !pub.release_date || later.length > 0;
+      opt = { title: 'Make this report current', subject, warnings, needConfirm: need, confirmText: 'I understand and want this report to be the current one.', goLabel: 'Make current', run: async (reason, confirm) => { await call('make_idsr_current', { p_publication_id: pub.id, p_reason: reason, p_confirm: confirm }); await done('Current report selected.'); } };
+    } else return;
+    await idsrDialog(opt);
+  }
+  async function idsrRefreshAfterAction(schoolId, message) {
+    const [sr, pr] = await Promise.all([
+      Promise.resolve(sb.from('idsr_submissions').select('*').order('created_at', { ascending: false })).then(r => r, e => ({ data: null, error: e })),
+      Promise.resolve(sb.rpc('admin_list_idsr_publications')).then(r => r, e => ({ data: null, error: e }))
+    ]);
+    IDSR_READ = { subs: idsrReadProblem(sr), pubs: idsrReadProblem(pr), capped: (sr.data || []).length >= 1000 };
+    if (!IDSR_READ.subs) IDSR_SUBS = sr.data; if (!IDSR_READ.pubs) IDSR_PUBS = pr.data;
+    idsrRerenderAll(schoolId);
+    for (const id of ['adminIdsrSoapFrame', 'adminIdsrFrame']) { const n = document.getElementById(`adminIdsrNote-${id}-${schoolId}`); if (n) { n.style.color = '#0D7377'; n.textContent = message + (IDSR_READ.subs || IDSR_READ.pubs ? ' (The lists could not be fully reloaded; use Reload submissions.)' : ''); } }
+  }
   async function adminReloadIdsrLists(btn) {
     if (btn) { btn.disabled = true; btn.textContent = 'Reloading…'; }
     try {
@@ -2021,8 +2158,8 @@
     if (!f) return bad('Choose a file first.');
     if (!/\.html?$/i.test(f.name)) return bad('Please choose an IDSR .html or .htm file.');
     if (f.size < 1 || f.size > 30 * 1024 * 1024) return bad('That file is empty or larger than 30 MB, so it cannot be an IDSR export.');
-    const dupe = idsrSubsFor(id).find(x => ['pending', 'approved'].includes(x.status) && x.file_name === f.name && Number(x.file_size) === f.size);
-    const pend = idsrSubsFor(id).filter(x => x.status === 'pending').length;
+    const dupe = idsrSubsFor(id).find(x => !x.removed_at && ['pending', 'approved'].includes(x.status) && x.file_name === f.name && Number(x.file_size) === f.size);
+    const pend = idsrSubsFor(id).filter(x => x.status === 'pending' && !x.removed_at).length;
     e.note.textContent = ''; e.conf.style.display = 'block';
     e.conf.innerHTML = `<div style="font-weight:700;margin-bottom:6px;">Confirm upload</div>
       <div>School: <strong>${escapeHtml(sc.name || '')}</strong> · URN: <strong>${escapeHtml(String(sc.urn || 'none recorded'))}</strong></div>
