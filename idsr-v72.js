@@ -179,7 +179,7 @@
   // ───────────────────────────── classification (thresholds UNCHANGED from V71) ─────────────────────────────
   function classify(measureLabel) {
     var l = String(measureLabel).toLowerCase();
-    var lowerBetter = ['persistent absence', 'suspension', 'exclusion'].some(function (k) { return l.indexOf(k) !== -1; });
+    var lowerBetter = ['absence', 'suspension', 'exclusion'].some(function (k) { return l.indexOf(k) !== -1; });   // V77-05-03: any 'absence' measure (overall, authorised, unauthorised, severe, persistent) is lower-is-better; 'attendance' is not
     if (/^year 4 mtc score$/.test(l)) return { kind: 'score', lowerBetter: false };   // V77-03 (D8): a mean score out of 25, not a percentage, and with no approved banding threshold: official verdict only
     if (l.indexOf('progress 8') !== -1 || l === 'va' || l.indexOf('value added') !== -1 || /va$/.test(l) || l.indexOf(' p8') !== -1) return { kind: 'idx', lowerBetter: lowerBetter };
     if (l.indexOf('attainment 8') !== -1 || l.indexOf('aps') !== -1 || /a8$/.test(l) || l.indexOf(' a8') !== -1) return { kind: 'pts', lowerBetter: lowerBetter };
@@ -2863,6 +2863,29 @@
           });
         }
       }
+      if (geom.att && V.attendance.daily && V.attendance.daily.rows.length && card.cols.length === 3) {
+        // V77-05-04: the DfE "daily attendance, N half terms" table (All pupils / FSM currently eligible / SEN), in its own labelled sub-block. Never merged with annual or termly
+        // figures, and the FSM group is "currently eligible" (NOT the FSM6 column used above). Every group cell is rated from ITS OWN official judgement and ITS OWN national figure
+        // (never the all-pupils national): each cell's tooltip states that group's own national figure; the right-hand column is the all-pupils national, as in the in-year block above. Rows are present only for groups that exist in the source.
+        var D = V.attendance.daily, dcol = D.cols[D.cols.length - 1], dgi = D.cols.length - 1;
+        var DG = [['All pupils', /^All pupils/, 'All pupils'], ['FSM (now)', /^FSM \(currently/, 'FSM (currently eligible), not FSM6'], ['SEN', /^SEN/, 'SEN']];
+        var drows = DG.map(function (g) { return D.rows.filter(function (x) { return x.section === 'Attendance' && g[1].test(x.group); })[0] || null; });
+        if (drows.some(function (x) { return x && x.cells[dgi] && x.cells[dgi].num != null; })) {
+          var did = 's:' + card.n + ':' + (extra++);
+          var dcells = drows.map(function (tr, k) {
+            var tc = tr && tr.cells[dgi], id = did + ':' + k;
+            if (!tc) return { id: id, num: null, disp: missing('no_row')[0], say: missing('no_row')[1], band: null, kind: 'value', missing: 'no_row' };
+            var rc = resolveValueCell(tc, id, tr.lowerBetter); rc.inyear = true;
+            rc.say = (rc.say ? rc.say + '; ' : '') + DG[k][2] + ', ' + dcol.label + (tc.nat && tc.nat.num != null ? '; compared with the national figure for this group, ' + tc.nat.disp : '');
+            return rc;
+          });
+          var dallc = drows[0] && drows[0].cells[dgi], dan = dallc && dallc.nat;
+          var dnat = dan && dan.num != null && !dan.est ? { id: did + ':nat', num: dan.num, disp: dan.disp, band: null, est: false, kind: 'avg', say: 'national figure for ALL pupils, same period (' + dcol.label + '). Each group above is rated from its own official judgement against its own national figure (in its tooltip), not against this one' }
+            : { id: did + ':nat', num: null, disp: '\u2014', band: null, est: false, kind: 'avg', say: 'no national figure published for all pupils for this period', missing: 'no_national' };
+          card.rows.push({ label: 'Daily attendance', cells: dcells, right: dnat, inyear: true, dly: true,
+            subhead: { label: 'Daily ' + dcol.label, cols: DG.map(function (g) { return g[0]; }), colTitles: DG.map(function (g) { return g[2]; }), right: 'Nat (all)' } });
+        }
+      }
       cards.push(card);
     });
     return { cards: cards, strips: strips(model), strips2: opts && opts.strips2 ? opts.strips2(model) : null };
@@ -2991,8 +3014,8 @@
       card.cols.map(function (c) { return '<th scope="col"' + (card.geom && card.geom.dest ? ' title="' + esc(c.label) + '"' : '') + '>' + esc(card.geom && card.geom.dest ? c.label.replace(/\s*leavers$/i, '') : c.label) + '</th>'; }).join('') + '<th scope="col" title="' + esc(card.rightTitle || '') + '">' + esc(card.right) + '</th></tr></thead><tbody>';
     card.rows.forEach(function (r, ri) {
       if (r.collapsed) { h += '<tr class="collapsed"><th scope="row" class="lab">' + esc(r.label) + '</th><td class="na cx" colspan="' + r.collapsed.span + '" data-id="' + esc(r.collapsed.id) + '" data-v="" data-d="' + esc(r.collapsed.text) + '" data-rows="' + r.collapsed.rows + '" title="Six 16–18 destination rows (all and disadvantaged students: EET, NEET, unknown) are empty in the source IDSR; the source statement is quoted instead of six empty rows.">' + esc(r.collapsed.text) + '</td></tr>'; return; }
-      if (r.subhead) h += '<tr class="subh"><th scope="col" class="lab">' + esc(r.subhead.label) + '</th>' + r.subhead.cols.map(function (c) { return '<th scope="col">' + esc(c) + '</th>'; }).join('') + '<th scope="col">' + esc(r.subhead.right) + '</th></tr>';
-      h += '<tr class="' + [ri % 2 ? 'alt' : '', r.inyear ? 'inyear' : '', r.national ? 'natrow' : ''].filter(Boolean).join(' ') + '"><th scope="row" class="lab">' + esc(r.label) + '</th>' + r.cells.map(function (c) { return cellHtml(c); }).join('') + cellHtml(r.right, 'rt') + '</tr>';
+      if (r.subhead) h += '<tr class="subh' + (r.dly ? ' dly' : '') + '"><th scope="col" class="lab">' + esc(r.subhead.label) + '</th>' + r.subhead.cols.map(function (c, ci) { return '<th scope="col"' + (r.subhead.colTitles && r.subhead.colTitles[ci] ? ' title="' + esc(r.subhead.colTitles[ci]) + '"' : '') + '>' + esc(c) + '</th>'; }).join('') + '<th scope="col">' + (r.subhead.right ? esc(r.subhead.right) : '<span class="sr">' + esc(r.subhead.rightSr || 'no figure in this column') + '</span>') + '</th></tr>';
+      h += '<tr class="' + [ri % 2 ? 'alt' : '', r.inyear ? 'inyear' : '', r.national ? 'natrow' : '', r.dly ? 'dly' : ''].filter(Boolean).join(' ') + '"><th scope="row" class="lab">' + esc(r.label) + '</th>' + r.cells.map(function (c) { return cellHtml(c); }).join('') + cellHtml(r.right, 'rt') + '</tr>';
     });
     h += '</tbody>';
     if (card.notes && card.notes.length) h += '<tfoot><tr><td class="fn" colspan="' + (card.cols.length + 2) + '">' + card.notes.map(esc).join(' ') + '</td></tr></tfoot>';
@@ -4001,6 +4024,19 @@
   }
 
   // ───────────── 8. Official findings, staffing, trust ─────────────
+  /** V77-05-03/05: colour for a Report-card official verdict. Wording is never changed. Higher-is-better: Above = favourable, Below = adverse; lower-is-better (absence): reversed;
+   *  Close to average / Average = neutral. Returns '' (no colour) for anything that is not a recognised official verdict (dash, suppressed 'S', unparsed) so missing, suppressed or
+   *  non-comparable findings are never coloured. Uses the existing cell colours (strong / attention / expected). */
+  function verdictTone(vc, lowerBetter) {
+    if (!vc || vc.st !== 'verdict') return '';
+    if (vc.pos !== 'above' && vc.pos !== 'below') return vc.pos === 'close' ? 'cell-expected' : '';
+    return (vc.pos === 'below') === !!lowerBetter ? 'cell-strong' : 'cell-attention';
+  }
+  function verdictTitle(vc, lowerBetter) {
+    var pos = vc && vc.st === 'verdict' ? vc.pos : null, lead = (lowerBetter ? 'lower' : 'higher') + ' is better: ';
+    if (pos !== 'above' && pos !== 'below') return lead + 'close to the national average is neutral';
+    return lead + pos + ' the national average is ' + ((pos === 'below') === !!lowerBetter ? 'favourable' : 'adverse');
+  }
   function pageFindings(sec, trust, staffing) {
     var h = head(sec, 'School Context & Official Findings', 'The report card’s official findings, staffing and trust information — shown as published, not re-rated');
     h += banner(sec, 'the report card');
@@ -4009,9 +4045,11 @@
         h += '<h3 aria-level="2" class="blockh">' + esc(g.title) + '</h3><div class="grid2">';
         g.tables.forEach(function (T, ti) {
           var id = 'x:fnd:' + gi + ':' + ti, gapTbl = /gap/i.test(T.head[3] || '');
-          h += '<div class="panel"><h4 aria-level="2">' + esc(T.title) + '</h4><table class="data-table" aria-label="' + esc(T.title) + '"><thead><tr>' + T.head.map(function (x) { return th(x); }).join('') + '</tr></thead><tbody>';
+          var lbT = g.key === 'absence' && Core.classify(T.title).lowerBetter;   // V77-05-03: absence tables read lower-is-better (and carry the cue)
+          var lowB = !gapTbl && Core.classify(T.title).lowerBetter;   // V77-05-05: every other official-verdict table is coloured by its own direction; gap tables never
+          h += '<div class="panel"><h4 aria-level="2">' + esc(T.title) + (lbT ? ' <span class="dir-cue" title="Lower absence is better: Below is favourable, Above is adverse. The wording is the DfE’s; the colour is SOAP’s.">Lower is better</span>' : '') + '</h4><table class="data-table" aria-label="' + esc(T.title) + '"><thead><tr>' + T.head.map(function (x) { return th(x); }).join('') + '</tr></thead><tbody>';
           T.rows.forEach(function (r, ri) {
-            h += '<tr>' + labelTd(r.period) + xcell(id + ':' + ri + ':s', r.school, {}) + xcell(id + ':' + ri + ':n', r.nat, {}) + (gapTbl ? xcell(id + ':' + ri + ':g', cellOf3(r.gapRaw), {}) : '<td class="off" data-id="' + esc(id + ':' + ri + ':v') + '" data-v="" data-d="' + esc(r.verdict) + '" title="official wording, as published">' + esc(r.verdict) + '</td>') + '</tr>';
+            h += '<tr>' + labelTd(r.period) + xcell(id + ':' + ri + ':s', r.school, {}) + xcell(id + ':' + ri + ':n', r.nat, {}) + (gapTbl ? xcell(id + ':' + ri + ':g', cellOf3(r.gapRaw), {}) : '<td class="off' + (!gapTbl && verdictTone(r.verdictCell, lowB) ? ' ' + verdictTone(r.verdictCell, lowB) : '') + '" data-id="' + esc(id + ':' + ri + ':v') + '" data-v="" data-d="' + esc(r.verdict) + '" title="official wording, as published' + (!gapTbl && verdictTone(r.verdictCell, lowB) ? ' — ' + verdictTitle(r.verdictCell, lowB) : '') + '">' + esc(r.verdict) + '</td>') + '</tr>';
           });
           h += '</tbody></table></div>';
         });
@@ -4155,7 +4193,7 @@
     esc: esc, disp: disp, val: val, xcell: xcell, chip: chip, banner: banner, guidance: guidance, lineSvg: lineSvg, barSvg: barSvg, detail: detail, chartDiv: chartDiv, COL: COL, cellOf3: cellOf3, COVER_ORDER: COVER_ORDER,
     pages: { yearGroupAbsence: pageYearGroupAbsence, behaviour: pageBehaviour, movement: pageMovement, ks4Entries: pageKs4Entries, sixth: pageSixth, similar: pageSimilar, eyfs: pageEyfs, destinations: pageDestinations, findings: pageFindings, coverage: pageCoverage },
     ctx: { characteristics: ctxCharacteristics, ethnicity: ctxEthnicity, sen: ctxSen, yearGroup: ctxYearGroup, prior: ctxPrior },
-    expected: expected
+    expected: expected, verdictTone: verdictTone, verdictTitle: verdictTitle
   };
 });
 
@@ -4273,7 +4311,7 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
   var MISSING = Soap.MISSING;
 
   // ───────────── normalised value tables (single source for render AND tie-out) ─────────────
-  function colLabel(c) { return c.term ? c.label : (c.year || c.label); }   // V77-03: two named terms of one year need their own headings
+  function colLabel(c) { return c.term || /\(\d+\s+half\s+terms?\)\s*$/i.test(c.label || '') ? c.label : (c.year || c.label); }   // V77-05-04: a daily column keeps its full period label, '2025/26 (5 half terms)'   // V77-03: two named terms of one year need their own headings
   function familyOf(label) {
     var l = String(label);
     if (/^English & Maths/i.test(l)) return 'English & Mathematics thresholds';
@@ -4614,7 +4652,7 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
       if (adverseOfficial(lc, nt, lb)) {
         var hasNat = lc.nat && lc.nat.num != null && !lc.nat.est;
         seen[key] = 1;
-        out.push({ key: key, kind: 'current', measure: d.measure, group: d.group, year: cols[li] + (isR3 ? ' (DfE published average)' : inYear ? ' (in-year, part of a year)' : ''), judgement: lc.officialRaw, phase: PH(it),
+        out.push({ key: key, kind: 'current', measure: d.measure, group: d.group, year: (inYear ? String(cols[li]).replace(/\s*\(\d+\s+half\s+terms?\)\s*$/i, '') : cols[li]) + (isR3 ? ' (DfE published average)' : inYear ? ' (in-year, part of a year)' : ''), judgement: lc.officialRaw, phase: PH(it),
           why: isR3 ? 'DfE’s published three-year figure, not a single year, so it is never ranked' : inYear ? 'in-year figure for part of the year, not an annual result, so it is never ranked' : !hasNat ? 'no national figure is published to rank it against' + (lb ? ' (for this measure, higher than national is worse)' : '') : 'not entered in the numerical ranking (no banding threshold for this measure, or another table’s figures for the same measure and pupil group are ranked instead)',
           go: it.page, chart: isR3 ? null : it.chid });
         return;
@@ -4881,6 +4919,7 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
     /* ---- additions (not in the original): status chips, notices, extra-section tables, mini tables ---- */
     '.stchip{display:inline-block;font-size:11px;font-weight:700;padding:3px 10px;border-radius:12px;white-space:nowrap}.st-ok{background:#D4EDDA;color:#2C5F3D}.st-partial{background:#FAE3C6;color:#7A4A00}.st-empty{background:#E4E9EE;color:#37475f}.st-absent{background:#E4E9EE;color:#475569}.st-failed{background:#F5C6C2;color:#7A1F1F}' +
     '.notice{border-radius:10px;padding:12px 16px;font-size:13px;line-height:1.5;margin:10px 0;background:#fff;border-left:4px solid var(--teal);box-shadow:0 1px 3px rgba(13,43,78,.08)}.n-absent{border-left-color:#8895A7}.n-failed{border-left-color:#C0392B;background:#FFF5F4}.n-partial{border-left-color:#D98A00;background:#FFFAF0}.n-empty{border-left-color:#8895A7}.n-info{border-left-color:var(--navy)}' +
+    '.dir-cue{display:inline-block;margin-left:8px;font-size:10.5px;font-weight:600;color:var(--text-muted);background:#F0F4F8;border-radius:9px;padding:1px 8px;vertical-align:middle;letter-spacing:.2px}td.off.cell-strong,td.off.cell-attention,td.off.cell-expected{font-weight:700}' +
     '.xnote{font-size:12px;color:var(--text-muted);margin:6px 0 14px;max-width:960px;line-height:1.5}.psub{font-size:12px;color:var(--text-muted);margin:-2px 0 8px}.blockh{font-size:16px;font-weight:700;color:var(--navy);margin:22px 0 10px}.statusline{font-size:12px;color:var(--text-muted);margin:0 0 8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}' +
     'td.x.st-dash,td.x.st-blank,td.x.st-na,td.x.st-nodata,td.x.st-suppressed,td.x.st-withheld,td.x.st-nostudents{color:var(--text-muted);font-style:italic}td.x.st-unparsed{background:#fff0f0;color:#7A1F1F;font-weight:700}td.x.zero{font-weight:700}' +
     'td .sig{display:block;font-size:10px;color:var(--text-muted);font-weight:400;font-style:normal}td .bnd{display:block;font-size:10px;color:var(--text-muted);font-weight:400}td.indent,td.lab.indent{padding-left:26px}td.lab.strong{font-weight:700}td.lab.sumlab,td.sum{font-weight:700}' +
@@ -5007,7 +5046,7 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
     var gs = sec.data.groups.map(function (g, gi) { return { g: g, gi: gi }; }).filter(function (x) { return /^disadvantaged-pupils-performance/.test(x.g.key); });
     if (!gs.length) return '';
     var h = '<h3 aria-level="2" class="blockh" id="sub-official">Official findings for disadvantaged pupils (report card, verbatim)</h3><div class="grid2">';
-    gs.forEach(function (x) { x.g.tables.forEach(function (T) { h += '<div class="panel"><h4 aria-level="2">' + esc(T.title) + '</h4><table class="data-table"><thead><tr>' + T.head.map(function (t) { return '<th>' + esc(t) + '</th>'; }).join('') + '</tr></thead><tbody>' + T.rows.map(function (r) { return '<tr><td class="lab">' + esc(r.period) + '</td><td>' + esc(X.disp(r.school)) + '</td><td>' + esc(X.disp(r.nat)) + '</td><td class="off">' + esc(r.verdict) + '</td></tr>'; }).join('') + '</tbody></table></div>'; }); });
+    gs.forEach(function (x) { x.g.tables.forEach(function (T) { h += '<div class="panel"><h4 aria-level="2">' + esc(T.title) + '</h4><table class="data-table"><thead><tr>' + T.head.map(function (t) { return '<th>' + esc(t) + '</th>'; }).join('') + '</tr></thead><tbody>' + T.rows.map(function (r) { var gp = /gap/i.test(T.head[3] || ''), lb = !gp && Core.classify(T.title).lowerBetter, tn = gp ? '' : X.verdictTone(r.verdictCell, lb); return '<tr><td class="lab">' + esc(r.period) + '</td><td>' + esc(X.disp(r.school)) + '</td><td>' + esc(X.disp(r.nat)) + '</td><td class="off' + (tn ? ' ' + tn : '') + '"' + (tn ? ' title="official wording, as published — ' + esc(X.verdictTitle(r.verdictCell, lb)) + '"' : '') + '>' + esc(r.verdict) + '</td></tr>'; }).join('') + '</tbody></table></div>'; }); });
     return h + '</div><p class="xnote">These are the report card’s own findings, in the source’s words. They are shown for reference and are not re-rated; the same tables are tied out on the Context &amp; Official Findings page.</p>';
   }
 
