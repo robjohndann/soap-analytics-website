@@ -5412,7 +5412,7 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
 /**
  * SOAP Analytics IDSR Dashboard: "Print Overview" (V77-05-02).
  *
- * Turns a stored (frozen) Dashboard snapshot into a PRINT COPY that shows only the Overview executive summary on A4 landscape:
+ * Turns a stored (frozen) Dashboard snapshot into a PRINT COPY that shows only the Overview executive summary (secondary: A4 PORTRAIT, one page; all-through: A4 LANDSCAPE, two pages; navy header and footer bands):
  *   secondary-only : title, Performance Narrative with its highlighted statements, and the four panels (one page where content fits);
  *   all-through    : title, source banner, Performance Narrative, phase tiles (page 1) / strengths and concerns panels and the
  *                    "Biggest changes" table (page 2), the branded header repeated on page 2.
@@ -5451,12 +5451,12 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
     '.sidebar-header .school{grid-column:2;font-size:18px!important;margin:0!important;text-align:center;color:#fff!important;white-space:nowrap;font-weight:800}' +
     '.sidebar-header .period{grid-column:3;justify-self:end;text-align:right;font-size:11.5px!important;opacity:1!important;margin:0!important;color:var(--pale)!important;font-weight:700}' +
     '#page-overview .exec-panel{border-top:3px solid var(--teal);border-radius:0 0 10px 10px}.foot{display:none!important}';
-  function box(pt) { return 'font:' + pt + 'pt Arial,Helvetica,sans-serif;color:#475569;vertical-align:top;padding-top:2mm;border-top:0.7mm solid #1A7A6E;'; }
+  function box(pt, pad) { return 'font:' + pt + 'pt Arial,Helvetica,sans-serif;color:#fff;background:#0D2B4E;vertical-align:middle;border-top:0.9mm solid #1A7A6E;padding:' + pad + ';'; }
 
   function styleBlock(allThrough, historical) {
-    return '<style id="po-print-overview">.po-pg2{display:none}@page{size:A4 landscape;margin:' + (allThrough ? '8mm' : '6mm') + ' 8mm 12mm 8mm;' +
-      '@bottom-left{content:"SOAP Analytics IDSR Dashboard · Overview summary · soapanalytics.co.uk";' + box(allThrough ? 7.8 : 8.25) + 'width:86%}' +
-      '@bottom-right{content:"Page " counter(page) " of " counter(pages);' + box(allThrough ? 7.8 : 8.25) + 'text-align:right;width:14%}}' +
+    return '<style id="po-print-overview">.po-pg2{display:none}@page{size:A4 ' + (allThrough ? 'landscape' : 'portrait') + ';margin:' + (allThrough ? '8mm' : '6mm') + ' 8mm 10mm 8mm;' +
+      '@bottom-left{content:"SOAP Analytics IDSR Dashboard · Overview summary · soapanalytics.co.uk";' + box(allThrough ? 7.8 : 8.25, '0 0 0 5mm') + 'width:86%}' +
+      '@bottom-right{content:"Page " counter(page) " of " counter(pages);' + box(allThrough ? 7.8 : 8.25, '0 5mm 0 0') + 'text-align:right;width:14%}}' +
       '@media print{html{zoom:' + (allThrough ? ZOOM : ZOOM_SECONDARY) + '}.nop:not(.sidebar),.back-link,.xtabs,.context-tabs{display:none!important}body{display:block!important;background:#fff!important}' +
       '.main{padding:0!important;max-width:none!important;margin:0!important}.po-pg2{display:block}' +
       '.page:not(#page-overview),.page:not(#page-overview)[hidden]{display:none!important}#page-overview,#page-overview[hidden]{display:block!important}' +
