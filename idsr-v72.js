@@ -5408,6 +5408,89 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
 });
 
 
+/* ===== idsr-printoverview.js ===== */
+/**
+ * SOAP Analytics IDSR Dashboard: "Print Overview" (V77-05-02).
+ *
+ * Turns a stored (frozen) Dashboard snapshot into a PRINT COPY that shows only the Overview executive summary (secondary: A4 PORTRAIT, one page; all-through: A4 LANDSCAPE, two pages; navy header and footer bands):
+ *   secondary-only : title, Performance Narrative with its highlighted statements, and the four panels (one page where content fits);
+ *   all-through    : title, source banner, Performance Narrative, phase tiles (page 1) / strengths and concerns panels and the
+ *                    "Biggest changes" table (page 2), the branded header repeated on page 2.
+ * Everything after that on the Overview page (concerns list, improvement narrative, school-context tables, navigation tiles) is hidden by CSS.
+ *
+ * The stored snapshot is NEVER changed: this is a pure function over the HTML string; the copy is shown only in a hidden frame that is printed.
+ * No script is added: stored snapshots carry a CSP that allows exactly one script (by hash), so the copy is CSS plus two small markup changes
+ * (the teal SOAP logo in the header slot, and a repeat of the header block for all-through page 2). The copy is printed through the snapshot's own
+ * existing "idsr-print" message handler. Branding uses artwork and colours that already exist (IdsrLogos.teal; navy #0D2B4E, teal #1A7A6E, pale #F0F4F8).
+ * Returns null when the snapshot's layout is not recognised, so the caller can fall back to the previous print behaviour.
+ */
+(function (root, factory) {
+  if (typeof module === 'object' && module.exports) module.exports = factory(require('./idsr-logos.js'));
+  else root.IdsrPrintOverview = factory(root.IdsrLogos);
+})(typeof self !== 'undefined' ? self : this, function (Logos) {
+  'use strict';
+  var VERSION = '77.5.2-print2', ZOOM = 0.9, ZOOM_SECONDARY = 0.85, LOGO_PX = 92;
+  var HDR_OPEN = '<div class="sidebar-header">', GRID_AT = '<div class="exec-grid ov-grid"';
+
+  var COMPACT = '#page-overview .page-title{margin:0 0 2px}#page-overview .page-sub{margin-bottom:8px}#page-overview .heatmap-title{margin:2px 0 6px}#page-overview .narrative-panel{gap:6px}#page-overview .narrative-item{padding:8px 14px}' +
+    '#page-overview .narrative-panel+.exec-grid{margin-top:10px}#page-overview .exec-grid{gap:12px!important;margin-bottom:0!important;grid-template-columns:1fr 1fr!important}#page-overview .exec-panel{padding:10px 16px 12px}' +
+    '#page-overview .exec-panel .exec-count{margin-bottom:6px}#page-overview .exec-item{padding:5px 0}#page-overview .exec-panel h3{margin-bottom:2px}';
+  // Secondary only (print2): extra vertical headroom so a real-browser print stays on ONE page (was ~6 mm spare; now ~20 mm). All-through is untouched.
+  var CUT_SECONDARY = '#page-overview .exec-grid~*{display:none!important}#page-overview .narrative-item{padding:6px 14px}#page-overview .narrative-panel+.exec-grid{margin-top:8px}#page-overview .exec-panel{padding:8px 16px 10px}#page-overview .exec-item{padding:3px 0}#page-overview .exec-panel .exec-count{margin-bottom:4px}#page-overview .page-sub{margin-bottom:6px}#page-overview .heatmap-title{margin:0 0 4px}.sidebar-header{margin-bottom:8px!important}';
+  var CUT_ALL_THROUGH = '#page-overview .chg-table~*,#page-overview .ov-links,#page-overview .heatmap-title:has(+.ov-links){display:none!important}#page-overview .data-table tr{break-inside:avoid}' +
+    '#page-overview .po-pg2{break-before:page}#page-overview .exec-grid.ov-grid{break-inside:avoid}#page-overview .ph-tiles{grid-template-columns:repeat(4,1fr)!important}' +
+    '#page-overview .ov-row{display:grid!important;grid-template-columns:minmax(0,1fr) auto;align-items:center;column-gap:10px;row-gap:0}#page-overview .ov-row .ov-l{grid-column:1;grid-row:1}' +
+    '#page-overview .ov-row .badge{grid-column:2;grid-row:1;margin:0}#page-overview .ov-row .ov-v{grid-column:1/-1;grid-row:2}';
+  var TIGHT_SECONDARY = 'html body aside.sidebar .sidebar-header{padding:4px 14px!important;margin-bottom:8px!important}.sidebar-header .logo-card img{width:76px!important}';
+  var HISTORICAL = '.sidebar-header .period::after{display:block;content:"Historical report — not current";margin:3px 0 0 auto;width:max-content;font-size:11px;font-weight:700;color:var(--navy);background:var(--pale);border:1px solid var(--pale);border-radius:9px;padding:1px 9px}';
+  var BRAND = 'html body aside.sidebar.nop{display:block!important;position:static!important;width:auto!important;height:auto!important;overflow:visible!important;background:#fff!important;color:var(--navy)!important}' +
+    'aside.sidebar nav,aside.sidebar .sidebar-foot,.sidebar-header .srcside{display:none!important}' +
+    'html body .po-pg2 .sidebar-header,html body aside.sidebar .sidebar-header{display:grid!important;grid-template-columns:1fr auto 1fr;align-items:center;column-gap:10px;padding:7px 14px!important;margin:0 0 12px;border:0!important;border-bottom:3px solid var(--teal)!important;border-radius:6px 6px 0 0;text-align:left!important;background:var(--navy)!important}' +
+    '.sidebar-header .logo-card{background:none!important;padding:0!important;margin:0!important;border-radius:0!important;justify-self:start;box-shadow:none}' +
+    '.sidebar-header .logo-card img{width:' + LOGO_PX + 'px!important;max-width:none!important;display:block;border-radius:4px}' +
+    '.sidebar-header .school{grid-column:2;font-size:18px!important;margin:0!important;text-align:center;color:#fff!important;white-space:nowrap;font-weight:800}' +
+    '.sidebar-header .period{grid-column:3;justify-self:end;text-align:right;font-size:11.5px!important;opacity:1!important;margin:0!important;color:var(--pale)!important;font-weight:700}' +
+    '#page-overview .exec-panel{border-top:3px solid var(--teal);border-radius:0 0 10px 10px}.foot{display:none!important}';
+  function box(pt, pad) { return 'font:' + pt + 'pt Arial,Helvetica,sans-serif;color:#fff;background:#0D2B4E;vertical-align:middle;border-top:0.9mm solid #1A7A6E;padding:' + pad + ';'; }
+
+  function styleBlock(allThrough, historical) {
+    return '<style id="po-print-overview">.po-pg2{display:none}@page{size:A4 ' + (allThrough ? 'landscape' : 'portrait') + ';margin:' + (allThrough ? '8mm' : '6mm') + ' 8mm 10mm 8mm;' +
+      '@bottom-left{content:"SOAP Analytics IDSR Dashboard · Overview summary · soapanalytics.co.uk";' + box(allThrough ? 7.8 : 8.25, '0 0 0 5mm') + 'width:86%}' +
+      '@bottom-right{content:"Page " counter(page) " of " counter(pages);' + box(allThrough ? 7.8 : 8.25, '0 5mm 0 0') + 'text-align:right;width:14%}}' +
+      '@media print{html{zoom:' + (allThrough ? ZOOM : ZOOM_SECONDARY) + '}.nop:not(.sidebar),.back-link,.xtabs,.context-tabs{display:none!important}body{display:block!important;background:#fff!important}' +
+      '.main{padding:0!important;max-width:none!important;margin:0!important}.po-pg2{display:block}' +
+      '.page:not(#page-overview),.page:not(#page-overview)[hidden]{display:none!important}#page-overview,#page-overview[hidden]{display:block!important}' +
+      (allThrough ? CUT_ALL_THROUGH : CUT_SECONDARY) + COMPACT + BRAND + (allThrough ? '' : TIGHT_SECONDARY) + (historical ? HISTORICAL : '') +
+      '*{-webkit-print-color-adjust:exact;print-color-adjust:exact}}</style>';
+  }
+
+  /** html: the exact string of a stored or candidate Dashboard snapshot. opts.historical: the report is not the school's current report. */
+  function build(html, opts) {
+    opts = opts || {};
+    if (typeof html !== 'string') return null;
+    var iPage = html.indexOf('id="page-overview"'), iHdr = html.indexOf(HDR_OPEN), iGrid = html.indexOf('<div class="exec-grid'), iHead = html.indexOf('</head>');
+    if (iPage < 0 || iHdr < 0 || iGrid < 0 || iHead < 0 || html.indexOf('class="narrative-panel"') < 0) return null;
+    var allThrough = html.indexOf(GRID_AT) >= 0;
+    if (allThrough && html.indexOf('chg-table') < 0) return null;       // all-through layout not as expected: do not guess
+    var out = html;
+    if (Logos && Logos.teal) {                                           // the teal SOAP badge, in the header's existing logo slot
+      var re = /(<div class="sidebar-header"><div class="logo-card"><img src=")[^"]+/;
+      if (re.test(out)) out = out.replace(re, function (m, a) { return a + Logos.teal; });
+    }
+    if (allThrough) {                                                    // repeat the branded header at the top of page 2 (hidden on screen, shown in print)
+      var i = out.indexOf(HDR_OPEN), j = out.indexOf('<nav', i), k = out.indexOf(GRID_AT);
+      if (j < 0 || k < 0 || !/<\/div>$/.test(out.slice(i, j))) return null;
+      out = out.slice(0, k) + '<div class="po-pg2">' + out.slice(i, j) + '</div>' + out.slice(k);
+    }
+    var h = out.indexOf('</head>');
+    out = out.slice(0, h) + styleBlock(allThrough, !!opts.historical) + out.slice(h);
+    return { html: out, allThrough: allThrough, historical: !!opts.historical, version: VERSION };
+  }
+
+  return { build: build, VERSION: VERSION, ZOOM: ZOOM, ZOOM_SECONDARY: ZOOM_SECONDARY };
+});
+
+
 /* ===== idsr-viewer.js ===== */
 /*!
  * SOAP Analytics V72 — idsr-viewer.js (RELEASE-CANDIDATE host runtime; OFFLINE BUILD, not deployed)
@@ -5419,11 +5502,11 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
  * check for the Dashboard, and plain-language limitation notices. No new tables, columns, functions, buckets or policies are used.
  */
 (function (root, factory) {
-  if (typeof module === 'object' && module.exports) module.exports = factory(require('./idsr-core.js'), require('./idsr-guard.js'), require('./idsr-reconcile.js'), require('./idsr-snapshot.js'), require('./idsr-dash.js'), require('./idsr-classify.js'), require('./idsr-allthrough.js'), require('./idsr-spec-allthrough.js'));
-  else root.IdsrViewer = factory(root.IdsrCore, root.IdsrGuard, root.IdsrReconcile, root.IdsrSnapshot, root.IdsrDash, root.IdsrClassify, root.IdsrAllThrough, root.IdsrSpecAllThrough);
-})(typeof self !== 'undefined' ? self : this, function (Core, Guard, Rec, Snap, Dash, Cls, AT, SpecAT) {
+  if (typeof module === 'object' && module.exports) module.exports = factory(require('./idsr-core.js'), require('./idsr-guard.js'), require('./idsr-reconcile.js'), require('./idsr-snapshot.js'), require('./idsr-dash.js'), require('./idsr-classify.js'), require('./idsr-allthrough.js'), require('./idsr-spec-allthrough.js'), require('./idsr-printoverview.js'));
+  else root.IdsrViewer = factory(root.IdsrCore, root.IdsrGuard, root.IdsrReconcile, root.IdsrSnapshot, root.IdsrDash, root.IdsrClassify, root.IdsrAllThrough, root.IdsrSpecAllThrough, root.IdsrPrintOverview);
+})(typeof self !== 'undefined' ? self : this, function (Core, Guard, Rec, Snap, Dash, Cls, AT, SpecAT, PrintOv) {
   'use strict';
-  var VIEWER_VERSION = '77.3.0-s3';
+  var VIEWER_VERSION = '77.5.2';
   // IDENTICAL to the lists in V71 idsr-soap.html / idsr-dashboard.html / portal.html (a test compares them to the V71 source).
   var FULL_ACCESS_ROLES = ['Headteacher', 'multi_school_leader', 'Executive Headteacher', 'CEO', 'School Improvement Director'];
   var PACKAGE_FEATURES = {
@@ -5558,10 +5641,23 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
     function pubLabel(p) { return pubBase(p) + (p.is_current ? ' — Current' : (!p.retracted && !p.removed ? ' — historical, not current' : '')) + (p.retracted ? ' — RETRACTED' : '') + (p.removed ? ' — REMOVED' : '') + (S.isAdmin && p.out_of_sequence ? ' — out of sequence' : ''); }
 
     function button(id, text, ghost) { var b = el('button', { class: 'publish-btn', id: id, type: 'button', text: text }); b.style.marginRight = '10px'; if (ghost) { b.style.background = 'transparent'; b.style.border = '1px solid rgba(255,255,255,.6)'; } return b; }
+    function printFrame() { var f = $('snapFrame'); if (f && f.contentWindow) f.contentWindow.postMessage({ type: 'idsr-print' }, '*'); }
+    // The stored snapshot is never altered: a print copy is rendered in a separate, off-screen sandboxed frame and printed through the snapshot's own print message.
+    function printOverview() {
+      var made = null;
+      try { made = PrintOv && S.shownHtml ? PrintOv.build(S.shownHtml, { historical: S.mode === 'publication' && !!S.pub && !S.pub.is_current }) : null; } catch (e) { made = null; }
+      if (!made) { printFrame(); return; }                      // layout not recognised: previous behaviour (nothing is lost)
+      var old = $('printFrame'); if (old && old.parentNode) old.parentNode.removeChild(old);
+      var pf = el('iframe', { id: 'printFrame', title: 'Print copy of the Overview', sandbox: 'allow-scripts allow-modals', 'aria-hidden': 'true', tabindex: '-1' });
+      pf.style.cssText = 'position:fixed;left:-10000px;top:0;width:1400px;height:1000px;border:0;visibility:hidden;pointer-events:none;';
+      pf.addEventListener('load', function () { if (pf.__p) return; pf.__p = true; try { pf.contentWindow.postMessage({ type: 'idsr-print' }, '*'); } catch (e) { printFrame(); } });
+      pf.srcdoc = made.html; doc.body.appendChild(pf);
+    }
     function topbar() {
       var box = $('topbarActions'); box.textContent = '';
       if (S.mode === null) return;
-      var pb = button('printBtn', 'Print (A3)', true); pb.addEventListener('click', function () { var f = $('snapFrame'); if (f && f.contentWindow) f.contentWindow.postMessage({ type: 'idsr-print' }, '*'); }); box.appendChild(pb);
+      // V77-05-02: the Dashboard prints its Overview executive summary (A4 landscape); the IDSR SOAP keeps Print (A3) unchanged.
+      var pb = button('printBtn', kind === 'soap' ? 'Print (A3)' : 'Print Overview', true); pb.addEventListener('click', function () { if (kind === 'soap') printFrame(); else printOverview(); }); box.appendChild(pb);
       if (S.mode === 'publication' && S.html) {
         var db = button('downloadBtn', 'Download copy (HTML)', true); db.addEventListener('click', function () {
           var blob = new win.Blob([S.html], { type: 'text/html' }), a = el('a', { href: win.URL.createObjectURL(blob), download: 'idsr-' + view + '-' + String(S.pub.id).slice(0, 8) + '.html' }); doc.body.appendChild(a); a.click(); doc.body.removeChild(a); }); box.appendChild(db);
@@ -5646,6 +5742,7 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
       var wrap = $('frameWrap'); wrap.style.display = 'block'; wrap.textContent = '';
       var f = el('iframe', { id: 'snapFrame', title: kind === 'soap' ? 'IDSR SOAP on a Page' : 'IDSR Dashboard', sandbox: 'allow-scripts allow-modals' });
       f.addEventListener('load', function () { if (f.__shown) return; f.__shown = true; if (!S.dashboardAllowed) f.contentWindow.postMessage({ type: 'idsr-flags', dashboard: false }, '*'); postShow(f); });
+      S.shownHtml = html; var pf0 = $('printFrame'); if (pf0 && pf0.parentNode) pf0.parentNode.removeChild(pf0);
       f.srcdoc = html; wrap.appendChild(f); return f;
     }
     win.addEventListener('message', function (e) {
