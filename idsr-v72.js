@@ -4024,15 +4024,18 @@
   }
 
   // ───────────── 8. Official findings, staffing, trust ─────────────
-  /** V77-05-03: colour for a Report-card verdict where LOWER is better (absence). Wording is never changed; Below = favourable, Above = adverse, anything else neutral. Uses the existing cell colours. */
+  /** V77-05-03/05: colour for a Report-card official verdict. Wording is never changed. Higher-is-better: Above = favourable, Below = adverse; lower-is-better (absence): reversed;
+   *  Close to average / Average = neutral. Returns '' (no colour) for anything that is not a recognised official verdict (dash, suppressed 'S', unparsed) so missing, suppressed or
+   *  non-comparable findings are never coloured. Uses the existing cell colours (strong / attention / expected). */
   function verdictTone(vc, lowerBetter) {
-    var pos = vc && vc.st === 'verdict' ? vc.pos : null;
-    if (pos !== 'above' && pos !== 'below') return 'cell-expected';
-    return (pos === 'below') === !!lowerBetter ? 'cell-strong' : 'cell-attention';
+    if (!vc || vc.st !== 'verdict') return '';
+    if (vc.pos !== 'above' && vc.pos !== 'below') return vc.pos === 'close' ? 'cell-expected' : '';
+    return (vc.pos === 'below') === !!lowerBetter ? 'cell-strong' : 'cell-attention';
   }
-  function verdictTitle(vc) {
-    var pos = vc && vc.st === 'verdict' ? vc.pos : null;
-    return pos === 'below' ? 'below the national average is favourable' : pos === 'above' ? 'above the national average is adverse' : 'close to the national average is neutral';
+  function verdictTitle(vc, lowerBetter) {
+    var pos = vc && vc.st === 'verdict' ? vc.pos : null, lead = (lowerBetter ? 'lower' : 'higher') + ' is better: ';
+    if (pos !== 'above' && pos !== 'below') return lead + 'close to the national average is neutral';
+    return lead + pos + ' the national average is ' + ((pos === 'below') === !!lowerBetter ? 'favourable' : 'adverse');
   }
   function pageFindings(sec, trust, staffing) {
     var h = head(sec, 'School Context & Official Findings', 'The report card’s official findings, staffing and trust information — shown as published, not re-rated');
@@ -4042,10 +4045,11 @@
         h += '<h3 aria-level="2" class="blockh">' + esc(g.title) + '</h3><div class="grid2">';
         g.tables.forEach(function (T, ti) {
           var id = 'x:fnd:' + gi + ':' + ti, gapTbl = /gap/i.test(T.head[3] || '');
-          var lbT = g.key === 'absence' && Core.classify(T.title).lowerBetter;   // V77-05-03: absence tables read lower-is-better
+          var lbT = g.key === 'absence' && Core.classify(T.title).lowerBetter;   // V77-05-03: absence tables read lower-is-better (and carry the cue)
+          var lowB = !gapTbl && Core.classify(T.title).lowerBetter;   // V77-05-05: every other official-verdict table is coloured by its own direction; gap tables never
           h += '<div class="panel"><h4 aria-level="2">' + esc(T.title) + (lbT ? ' <span class="dir-cue" title="Lower absence is better: Below is favourable, Above is adverse. The wording is the DfE’s; the colour is SOAP’s.">Lower is better</span>' : '') + '</h4><table class="data-table" aria-label="' + esc(T.title) + '"><thead><tr>' + T.head.map(function (x) { return th(x); }).join('') + '</tr></thead><tbody>';
           T.rows.forEach(function (r, ri) {
-            h += '<tr>' + labelTd(r.period) + xcell(id + ':' + ri + ':s', r.school, {}) + xcell(id + ':' + ri + ':n', r.nat, {}) + (gapTbl ? xcell(id + ':' + ri + ':g', cellOf3(r.gapRaw), {}) : '<td class="off' + (lbT ? ' ' + verdictTone(r.verdictCell, true) : '') + '" data-id="' + esc(id + ':' + ri + ':v') + '" data-v="" data-d="' + esc(r.verdict) + '" title="official wording, as published' + (lbT ? ' — lower is better: ' + verdictTitle(r.verdictCell) : '') + '">' + esc(r.verdict) + '</td>') + '</tr>';
+            h += '<tr>' + labelTd(r.period) + xcell(id + ':' + ri + ':s', r.school, {}) + xcell(id + ':' + ri + ':n', r.nat, {}) + (gapTbl ? xcell(id + ':' + ri + ':g', cellOf3(r.gapRaw), {}) : '<td class="off' + (!gapTbl && verdictTone(r.verdictCell, lowB) ? ' ' + verdictTone(r.verdictCell, lowB) : '') + '" data-id="' + esc(id + ':' + ri + ':v') + '" data-v="" data-d="' + esc(r.verdict) + '" title="official wording, as published' + (!gapTbl && verdictTone(r.verdictCell, lowB) ? ' — ' + verdictTitle(r.verdictCell, lowB) : '') + '">' + esc(r.verdict) + '</td>') + '</tr>';
           });
           h += '</tbody></table></div>';
         });
@@ -4189,7 +4193,7 @@
     esc: esc, disp: disp, val: val, xcell: xcell, chip: chip, banner: banner, guidance: guidance, lineSvg: lineSvg, barSvg: barSvg, detail: detail, chartDiv: chartDiv, COL: COL, cellOf3: cellOf3, COVER_ORDER: COVER_ORDER,
     pages: { yearGroupAbsence: pageYearGroupAbsence, behaviour: pageBehaviour, movement: pageMovement, ks4Entries: pageKs4Entries, sixth: pageSixth, similar: pageSimilar, eyfs: pageEyfs, destinations: pageDestinations, findings: pageFindings, coverage: pageCoverage },
     ctx: { characteristics: ctxCharacteristics, ethnicity: ctxEthnicity, sen: ctxSen, yearGroup: ctxYearGroup, prior: ctxPrior },
-    expected: expected
+    expected: expected, verdictTone: verdictTone, verdictTitle: verdictTitle
   };
 });
 
@@ -5042,7 +5046,7 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
     var gs = sec.data.groups.map(function (g, gi) { return { g: g, gi: gi }; }).filter(function (x) { return /^disadvantaged-pupils-performance/.test(x.g.key); });
     if (!gs.length) return '';
     var h = '<h3 aria-level="2" class="blockh" id="sub-official">Official findings for disadvantaged pupils (report card, verbatim)</h3><div class="grid2">';
-    gs.forEach(function (x) { x.g.tables.forEach(function (T) { h += '<div class="panel"><h4 aria-level="2">' + esc(T.title) + '</h4><table class="data-table"><thead><tr>' + T.head.map(function (t) { return '<th>' + esc(t) + '</th>'; }).join('') + '</tr></thead><tbody>' + T.rows.map(function (r) { return '<tr><td class="lab">' + esc(r.period) + '</td><td>' + esc(X.disp(r.school)) + '</td><td>' + esc(X.disp(r.nat)) + '</td><td class="off">' + esc(r.verdict) + '</td></tr>'; }).join('') + '</tbody></table></div>'; }); });
+    gs.forEach(function (x) { x.g.tables.forEach(function (T) { h += '<div class="panel"><h4 aria-level="2">' + esc(T.title) + '</h4><table class="data-table"><thead><tr>' + T.head.map(function (t) { return '<th>' + esc(t) + '</th>'; }).join('') + '</tr></thead><tbody>' + T.rows.map(function (r) { var gp = /gap/i.test(T.head[3] || ''), lb = !gp && Core.classify(T.title).lowerBetter, tn = gp ? '' : X.verdictTone(r.verdictCell, lb); return '<tr><td class="lab">' + esc(r.period) + '</td><td>' + esc(X.disp(r.school)) + '</td><td>' + esc(X.disp(r.nat)) + '</td><td class="off' + (tn ? ' ' + tn : '') + '"' + (tn ? ' title="official wording, as published — ' + esc(X.verdictTitle(r.verdictCell, lb)) + '"' : '') + '>' + esc(r.verdict) + '</td></tr>'; }).join('') + '</tbody></table></div>'; }); });
     return h + '</div><p class="xnote">These are the report card’s own findings, in the source’s words. They are shown for reference and are not re-rated; the same tables are tied out on the Context &amp; Official Findings page.</p>';
   }
 
