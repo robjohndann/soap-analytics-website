@@ -5429,17 +5429,19 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
   else root.IdsrPrintOverview = factory(root.IdsrLogos);
 })(typeof self !== 'undefined' ? self : this, function (Logos) {
   'use strict';
-  var VERSION = '77.5.2-print1', ZOOM = 0.9, LOGO_PX = 92;
+  var VERSION = '77.5.2-print2', ZOOM = 0.9, ZOOM_SECONDARY = 0.85, LOGO_PX = 92;
   var HDR_OPEN = '<div class="sidebar-header">', GRID_AT = '<div class="exec-grid ov-grid"';
 
   var COMPACT = '#page-overview .page-title{margin:0 0 2px}#page-overview .page-sub{margin-bottom:8px}#page-overview .heatmap-title{margin:2px 0 6px}#page-overview .narrative-panel{gap:6px}#page-overview .narrative-item{padding:8px 14px}' +
     '#page-overview .narrative-panel+.exec-grid{margin-top:10px}#page-overview .exec-grid{gap:12px!important;margin-bottom:0!important;grid-template-columns:1fr 1fr!important}#page-overview .exec-panel{padding:10px 16px 12px}' +
     '#page-overview .exec-panel .exec-count{margin-bottom:6px}#page-overview .exec-item{padding:5px 0}#page-overview .exec-panel h3{margin-bottom:2px}';
-  var CUT_SECONDARY = '#page-overview .exec-grid~*{display:none!important}';
+  // Secondary only (print2): extra vertical headroom so a real-browser print stays on ONE page (was ~6 mm spare; now ~20 mm). All-through is untouched.
+  var CUT_SECONDARY = '#page-overview .exec-grid~*{display:none!important}#page-overview .narrative-item{padding:6px 14px}#page-overview .narrative-panel+.exec-grid{margin-top:8px}#page-overview .exec-panel{padding:8px 16px 10px}#page-overview .exec-item{padding:3px 0}#page-overview .exec-panel .exec-count{margin-bottom:4px}#page-overview .page-sub{margin-bottom:6px}#page-overview .heatmap-title{margin:0 0 4px}.sidebar-header{margin-bottom:8px!important}';
   var CUT_ALL_THROUGH = '#page-overview .chg-table~*,#page-overview .ov-links,#page-overview .heatmap-title:has(+.ov-links){display:none!important}#page-overview .data-table tr{break-inside:avoid}' +
     '#page-overview .po-pg2{break-before:page}#page-overview .exec-grid.ov-grid{break-inside:avoid}#page-overview .ph-tiles{grid-template-columns:repeat(4,1fr)!important}' +
     '#page-overview .ov-row{display:grid!important;grid-template-columns:minmax(0,1fr) auto;align-items:center;column-gap:10px;row-gap:0}#page-overview .ov-row .ov-l{grid-column:1;grid-row:1}' +
     '#page-overview .ov-row .badge{grid-column:2;grid-row:1;margin:0}#page-overview .ov-row .ov-v{grid-column:1/-1;grid-row:2}';
+  var TIGHT_SECONDARY = 'html body aside.sidebar .sidebar-header{padding:4px 14px!important;margin-bottom:8px!important}.sidebar-header .logo-card img{width:76px!important}';
   var HISTORICAL = '.sidebar-header .period::after{display:block;content:"Historical report — not current";margin:3px 0 0 auto;width:max-content;font-size:11px;font-weight:700;color:var(--navy);background:var(--pale);border:1px solid var(--pale);border-radius:9px;padding:1px 9px}';
   var BRAND = 'html body aside.sidebar.nop{display:block!important;position:static!important;width:auto!important;height:auto!important;overflow:visible!important;background:#fff!important;color:var(--navy)!important}' +
     'aside.sidebar nav,aside.sidebar .sidebar-foot,.sidebar-header .srcside{display:none!important}' +
@@ -5449,16 +5451,16 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
     '.sidebar-header .school{grid-column:2;font-size:18px!important;margin:0!important;text-align:center;color:#fff!important;white-space:nowrap;font-weight:800}' +
     '.sidebar-header .period{grid-column:3;justify-self:end;text-align:right;font-size:11.5px!important;opacity:1!important;margin:0!important;color:var(--pale)!important;font-weight:700}' +
     '#page-overview .exec-panel{border-top:3px solid var(--teal);border-radius:0 0 10px 10px}.foot{display:none!important}';
-  var BOX = 'font:7.8pt Arial,Helvetica,sans-serif;color:#475569;vertical-align:top;padding-top:2mm;border-top:0.7mm solid #1A7A6E;';
+  function box(pt) { return 'font:' + pt + 'pt Arial,Helvetica,sans-serif;color:#475569;vertical-align:top;padding-top:2mm;border-top:0.7mm solid #1A7A6E;'; }
 
   function styleBlock(allThrough, historical) {
-    return '<style id="po-print-overview">.po-pg2{display:none}@page{size:A4 landscape;margin:8mm 8mm 12mm 8mm;' +
-      '@bottom-left{content:"SOAP Analytics IDSR Dashboard · Overview summary · soapanalytics.co.uk";' + BOX + 'width:86%}' +
-      '@bottom-right{content:"Page " counter(page) " of " counter(pages);' + BOX + 'text-align:right;width:14%}}' +
-      '@media print{html{zoom:' + ZOOM + '}.nop:not(.sidebar),.back-link,.xtabs,.context-tabs{display:none!important}body{display:block!important;background:#fff!important}' +
+    return '<style id="po-print-overview">.po-pg2{display:none}@page{size:A4 landscape;margin:' + (allThrough ? '8mm' : '6mm') + ' 8mm 12mm 8mm;' +
+      '@bottom-left{content:"SOAP Analytics IDSR Dashboard · Overview summary · soapanalytics.co.uk";' + box(allThrough ? 7.8 : 8.25) + 'width:86%}' +
+      '@bottom-right{content:"Page " counter(page) " of " counter(pages);' + box(allThrough ? 7.8 : 8.25) + 'text-align:right;width:14%}}' +
+      '@media print{html{zoom:' + (allThrough ? ZOOM : ZOOM_SECONDARY) + '}.nop:not(.sidebar),.back-link,.xtabs,.context-tabs{display:none!important}body{display:block!important;background:#fff!important}' +
       '.main{padding:0!important;max-width:none!important;margin:0!important}.po-pg2{display:block}' +
       '.page:not(#page-overview),.page:not(#page-overview)[hidden]{display:none!important}#page-overview,#page-overview[hidden]{display:block!important}' +
-      (allThrough ? CUT_ALL_THROUGH : CUT_SECONDARY) + COMPACT + BRAND + (historical ? HISTORICAL : '') +
+      (allThrough ? CUT_ALL_THROUGH : CUT_SECONDARY) + COMPACT + BRAND + (allThrough ? '' : TIGHT_SECONDARY) + (historical ? HISTORICAL : '') +
       '*{-webkit-print-color-adjust:exact;print-color-adjust:exact}}</style>';
   }
 
@@ -5485,7 +5487,7 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
     return { html: out, allThrough: allThrough, historical: !!opts.historical, version: VERSION };
   }
 
-  return { build: build, VERSION: VERSION, ZOOM: ZOOM };
+  return { build: build, VERSION: VERSION, ZOOM: ZOOM, ZOOM_SECONDARY: ZOOM_SECONDARY };
 });
 
 
