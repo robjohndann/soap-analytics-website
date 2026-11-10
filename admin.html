@@ -1247,7 +1247,7 @@
       // can be refreshed on its own after a Viewer is added/removed, and the
       // Viewer Tracker is appended below the existing content. membersHtml and
       // contributorsHtml themselves are unchanged.
-      return `<div id="users-members-${s.id}">${membersHtml}</div>` + contributorsHtml + viewerTrackerShellHtml(s.id);
+      return `<div id="users-members-${s.id}">${membersHtml}</div>` + contributorsHtml + contributorAddShellHtml(s.id) + viewerTrackerShellHtml(s.id);   // V77-06: Admin can add additional contributors
     }
 
     // V64 Stage 5 — publish what the top-level Viewer Tracker functions need
@@ -3423,6 +3423,71 @@
       alert('Access could not be removed. Ensure the V69 Supabase RPC is installed. Details: ' + (err.message || err));
       button.disabled = false;
       button.textContent = oldText;
+    }
+  }
+
+  // V77-06 — Admin: add an ADDITIONAL contributor to one section of one school.
+  // Reuses the existing admin-grant-section-access Edge Function unchanged (it
+  // already authorises administrators and applies every school-isolation and
+  // role-preservation rule). Same request shape as School Setup's "Grant Access":
+  // { email, name, school_id, section }. Additional contributors only: the
+  // Responsible Person is still managed through the Contributor Tracker.
+  function contributorAddShellHtml(schoolId) {
+    const opts = AMEND_TRACKER_SECTIONS.map(sec => `<option value="${escapeHtml(sec)}">${escapeHtml(sec)}</option>`).join('');
+    const box = 'padding:8px 10px;border:1px solid #DCE3EA;border-radius:6px;font-size:13px;min-width:0;';
+    return `
+      <div id="contrib-add-${schoolId}" style="margin-top:24px;padding-top:16px;border-top:1px solid #DCE3EA;">
+        <h4 style="margin:0 0 6px;font-size:13px;color:#0D2B4E;">Add additional contributor</h4>
+        <div style="font-size:12px;color:#5A6B80;margin-bottom:10px;">Grants one person access to one section of this school's data entry. This is separate from the Responsible Person, who is managed in the Contributor Tracker.</div>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+          <select id="contrib-section-${schoolId}" aria-label="Section" style="flex:1 1 200px;${box}">${opts}</select>
+          <input type="text" id="contrib-name-${schoolId}" placeholder="Name" aria-label="Contributor name" autocomplete="off" style="flex:1 1 160px;${box}">
+          <input type="email" id="contrib-email-${schoolId}" placeholder="Email address" aria-label="Contributor email" autocomplete="off" style="flex:1 1 220px;${box}">
+          <button type="button" id="contrib-add-btn-${schoolId}" onclick="adminAddContributor('${schoolId}')" style="background:#3DCFB8;color:#0D2B4E;border:none;border-radius:6px;padding:9px 16px;font-size:13px;font-weight:700;cursor:pointer;">+ Add contributor</button>
+        </div>
+        <div id="contrib-msg-${schoolId}" role="status" style="font-size:12px;font-weight:700;margin-top:8px;min-height:16px;"></div>
+      </div>`;
+  }
+
+  async function adminAddContributor(schoolId) {
+    const g = id => document.getElementById(id + '-' + schoolId);
+    const sectionEl = g('contrib-section'), nameEl = g('contrib-name'), emailEl = g('contrib-email'), btn = g('contrib-add-btn'), msg = g('contrib-msg');
+    if (!sectionEl || !nameEl || !emailEl || !btn || !msg) return;
+    const say = (t, c) => { msg.style.color = c; msg.textContent = t; };
+    const section = sectionEl.value, name = nameEl.value.trim(), email = emailEl.value.trim();
+    if (!name) { say('Name is required.', '#B3261E'); return; }
+    if (!email || !email.includes('@')) { say('A valid email is required.', '#B3261E'); return; }
+    btn.disabled = true; btn.textContent = 'Adding…'; say('Granting access…', '#5A6B80');
+    let ok = false;
+    try {
+      const { data, error } = await sb.functions.invoke('admin-grant-section-access', { body: { email, name, school_id: schoolId, section } });
+      if (error) {
+        let detail = error.message || 'Unknown error';
+        try { if (error.context && typeof error.context.json === 'function') { const b = await error.context.json(); if (b && b.error) detail = b.error; } } catch (_) { /* keep message */ }
+        throw new Error(detail);
+      }
+      if (data && data.error) throw new Error(data.error);
+      ok = true;
+    } catch (err) {
+      console.error('Add contributor failed:', err);
+      say('Could not add contributor: ' + err.message, '#B3261E');
+    } finally {
+      btn.disabled = false; btn.textContent = '+ Add contributor';
+    }
+    if (!ok) return;
+    try {
+      await loadAdmin();
+      // Restore the school, Admin group and Users & Access tab after the refresh (same as revoke).
+      const card = document.getElementById('card-' + schoolId);
+      if (card) {
+        card.classList.add('open');
+        const adminGroup = card.querySelector('[data-v69-admin-group]'); if (adminGroup) adminGroup.click();
+        const usersTab = card.querySelector('[data-v69-users-tab]'); if (usersTab) usersTab.click();
+      }
+      const m2 = document.getElementById('contrib-msg-' + schoolId);
+      if (m2) { m2.style.color = '#1A7A6E'; m2.textContent = 'Access to ' + section + ' granted to ' + email + '. If they are new to SOAP Analytics, an invitation email has been sent.'; }
+    } catch (e) {
+      say('Access granted, but the display could not be refreshed. Reload the page to see it.', '#8A5A00');
     }
   }
 
