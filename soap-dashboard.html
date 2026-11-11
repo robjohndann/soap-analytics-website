@@ -174,13 +174,21 @@
     // V64 Stage 7 — direct-URL access guard. Runs BEFORE any school data is
     // fetched. Admins pass as before; everyone else must be linked to THIS
     // school with a full Leadership role, or be a read-only Viewer (explicit,
-    // not part of FULL_ACCESS_ROLES). Contributors are rejected.
+    // not part of FULL_ACCESS_ROLES), or a Contributor holding the additional Viewer entitlement (V77-06). Other Contributors are rejected.
     const FULL_ACCESS_ROLES = ['Headteacher', 'multi_school_leader', 'Executive Headteacher', 'CEO', 'School Improvement Director'];
     const { data: guardAdminRow } = await sb.from('admins').select('auth_user_id').eq('auth_user_id', session.user.id).maybeSingle();
     if (!guardAdminRow) {
       const { data: guardLinkRows, error: guardLinkError } = await sb.from('school_users').select('school_id, role').eq('auth_user_id', session.user.id);
       const guardLinkRow = (!guardLinkError && guardLinkRows) ? guardLinkRows.find(r => r.school_id === schoolId) : null;
-      if (!guardLinkRow || !(FULL_ACCESS_ROLES.includes(guardLinkRow.role) || guardLinkRow.role === 'Viewer')) {
+      let guardAllowed = !!guardLinkRow && (FULL_ACCESS_ROLES.includes(guardLinkRow.role) || guardLinkRow.role === 'Viewer');
+      if (guardLinkRow && !guardAllowed) {
+        // V77-06: a Contributor / departmental role with the additional Viewer entitlement at THIS school may open the dashboard (own row, RLS-scoped).
+        try {
+          const { data: guardEnt, error: guardEntErr } = await sb.from('school_viewer_access').select('school_id').eq('auth_user_id', session.user.id).eq('school_id', schoolId).maybeSingle();
+          guardAllowed = !guardEntErr && !!guardEnt && guardEnt.school_id === schoolId;
+        } catch (e) { guardAllowed = false; }
+      }
+      if (!guardAllowed) {
         statusArea.innerHTML = '<div class="empty-msg">Access denied — your account does not have access to this page.</div>';
         return;
       }
