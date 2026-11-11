@@ -415,7 +415,7 @@
       <div class="card-head">Viewer Tracker</div>
       <div class="card-body">
         <p style="font-size:12px;color:var(--muted);margin:0 0 14px;">
-          Viewers can log in to view this school's published SOAPs. They cannot enter or edit data, and are separate from the Responsible Persons and Additional Contributors above. Adding or removing a Viewer takes effect immediately &mdash; it does not depend on Save School Setup.
+          Viewers can log in to view this school's published SOAPs. They cannot enter or edit data, and are separate from the Responsible Persons and Additional Contributors above. You can also add a Contributor here: they keep their Contributor access and sections and gain Viewer access to the published reports. Adding or removing a Viewer takes effect immediately &mdash; it does not depend on Save School Setup.
         </p>
         <div id="viewersList">
           <div style="font-size:13px;color:var(--muted);">Loading Viewers&hellip;</div>
@@ -878,15 +878,24 @@
     try {
       const { data, error } = await sb.rpc('list_school_viewers', { p_school_id: schoolId });
       if (error) throw error;
-      const viewers = (data || []).slice().sort((a, b) => String(a.email || '').localeCompare(String(b.email || '')));
+      // V77-06: people who are Contributors (or hold a departmental role) AND also have Viewer access. Listed separately by the
+      // database (their school_users.role is not 'Viewer'); a failure here never hides the ordinary Viewers.
+      let additional = [];
+      try {
+        const extra = await sb.rpc('list_school_viewer_entitlements', { p_school_id: schoolId });
+        if (extra.error) console.warn('Could not load additional Viewer access:', extra.error);
+        else additional = (extra.data || []).map(v => Object.assign({}, v, { kind: 'additional' }));
+      } catch (e) { console.warn('Could not load additional Viewer access:', e); }
+      const viewers = (data || []).map(v => Object.assign({}, v, { kind: 'viewer' })).concat(additional)
+        .sort((a, b) => String(a.email || '').localeCompare(String(b.email || '')));
       if (!viewers.length) {
         list.innerHTML = '<div style="font-size:13px;color:var(--muted);">No Viewers have been added for this school yet.</div>';
         return;
       }
       list.innerHTML = viewers.map(v => `
         <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 0;border-bottom:1px solid var(--border);">
-          <span style="font-size:13px;color:var(--text);word-break:break-all;">${escapeHtml(v.email || '(email unavailable)')}</span>
-          <button type="button" data-user-id="${escapeHtml(v.auth_user_id)}" data-email="${escapeHtml(v.email || '')}" onclick="removeViewer(this)" style="${VIEWER_REMOVE_BTN_STYLE}" aria-label="Remove Viewer ${escapeHtml(v.email || '')}">Remove</button>
+          <span style="font-size:13px;color:var(--text);word-break:break-all;">${escapeHtml(v.email || '(email unavailable)')}${v.kind === 'additional' ? `<span style="display:block;font-size:11px;color:var(--muted);word-break:normal;">Also has ${escapeHtml(v.role || 'Contributor')} access here. Viewer access is additional: their role and sections are not affected.</span>` : ''}</span>
+          <button type="button" data-user-id="${escapeHtml(v.auth_user_id)}" data-email="${escapeHtml(v.email || '')}" data-kind="${escapeHtml(v.kind)}" onclick="removeViewer(this)" style="${VIEWER_REMOVE_BTN_STYLE}" aria-label="Remove Viewer ${escapeHtml(v.email || '')}">Remove</button>
         </div>
       `).join('');
     } catch (err) {
@@ -932,7 +941,9 @@
       if (data && data.error) throw new Error(data.error);
 
       input.value = '';
-      if (data && data.note) {
+      if (data && data.viewer_access === 'additional') {
+        setViewerMsg(data.note ? email + ' — ' + data.note + '.' : 'Viewer access added for ' + email + ' alongside their existing ' + (data.role || 'Contributor') + ' access. Their role and sections are unchanged.', 'ok');
+      } else if (data && data.note) {
         setViewerMsg(email + ' — ' + data.note + '.', 'ok');
       } else {
         setViewerMsg('Viewer access granted to ' + email + '. If they are new to SOAP Analytics, an invitation email has been sent.', 'ok');
@@ -952,12 +963,23 @@
     const userId = btn.dataset.userId;
     const email = btn.dataset.email || 'this Viewer';
     if (!schoolId || !userId) return;
-    if (!confirm('Remove Viewer access for ' + email + '? They will no longer be able to view this school\'s published SOAPs.')) return;
+    const additionalKind = btn.dataset.kind === 'additional';
+    if (!confirm(additionalKind
+      ? 'Remove Viewer access for ' + email + '? They will no longer be able to view this school\'s published reports. Their Contributor access and sections are not affected.'
+      : 'Remove Viewer access for ' + email + '? They will no longer be able to view this school\'s published SOAPs.')) return;
 
     btn.disabled = true;
     try {
-      const { error } = await sb.rpc('revoke_viewer_access', { p_school_id: schoolId, p_user_id: userId });
+      // V77-06: additional (Contributor + Viewer) access is removed by its own function, which can only delete that entitlement.
+      const { data: rmData, error } = additionalKind
+        ? await sb.rpc('revoke_viewer_entitlement', { p_school_id: schoolId, p_user_id: userId })
+        : await sb.rpc('revoke_viewer_access', { p_school_id: schoolId, p_user_id: userId });
       if (error) throw error;
+      if (additionalKind && rmData && rmData.status === 'not_found') {
+        setViewerMsg(email + ' no longer had additional Viewer access (the list has been refreshed).', 'warn');
+        await loadViewers(schoolId);
+        return;
+      }
       setViewerMsg('Viewer access removed for ' + email + '.', 'ok');
       await loadViewers(schoolId);
     } catch (err) {

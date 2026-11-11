@@ -1036,7 +1036,7 @@
     accessNotice.style.display = 'none';
     protectedArea.style.display = '';
 
-    const [schoolsRes, contactsRes, ofstedRes, periodsRes, assessRes, trackerRes, contextRes, safeguardingRes, inclusionRes, curriculumRes, achievementRes, attendanceRes, pdwRes, leadershipRes, financeRes, supportRes, idsrUploadsRes, schoolUsersRes, sectionAccessRes, threadsRes, idsrSubsRes, idsrPubsAdminRes] = await Promise.all([
+    const [schoolsRes, contactsRes, ofstedRes, periodsRes, assessRes, trackerRes, contextRes, safeguardingRes, inclusionRes, curriculumRes, achievementRes, attendanceRes, pdwRes, leadershipRes, financeRes, supportRes, idsrUploadsRes, schoolUsersRes, sectionAccessRes, threadsRes, idsrSubsRes, idsrPubsAdminRes, viewerEntRes] = await Promise.all([
       sb.from('schools').select('*').order('created_at', { ascending: false }),
       sb.from('key_contacts').select('*'),
       sb.from('ofsted_judgements').select('*'),
@@ -1059,7 +1059,9 @@
       sb.from('message_threads').select('*'),
       // V72 RC-2: every submission (admin policy) and every publication's metadata (no snapshots), including retracted ones
       Promise.resolve(sb.from('idsr_submissions').select('*').order('created_at', { ascending: false })).then(r => r, () => ({ data: null })),
-      Promise.resolve(sb.rpc('admin_list_idsr_publications')).then(r => r, () => ({ data: null }))
+      Promise.resolve(sb.rpc('admin_list_idsr_publications')).then(r => r, () => ({ data: null })),
+      // V77-06: additional Viewer entitlements (admin policy). Tolerated if the migration is not applied yet.
+      Promise.resolve(sb.from('school_viewer_access').select('*')).then(r => r, () => ({ data: null }))
     ]);
 
     const schools = schoolsRes.data || [];
@@ -1069,6 +1071,7 @@
     IDSR_READ = { subs: idsrReadProblem(idsrSubsRes), pubs: idsrReadProblem(idsrPubsAdminRes), capped: (idsrSubsRes.data || []).length >= 1000 };   // module-level so the (global) publish/import handlers can reach them
     const schoolUsers = schoolUsersRes.data || [];
     const sectionAccessRows = sectionAccessRes.data || [];
+    const viewerEntitlementRows = (viewerEntRes && !viewerEntRes.error && viewerEntRes.data) || [];
 
     MSG_SCHOOLS_REF = schools;
     MSG_THREADS = threadsRes.data || [];
@@ -1254,7 +1257,7 @@
     // to refresh a single school's membership block. Re-assigned on every
     // loadAdmin() run (including the post-save re-run), so it always points at
     // the current closure's schoolUsers array.
-    USERS_ACCESS_HOOKS = { schools, schoolUsers, sectionAccessRows, renderFragment: renderUsersAccessFragment };
+    USERS_ACCESS_HOOKS = { schools, schoolUsers, sectionAccessRows, viewerEntitlementRows, renderFragment: renderUsersAccessFragment };
 
     renderInviteSchoolOptions(schools);
     renderReminderSchoolOptions(schools);   // V76-01
@@ -2466,6 +2469,8 @@
     const byId = {};
     const ensure = id => byId[id] || (byId[id] = { auth_user_id: id, role: null, email: null, full_name: null, is_activated: null, sections: [], fromRpc: false });
     members.forEach(u => { ensure(u.auth_user_id).role = u.role ?? null; });
+    // V77-06: additional Viewer entitlement (Contributor / departmental role + Viewer)
+    (hooks.viewerEntitlementRows || []).filter(v => v.school_id === schoolId).forEach(v => { if (byId[v.auth_user_id]) byId[v.auth_user_id].alsoViewer = true; });
     grants.forEach(g => {
       const r = ensure(g.auth_user_id);
       if (g.contributor_name && !r.full_name) r.full_name = g.contributor_name;
@@ -2514,7 +2519,7 @@
       if (eligible) {
         action = `<button type="button" class="acc-resend-btn" data-school-id="${escapeHtml(schoolId)}" data-user-id="${escapeHtml(r.auth_user_id)}" data-email="${escapeHtml(r.email)}" onclick="accessResend(this)" ${(done || busy) ? 'disabled' : ''} aria-label="Resend invitation to ${escapeHtml(r.email)}">${done ? 'Sent ✓' : busy ? 'Sending…' : 'Resend Invitation'}</button>` +
           `<div id="access-msg-${escapeHtml(schoolId)}-${escapeHtml(r.auth_user_id)}" style="font-size:11px;font-weight:700;margin-top:4px;min-height:14px;${done ? 'color:#1A7A6E;' : ''}">${done ? 'Invitation resent at ' + escapeHtml(done) + '.' : ''}</div>`;
-      } else if (r.category === 'Viewer') {
+      } else if (r.category === 'Viewer' || r.alsoViewer) {
         action = '<span style="font-size:11px;color:#5A6B80;">Manage in Viewer Tracker</span>';
       }
       const statusCell = ready ? accessBadge(r) : '<span class="acc-badge acc-unknown">' + (st.status === 'loading' ? 'Checking…' : 'Unknown') + '</span>';
@@ -2522,7 +2527,7 @@
         <tr>
           <td data-label="Name"><span class="acc-person-name">${r.full_name ? escapeHtml(r.full_name) : '<span style="color:#8FA0B3;">—</span>'}</span><span class="acc-person-id">ID: ${escapeHtml(r.auth_user_id)}</span></td>
           <td data-label="Email"><span class="acc-person-email">${r.email ? escapeHtml(r.email) : '<span style="color:#8FA0B3;">—</span>'}</span></td>
-          <td data-label="Role"><span class="acc-cat acc-cat-${r.category.toLowerCase()}">${r.category}</span> ${escapeHtml(r.role ? roleLabel(r.role) : '—')}${r.sections.length ? `<span class="acc-role-desc">${r.sections.map(escapeHtml).join(', ')}</span>` : ''}</td>
+          <td data-label="Role"><span class="acc-cat acc-cat-${r.category.toLowerCase()}">${r.category}</span> ${escapeHtml(r.role ? roleLabel(r.role) : '—')}${r.alsoViewer ? '<span class="acc-role-desc">+ Viewer (published reports)</span>' : ''}${r.sections.length ? `<span class="acc-role-desc">${r.sections.map(escapeHtml).join(', ')}</span>` : ''}</td>
           <td data-label="Status">${statusCell}</td>
           <td data-label="Actions">${action}</td>
         </tr>`;
@@ -3506,7 +3511,7 @@
     return `
       <div id="viewer-tracker-${schoolId}" data-viewer-loaded="0" style="margin-top:24px;padding-top:16px;border-top:1px solid #DCE3EA;">
         <h4 style="margin:0 0 6px;font-size:13px;color:#0D2B4E;">Viewer Tracker</h4>
-        <div style="font-size:12px;color:#5A6B80;margin-bottom:10px;">Viewers can log in to view this school's published SOAPs only. They are separate from Leadership, Contributors and the Contributor Tracker.</div>
+        <div style="font-size:12px;color:#5A6B80;margin-bottom:10px;">Viewers can log in to view this school's published SOAPs and IDSR reports only. Adding a Contributor here gives them Viewer access in addition to their Contributor access; removing it never changes their Contributor role or sections.</div>
         <div id="viewer-list-${schoolId}"><div class="school-meta">Loading Viewers…</div></div>
         <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:12px;">
           <input type="email" id="viewer-email-${schoolId}" placeholder="Viewer's email address" autocomplete="off" style="flex:1 1 240px;min-width:0;padding:8px 10px;border:1px solid #DCE3EA;border-radius:6px;font-size:13px;box-sizing:border-box;" onkeydown="if (event.key === 'Enter') { event.preventDefault(); viewerAdd('${schoolId}'); }">
@@ -3553,15 +3558,23 @@
     try {
       const { data, error } = await sb.rpc('list_school_viewers', { p_school_id: schoolId });
       if (error) throw error;
-      const viewers = (data || []).slice().sort((a, b) => String(a.email || '').localeCompare(String(b.email || '')));
+      // V77-06: Contributors / departmental users who ALSO have Viewer access; a failure here never hides ordinary Viewers.
+      let additional = [];
+      try {
+        const extra = await sb.rpc('list_school_viewer_entitlements', { p_school_id: schoolId });
+        if (extra.error) console.warn('Could not load additional Viewer access:', extra.error);
+        else additional = (extra.data || []).map(v => Object.assign({}, v, { kind: 'additional' }));
+      } catch (e) { console.warn('Could not load additional Viewer access:', e); }
+      const viewers = (data || []).map(v => Object.assign({}, v, { kind: 'viewer' })).concat(additional)
+        .sort((a, b) => String(a.email || '').localeCompare(String(b.email || '')));
       if (!viewers.length) {
         list.innerHTML = '<div class="school-meta">No Viewers have been added for this school yet.</div>';
         return true;
       }
       list.innerHTML = viewers.map(v => `
         <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px solid #DCE3EA;">
-          <span style="font-size:13px;color:#0D2B4E;word-break:break-all;">${escapeHtml(v.email || '(email unavailable)')}</span>
-          <button type="button" data-user-id="${escapeHtml(v.auth_user_id)}" data-email="${escapeHtml(v.email || '')}" onclick="viewerRemove(this, '${schoolId}')" style="background:#F3B8B8;color:#7A1F1F;border:none;border-radius:6px;padding:5px 12px;font-size:12px;font-weight:700;cursor:pointer;flex-shrink:0;" aria-label="Remove Viewer ${escapeHtml(v.email || '')}">Remove</button>
+          <span style="font-size:13px;color:#0D2B4E;word-break:break-all;">${escapeHtml(v.email || '(email unavailable)')}${v.kind === 'additional' ? `<span style="display:block;font-size:11px;color:#5A6B80;word-break:normal;">Also has ${escapeHtml(v.role || 'Contributor')} access here. Viewer access is additional: role and sections are not affected.</span>` : ''}</span>
+          <button type="button" data-user-id="${escapeHtml(v.auth_user_id)}" data-email="${escapeHtml(v.email || '')}" data-kind="${escapeHtml(v.kind)}" onclick="viewerRemove(this, '${schoolId}')" style="background:#F3B8B8;color:#7A1F1F;border:none;border-radius:6px;padding:5px 12px;font-size:12px;font-weight:700;cursor:pointer;flex-shrink:0;" aria-label="Remove Viewer ${escapeHtml(v.email || '')}">Remove</button>
         </div>`).join('');
       return true;
     } catch (err) {
@@ -3585,6 +3598,14 @@
     const arr = hooks.schoolUsers;
     for (let i = arr.length - 1; i >= 0; i--) if (arr[i].school_id === schoolId) arr.splice(i, 1);
     (data || []).forEach(r => arr.push(r));
+    // V77-06: keep the additional-Viewer flags in step (read-only; failure leaves the previous flags)
+    try {
+      const entRes = await sb.from('school_viewer_access').select('*').eq('school_id', schoolId);
+      if (!entRes.error && hooks.viewerEntitlementRows) {
+        for (let i = hooks.viewerEntitlementRows.length - 1; i >= 0; i--) if (hooks.viewerEntitlementRows[i].school_id === schoolId) hooks.viewerEntitlementRows.splice(i, 1);
+        (entRes.data || []).forEach(r => hooks.viewerEntitlementRows.push(r));
+      }
+    } catch (e) { console.warn('Could not refresh additional Viewer access:', e); }
     const school = hooks.schools.find(x => x.id === schoolId);
     const target = document.getElementById('users-members-' + schoolId);
     if (!school || !target) return;
@@ -3643,7 +3664,9 @@
       if (data && data.error) throw new Error(data.error);
 
       input.value = '';
-      successText = (data && data.note)
+      successText = (data && data.viewer_access === 'additional')
+        ? (data.note ? email + ' — ' + data.note + '.' : 'Viewer access added for ' + email + ' alongside their existing ' + (data.role || 'Contributor') + ' access. Their role and sections are unchanged.')
+        : (data && data.note)
         ? email + ' — ' + data.note + '.'
         : 'Viewer access granted to ' + email + '. If they are new to SOAP Analytics, an invitation email has been sent.';
     } catch (err) {
@@ -3666,12 +3689,18 @@
     const email = btn.dataset.email || 'this Viewer';
     if (!userId) return;
     const school = USERS_ACCESS_HOOKS && USERS_ACCESS_HOOKS.schools.find(x => x.id === schoolId);
-    if (!confirm('Remove Viewer access for ' + email + ' from ' + (school ? school.name : 'this school') + '? They will no longer be able to view its published SOAPs.')) return;
+    const additionalKind = btn.dataset.kind === 'additional';
+    if (!confirm('Remove Viewer access for ' + email + ' from ' + (school ? school.name : 'this school') + '? They will no longer be able to view its published ' + (additionalKind ? 'reports. Their Contributor access and sections are not affected.' : 'SOAPs.'))) return;
 
     btn.disabled = true;
+    let notFound = false;
     try {
-      const { error } = await sb.rpc('revoke_viewer_access', { p_school_id: schoolId, p_user_id: userId });
+      // V77-06: additional (Contributor + Viewer) access is removed by its own function, which can only delete that entitlement.
+      const { data: rmData, error } = additionalKind
+        ? await sb.rpc('revoke_viewer_entitlement', { p_school_id: schoolId, p_user_id: userId })
+        : await sb.rpc('revoke_viewer_access', { p_school_id: schoolId, p_user_id: userId });
       if (error) throw error;
+      notFound = additionalKind && !!rmData && rmData.status === 'not_found';
     } catch (err) {
       console.error(err);
       btn.disabled = false;
@@ -3679,8 +3708,8 @@
       return; // failure: no success feedback and no refresh
     }
 
-    const successText = 'Viewer access removed for ' + email + '.';
-    viewerMsg(schoolId, successText, 'ok');
+    const successText = notFound ? email + ' no longer had additional Viewer access (the list has been refreshed).' : 'Viewer access removed for ' + email + '.';
+    viewerMsg(schoolId, successText, notFound ? 'warn' : 'ok');
     if (!(await refreshViewerAndMembership(schoolId))) {
       viewerMsg(schoolId, successText + ' However, the display could not be fully refreshed — reload the page to see the current state.', 'warn');
     }

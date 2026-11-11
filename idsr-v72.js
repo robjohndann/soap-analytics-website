@@ -5918,8 +5918,14 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
             if (rows.length > 1 && !paramSchoolId) { showEmpty('Choose a school first', 'Return to the portal and choose which school you want to view.'); return null; }
             var link = paramSchoolId ? rows.filter(function (x) { return x.school_id === paramSchoolId; })[0] : rows[0];
             if (!link) { showEmpty('Access denied', 'This school is not linked to your account.'); return null; }
-            if (!(FULL_ACCESS_ROLES.indexOf(link.role) !== -1 || link.role === 'Viewer')) { showEmpty('Access denied', 'Your account does not have access to this page.'); return null; }
-            S.viewSchoolId = link.school_id; return true;
+            if (FULL_ACCESS_ROLES.indexOf(link.role) !== -1 || link.role === 'Viewer') { S.viewSchoolId = link.school_id; return true; }
+            // V77-06: a Contributor / departmental role may ALSO hold the additional Viewer entitlement at THIS school (own row, RLS-scoped).
+            // The database (idsr_can_read) still enforces the package and publication rules; this is only the page guard.
+            var deniedNoAccess = function () { showEmpty('Access denied', 'Your account does not have access to this page.'); return null; };
+            return Promise.resolve(sb.from('school_viewer_access').select('school_id').eq('auth_user_id', session.user.id).eq('school_id', link.school_id).maybeSingle()).then(function (e) {
+              if (e && !e.error && e.data && e.data.school_id === link.school_id) { S.viewSchoolId = link.school_id; return true; }
+              return deniedNoAccess();
+            }, deniedNoAccess);
           });
         });
       }).then(function (ok) {

@@ -766,6 +766,21 @@
     [...roleBasedForms, ...grantedForms].forEach(f => availableFormsByKey.set(f.key, f));
     const availableForms = Array.from(availableFormsByKey.values());
 
+    // V77-06: a Contributor (or departmental role) can ALSO hold Viewer access at this school, stored as an
+    // additional entitlement (school_viewer_access) that never replaces school_users.role. Own row only (RLS), scoped to
+    // THIS school. Failure to read it (e.g. table not yet present) is non-fatal: no entitlement is assumed.
+    let hasViewerEntitlement = false;
+    if (linkRow.role !== 'Viewer' && !FULL_ACCESS_ROLES.includes(linkRow.role)) {
+      try {
+        const { data: entRow, error: entErr } = await sb.from('school_viewer_access')
+          .select('school_id')
+          .eq('auth_user_id', session.user.id)
+          .eq('school_id', linkRow.school_id)
+          .maybeSingle();
+        hasViewerEntitlement = !entErr && !!entRow && entRow.school_id === linkRow.school_id;
+      } catch (e) { hasViewerEntitlement = false; }
+    }
+
     const [
       schoolRes, periodsRes, contextRes, safeguardingRes, inclusionRes, curriculumRes,
       achievementRes, assessRes, attendanceRes, pdwRes, leadershipRes, financeRes, publishedRes, idsrRes,
@@ -819,6 +834,9 @@
     // someone who is Headteacher at one school and Viewer at another gets the
     // full portal at the first and the narrow one at the second. Never account-wide.
     const isViewer = linkRow.role === 'Viewer';
+    // V77-06: read-only report access = a normal Viewer OR a Contributor/departmental user with the additional entitlement.
+    // isViewer itself is unchanged (it still hides Data Entry and Support); the entitlement never hides forms.
+    const isReportViewer = isViewer || (hasViewerEntitlement && !isHeadteacher);
     const publishedSoaps = publishedRes.data || [];
     const idsrUpload = idsrRes.data || null;   // V71 legacy row (kept readable for the fallback viewer only)
     const idsrPubs = (idsrPubsRes && idsrPubsRes.data) || [];
@@ -875,7 +893,7 @@
     // Package behaviour is unchanged: features.soap → the published list as before;
     // otherwise the existing locked bar. The published_soaps query and the
     // SOAP rendering/modal are untouched.
-    if (isHeadteacher || isViewer) {
+    if (isHeadteacher || isReportViewer) {
       // View My SOAP
       if (features.soap) {
         publishedSoaps.forEach(p => { PUBLISHED_SOAP_HTML[p.id] = p.html_content; });
@@ -911,8 +929,8 @@
     // V64 Stage 7 — SOAP Dashboard, IDSR SOAP and IDSR Dashboard are finished
     // outputs, so Viewer gets them read-only alongside View My SOAP. Package
     // gating is unchanged. IDSR upload controls stay Leadership-only (see the
-    // isViewer branch inside the IDSR SOAP panel below).
-    if (isHeadteacher || isViewer) {
+    // isReportViewer branch inside the IDSR SOAP panel below).
+    if (isHeadteacher || isReportViewer) {
       // SOAP Dashboard
       if (features.soapDashboard) {
         accordionHtml += `
@@ -938,7 +956,7 @@
           : (idsrLegacyPublished ? `<p style="margin:0; color:#fff;"><strong>${escapeHtml(idsrUpload.file_name || 'IDSR')}</strong> published ${idsrDate(idsrUpload.published_at)}.</p>`
             : (idsrNoCurrent ? `<p style="margin:0; color:#fff;"><strong>No current IDSR is selected.</strong> Earlier published versions (${idsrPubs.length}) remain available and are labelled historical, not current.</p>` : ''));
         const idsrOpenLink = (idsrHasPublished || idsrNoCurrent) ? `<a href="idsr-soap.html?school_id=${linkRow.school_id}" target="_blank" style="color:#3DCFB8;font-weight:700;font-size:13px;text-decoration:none;">${idsrNoCurrent ? 'Open earlier (historical) IDSR versions' : 'Open IDSR SOAP' + (idsrPubs.length > 1 ? ' and earlier versions' : '')} \u2192</a>` : '';
-        if (isViewer) {
+        if (isReportViewer) {
           // V64 Stage 7 — Viewer: read-only. No upload input/button, ever.
           idsrPanelBody = (idsrHasPublished || idsrNoCurrent)
             ? `<div class="form-row" style="flex-direction:column; align-items:flex-start; gap:6px;">${idsrPublishedLine}${idsrOpenLink}</div>`
@@ -958,7 +976,7 @@
         accordionHtml += `
         <div>
           <button type="button" class="bar" id="bar-idsrsoap" onclick="toggleAccordion('idsrsoap');">
-            <span class="bar-label">${isViewer ? 'View My IDSR' : 'IDSR SOAP Upload'}</span>
+            <span class="bar-label">${isReportViewer ? 'View My IDSR' : 'IDSR SOAP Upload'}</span>
             <span class="bar-right"><span class="badge live">Live</span><i class="chev" id="chev-idsrsoap">▾</i></span>
           </button>
           <div class="panel" id="panel-idsrsoap">
@@ -966,12 +984,12 @@
           </div>
         </div>`;
       } else {
-        accordionHtml += lockedBar('idsrsoap', isViewer ? 'View My IDSR' : 'IDSR SOAP Upload');
+        accordionHtml += lockedBar('idsrsoap', isReportViewer ? 'View My IDSR' : 'IDSR SOAP Upload');
       }
 
       // V69: Separate published IDSR output from the leadership upload interface.
       // Uses the existing published idsr_uploads record and existing idsr-soap.html viewer.
-      if (!isViewer) {
+      if (!isReportViewer) {
         const viewIdsrBody = idsrNoCurrent
           ? `<div class="empty-note">No current IDSR is selected.</div><a class="form-row" href="idsr-soap.html?school_id=${encodeURIComponent(linkRow.school_id)}" target="_blank"><span class="name">Open earlier (historical) IDSR versions →</span></a>`
           : idsrHasPublished
@@ -990,7 +1008,7 @@
           ? `<div class="empty-note">No current IDSR is selected.</div><a class="form-row" href="idsr-dashboard.html?school_id=${linkRow.school_id}" target="_blank"><span class="name">Open earlier (historical) IDSR Dashboard versions</span></a>`
           : idsrHasPublished
           ? `<a class="form-row" href="idsr-dashboard.html?school_id=${linkRow.school_id}" target="_blank"><span class="name">Open IDSR Dashboard</span></a>`
-          : (isViewer
+          : (isReportViewer
               ? `<div class="empty-note">Your IDSR Dashboard will appear here once your school's IDSR has been published.</div>`
               : `<div class="empty-note">Your IDSR Dashboard will appear here once your uploaded IDSR has been reviewed and published \u2014 see IDSR SOAP above to upload.</div>`);
         accordionHtml += `
@@ -1010,7 +1028,7 @@
 
     document.getElementById('statusArea').innerHTML = `
       <div class="eyebrow">SOAP Analytics</div>
-      <div class="greeting">${escapeHtml(school.name || 'Your school')} — <strong>${escapeHtml(roleLabel(linkRow.role))}</strong></div>
+      <div class="greeting">${escapeHtml(school.name || 'Your school')} — <strong>${escapeHtml(roleLabel(linkRow.role))}${hasViewerEntitlement ? ' + Viewer' : ''}</strong></div>
       <div class="accordion">${accordionHtml}</div>
     `;
 
@@ -1029,12 +1047,12 @@
     const greeting = document.querySelector('#statusArea .greeting');
     const welcome = document.createElement('div');
     welcome.className = 'portal-welcome';
-    welcome.innerHTML = `<h2>Welcome to your school workspace</h2><p>${isViewer ? 'Access the published reports and dashboards available to you.' : isHeadteacher ? 'Manage school information, view published reports and explore your school analytics.' : 'Update the school information you have permission to contribute to.'}</p>`;
+    welcome.innerHTML = `<h2>Welcome to your school workspace</h2><p>${isViewer ? 'Access the published reports and dashboards available to you.' : isHeadteacher ? 'Manage school information, view published reports and explore your school analytics.' : (isReportViewer ? 'Update the school information you have permission to contribute to, and view your school\'s published reports and dashboards.' : 'Update the school information you have permission to contribute to.')}</p>`;
     portalAccordion.before(welcome);
     groupPair('soap', 'soapdash');
-    groupPair(isViewer ? 'idsrsoap' : 'viewidsr', 'idsrdash');
-    // Viewer is intentionally read-only and gets no upload panel.
-    if (isViewer) {
+    groupPair(isReportViewer ? 'idsrsoap' : 'viewidsr', 'idsrdash');
+    // Viewer (and Contributor + Viewer) is intentionally read-only and gets no upload panel.
+    if (isReportViewer) {
       const viewerIdsr = document.getElementById('bar-idsrsoap');
       if (viewerIdsr) viewerIdsr.id = 'bar-viewidsr';
       const viewerPanel = document.getElementById('panel-idsrsoap');
