@@ -2358,7 +2358,7 @@
     const school_id = document.getElementById('inviteSchool').value;
     const role = document.getElementById('inviteRole').value;
 
-    if (!email || !email.includes('@')) {
+    if (!email || !a2ValidEmail(email)) {
       msg.style.color = '#B3261E';
       msg.textContent = 'Please enter a valid email address.';
       return;
@@ -2396,7 +2396,7 @@
       if (data && data.error) throw new Error(data.error);
 
       msg.style.color = '#0D7377';
-      msg.textContent = `Invitation sent — ${email} linked to ${data.school_name || 'the selected school'} as ${data.role || role}.`;
+      msg.textContent = `${email} has been linked to ${data.school_name || 'the selected school'} as ${data.role || role}. If they are new to SOAP Analytics an invitation has been requested (delivery is not confirmed here; use Resend invitation if it does not arrive); if they already have an account, no invitation is needed.`;
       document.getElementById('inviteEmail').value = '';
       reloadAccessAfterMembershipChange(school_id); // V67 — new user appears in Users & Access
     } catch (err) {
@@ -3461,9 +3461,9 @@
     const say = (t, c) => { msg.style.color = c; msg.textContent = t; };
     const section = sectionEl.value, name = nameEl.value.trim(), email = emailEl.value.trim();
     if (!name) { say('Name is required.', '#B3261E'); return; }
-    if (!email || !email.includes('@')) { say('A valid email is required.', '#B3261E'); return; }
+    if (!email || !a2ValidEmail(email)) { say('A valid email is required.', '#B3261E'); return; }
     btn.disabled = true; btn.textContent = 'Adding…'; say('Granting access…', '#5A6B80');
-    let ok = false;
+    let ok = false, addOutcome = null;
     try {
       const { data, error } = await sb.functions.invoke('admin-grant-section-access', { body: { email, name, school_id: schoolId, section } });
       if (error) {
@@ -3473,6 +3473,7 @@
       }
       if (data && data.error) throw new Error(data.error);
       ok = true;
+      addOutcome = data;
     } catch (err) {
       console.error('Add contributor failed:', err);
       say('Could not add contributor: ' + err.message, '#B3261E');
@@ -3490,7 +3491,7 @@
         const usersTab = card.querySelector('[data-v69-users-tab]'); if (usersTab) usersTab.click();
       }
       const m2 = document.getElementById('contrib-msg-' + schoolId);
-      if (m2) { m2.style.color = '#1A7A6E'; m2.textContent = 'Access to ' + section + ' granted to ' + email + '. If they are new to SOAP Analytics, an invitation email has been sent.'; }
+      if (m2) { m2.style.color = '#1A7A6E'; m2.textContent = a2OutcomeText(addOutcome, email, section); }
     } catch (e) {
       say('Access granted, but the display could not be refreshed. Reload the page to see it.', '#8A5A00');
     }
@@ -3633,7 +3634,7 @@
     const btn = document.getElementById('viewer-add-btn-' + schoolId);
     if (!input || !btn) return;
     const email = input.value.trim();
-    if (!email || !email.includes('@')) {
+    if (!email || !a2ValidEmail(email)) {
       viewerMsg(schoolId, 'A valid email is required.', 'error');
       return;
     }
@@ -3668,7 +3669,7 @@
         ? (data.note ? email + ' — ' + data.note + '.' : 'Viewer access added for ' + email + ' alongside their existing ' + (data.role || 'Contributor') + ' access. Their role and sections are unchanged.')
         : (data && data.note)
         ? email + ' — ' + data.note + '.'
-        : 'Viewer access granted to ' + email + '. If they are new to SOAP Analytics, an invitation email has been sent.';
+        : 'Viewer access granted to ' + email + '. If they are new to SOAP Analytics, an invitation has been requested (delivery is not confirmed here); if they already have an account, no invitation is needed.';
     } catch (err) {
       console.error(err);
       viewerMsg(schoolId, 'Could not add Viewer: ' + err.message, 'error');
@@ -3989,6 +3990,8 @@
 
   function buildAmendTracker(schoolId) {
     const tracker = SCHOOL_AMEND_DATA[schoolId].tracker;
+    // V77-07 A2-05: what this form SHOWS is the baseline for stale-edit detection at save time.
+    SCHOOL_AMEND_DATA[schoolId].trackerShown = (tracker || []).map(r => Object.assign({}, r));
     const find = section => (tracker || []).find(t => t.section === section) || {};
     let html = '<div class="card"><div class="card-head">Contributor Tracker</div><div class="card-body"><table class="grid-table amend-tracker-table"><thead><tr><th>Section</th><th>Responsible Person</th><th>Job Title</th><th>Email Address</th></tr></thead><tbody>';
     AMEND_TRACKER_SECTIONS.forEach(section => {
@@ -4013,114 +4016,217 @@
     try { await saveAmendTrackerRun(schoolId); } finally { amendTrackerSaving.delete(schoolId); }
   }
 
+  // V77-07 Amendment 2 (A2-05): the Admin Portal now follows the Amendment 1 rules used by the Headteacher form:
+  //  - a section is "edited" only if the form differs from what the form SHOWED when it was built (trackerShown);
+  //    only edited sections (plus sections whose access sync was already pending and are unchanged) are ever touched;
+  //  - each write is conditional on the row still being exactly what was just read (id + every editable column) and must
+  //    affect exactly ONE row, so a change made by a Headteacher (or another administrator) after this form was opened is
+  //    never silently overwritten - the whole save stops with "Nothing was saved" and asks for a reload;
+  //  - different sections are independent: a change to one section never conflicts with a change to another;
+  //  - pending-sync markers are protected: a pending section cannot have its Responsible Person changed again until the
+  //    pending update succeeds, and the marker is only cleared by a conditional write.
+  // The sync Edge Function additionally re-verifies every request against the stored tracker row (A2-01).
+  const A2_TRK_COLS = 'id, section, responsible_person, job_title, email, access_sync_pending, access_sync_previous_email';
+  const A2_TRK_EDIT = ['responsible_person', 'job_title', 'email', 'access_sync_pending', 'access_sync_previous_email'];
+  const a2nz = v => (v === undefined || v === null || v === '') ? null : v;
+  const a2nm = v => ((v || '').trim().toLowerCase()) || null;
+  const a2st = r => ({ rp: a2nz(r.responsible_person), jt: a2nz(r.job_title), em: a2nz(r.email), pend: !!r.access_sync_pending, prev: a2nz(r.access_sync_previous_email) });
+  const a2sameSt = (x0, y0) => { const x = a2st(x0), y = a2st(y0); return x.rp === y.rp && x.jt === y.jt && a2nm(x.em) === a2nm(y.em) && x.pend === y.pend && a2nm(x.prev) === a2nm(y.prev); };
+  const a2guard = (q, schoolId, raw) => {
+    q = q.eq('id', raw.id).eq('school_id', schoolId).eq('section', raw.section);
+    A2_TRK_EDIT.forEach(c => { q = (raw[c] === null || raw[c] === undefined) ? q.is(c, null) : q.eq(c, raw[c]); });
+    return q;
+  };
+  const a2one = (data, what) => {
+    if (!data || data.length === 0) throw new Error(what + ' did not change any row (it was changed by someone else, or permission was denied)');
+    if (data.length > 1) throw new Error(what + ' affected ' + data.length + ' rows instead of one');
+  };
+  // Structural email check mirroring the server (permissive: allows + ' _ - . and non-ASCII).
+  function a2ValidEmail(raw) {
+    const s = (raw || '').trim().toLowerCase();
+    if (!s || s.length > 254 || /\s/.test(s)) return false;
+    const at = s.indexOf('@');
+    if (at < 1 || at !== s.lastIndexOf('@') || at > 64) return false;
+    const labels = s.slice(at + 1).split('.');
+    return labels.length >= 2 && labels.every(l => l.length > 0) && labels[labels.length - 1].length >= 2;
+  }
+  async function a2ErrInfo(error) {
+    let detail = (error && error.message) || 'Unknown error', outcome = null;
+    try {
+      if (error && error.context && typeof error.context.json === 'function') {
+        const b = await error.context.json();
+        if (b) { outcome = b.outcome || null; if (b.error) detail = b.error; }
+      }
+    } catch (_) { /* keep message */ }
+    return { detail, outcome };
+  }
+  // What actually happened, in words. 'invited' means the invitation REQUEST was accepted - delivery is never claimed.
+  function a2OutcomeText(res, email, section) {
+    const o = (res && typeof res === 'object') ? res : { outcome: res };
+    const outcome = o.outcome;
+    switch (outcome) {
+      case 'invited': return 'An invitation has been requested for ' + email + ' and access to ' + section + ' granted (delivery is not confirmed here; use Resend invitation in Users & Access if it does not arrive).';
+      case 'existing_account_granted': return email + ' already has a SOAP Analytics account, so no invitation was sent. Access to ' + section + ' has been granted.';
+      case 'already_in_place': return email + ' already had this access to ' + section + '. No change was needed.';
+      case 'replacement_completed': return 'Responsible Person for ' + section + ' replaced: ' + email + ' now has access and the previous person\'s Responsible Person access has been removed.' +
+        (o.grant === 'invited' ? ' An invitation has been requested for ' + email + ' (delivery is not confirmed here).' : (o.grant === 'existing_account_granted' ? ' ' + email + ' already had an account, so no invitation was sent.' : ''));
+      case 'removal_completed': return 'Responsible Person access for ' + section + ' removed.';
+      case 'no_change': return 'No access change was needed for ' + section + '.';
+      default: return 'Access updated for ' + section + '.';
+    }
+  }
+
   async function saveAmendTrackerRun(schoolId) {
     const container = document.getElementById('amendBody-' + schoolId);
-    const lc = v => (v || '').toLowerCase();
-    const sameEmail = (a, b) => lc(a) === lc(b);
+    const amendData = SCHOOL_AMEND_DATA[schoolId];
+    const shownRows = amendData && amendData.trackerShown;
+    if (!shownRows) {
+      showAmendToast('⚠ Nothing was saved: the Contributor Tracker was not loaded with this form. Reload the page and try again.', true, 9000);
+      return;
+    }
     const formRows = Array.from(container.querySelectorAll('tr[data-section]')).map(tr => {
       const texts = tr.querySelectorAll('input[type="text"]');
       const email = tr.querySelector('input[type="email"]');
-      return { section: tr.dataset.section, responsible_person: texts[0].value || null, job_title: texts[1].value || null, email: (email.value || '').trim() || null };
+      return { section: tr.dataset.section, rp: texts[0].value || null, jt: texts[1].value || null, em: (email.value || '').trim() || null };
     });
 
     // 1. Read the CURRENT stored state (never the page's cached copy). Nothing is written if this fails.
-    const { data: priorData, error: priorErr } = await sb.from('completion_tracker')
-      .select('section, responsible_person, job_title, email, access_sync_pending, access_sync_previous_email')
-      .eq('school_id', schoolId);
+    const { data: priorData, error: priorErr } = await sb.from('completion_tracker').select(A2_TRK_COLS).eq('school_id', schoolId);
     if (priorErr) {
       console.error(priorErr);
       showAmendToast('⚠ Nothing was saved: could not read the current Contributor Tracker (' + priorErr.message + ').', true, 9000);
       return;
     }
-    const prior = {};
-    (priorData || []).forEach(r => { prior[r.section] = r; });
-    // An RLS-hidden SELECT returns no rows without an error. If the page loaded assignments that this read
-    // cannot see, the old emails needed for revocation are unavailable - refuse rather than lose them.
-    const cached = (SCHOOL_AMEND_DATA[schoolId] && SCHOOL_AMEND_DATA[schoolId].tracker) || [];
-    const unseen = cached.filter(r => r.email && !prior[r.section]).map(r => r.section);
-    if (unseen.length) {
-      showAmendToast('⚠ Nothing was saved: the stored assignments for ' + unseen.join(', ') + ' could not be re-read. Reload the page and try again.', true, 9000);
-      return;
-    }
+    const mapRows = rows => { const o = { by: {}, dup: {} }; (rows || []).forEach(r => { if (o.by[r.section]) o.dup[r.section] = true; else o.by[r.section] = Object.assign({}, r); }); return o; };
+    const base = mapRows(shownRows), cur = mapRows(priorData);
 
-    // 2. Plan each section. A pending change must be resolved before the same section is changed again.
-    const plan = [];
-    const blocked = [];
+    // 2. Plan each section.
+    const plan = [], conflicts = [], duplicates = [], blocked = [];
     formRows.forEach(f => {
-      const pr = prior[f.section] || null;
-      const priorEmail = pr ? (pr.email || null) : null;
-      const wasPending = !!(pr && pr.access_sync_pending);
-      if (wasPending && !sameEmail(priorEmail, f.email)) { blocked.push(f.section); return; }
-      const emailChanged = !sameEmail(priorEmail, f.email);
+      const b = base.by[f.section] || null, c = cur.by[f.section] || null;
+      const shown = b ? a2st(b) : { rp: null, jt: null, em: null };
+      const edited = f.rp !== shown.rp || f.jt !== shown.jt || a2nm(f.em) !== a2nm(shown.em);
+      const unchangedByOthers = (!b && !c) || (b && c && b.id === c.id && a2sameSt(b, c));
+      if (!edited) {
+        // Not edited: no tracker write. A pending sync that is still exactly as loaded is retried; stored values are used.
+        if (b && c && a2st(b).pend && unchangedByOthers && !base.dup[f.section] && !cur.dup[f.section]) plan.push({ section: f.section, op: 'none', retry: true, cur: c });
+        return;
+      }
+      if (base.dup[f.section] || cur.dup[f.section]) { duplicates.push(f.section); return; }
+      if (!unchangedByOthers) { conflicts.push(f.section); return; }
+      const cs = c ? a2st(c) : null;
+      if (cs && cs.pend && a2nm(f.em) !== a2nm(cs.em)) { blocked.push(f.section); return; }
+      const priorEmail = cs ? cs.em : null;
+      const emailChanged = a2nm(priorEmail) !== a2nm(f.em);
+      const wasPending = !!(cs && cs.pend);
       const needsSync = emailChanged || wasPending;
-      const previous = wasPending ? (pr.access_sync_previous_email || null) : priorEmail;
-      plan.push({ ...f, pr, needsSync, previous,
-        row: {
-          responsible_person: f.responsible_person, job_title: f.job_title, email: f.email,
-          access_sync_pending: needsSync, access_sync_previous_email: needsSync ? previous : null
-        } });
+      const previous = wasPending ? cs.prev : priorEmail;
+      const row = { responsible_person: f.rp, job_title: f.jt, email: f.em, access_sync_pending: needsSync, access_sync_previous_email: needsSync ? previous : null };
+      const hasContent = !!(row.responsible_person || row.job_title || row.email || needsSync);
+      plan.push({ section: f.section, op: c ? (hasContent ? 'update' : 'delete') : (hasContent ? 'insert' : 'none'), cur: c, row, needsSync, emailChanged, priorEmail: priorEmail || null, priorName: cs ? cs.rp : null });
     });
+    if (duplicates.length) {
+      showAmendToast('⚠ Nothing was saved: more than one stored Contributor Tracker record exists for ' + duplicates.join(', ') + '. Please investigate before editing.', true, 12000);
+      return;
+    }
+    if (conflicts.length) {
+      showAmendToast('⚠ Nothing was saved: the Contributor Tracker for ' + conflicts.join(', ') + ' was changed by someone else after this form was opened. Reload the page to see their changes, then make yours again.', true, 12000);
+      return;
+    }
     if (blocked.length) {
-      showAmendToast('⚠ Nothing was saved: a previous access update for ' + blocked.join(', ') + ' has not been confirmed. Save once WITHOUT changing ' + (blocked.length === 1 ? 'it' : 'them') + ' to retry that update, then make the change.', true, 12000);
+      showAmendToast('⚠ Nothing was saved: a previous access update for ' + blocked.join(', ') + ' has not been confirmed. Save once WITHOUT changing ' + (blocked.length === 1 ? 'it' : 'them') + ' to retry that update, then make the change afterwards.', true, 12000);
       return;
     }
 
-    // 3. Targeted writes, one section at a time. Sections whose write fails are not synchronised.
-    const writeFailed = [];
-    for (const p of plan) {
-      const hasContent = p.responsible_person || p.job_title || p.email || p.needsSync;
-      const pr = p.pr;
-      const unchanged = pr && (pr.responsible_person || null) === p.row.responsible_person && (pr.job_title || null) === p.row.job_title &&
-        (pr.email || null) === p.row.email && !!pr.access_sync_pending === p.row.access_sync_pending &&
-        (pr.access_sync_previous_email || null) === p.row.access_sync_previous_email;
-      if (unchanged) continue;
-      if (!pr && !hasContent) continue;
-      try {
-        if (!hasContent) {
-          const { data, error } = await sb.from('completion_tracker').delete().eq('school_id', schoolId).eq('section', p.section).select('section');
-          if (error) throw error;
-          if (!data || !data.length) throw new Error('row was not removed (permission denied?)');
-        } else if (pr) {
-          const { data, error } = await sb.from('completion_tracker').update(p.row).eq('school_id', schoolId).eq('section', p.section).select('section');
-          if (error) throw error;
-          if (!data || !data.length) throw new Error('row was not updated (permission denied?)');
-        } else {
-          const { error } = await sb.from('completion_tracker').insert([{ school_id: schoolId, section: p.section, ...p.row }]);
-          if (error) throw error;
-        }
-      } catch (e) {
-        console.error('Contributor Tracker write failed for ' + p.section + ':', e);
-        writeFailed.push(p.section + ' (' + (e.message || e) + ')');
-        p.skip = true;
+    // 2b. A2-02 / A2-06 (nothing written yet): validate new addresses and ask before replacing an existing Responsible Person.
+    const rpChanges = plan.filter(p => p.op !== 'none' && p.emailChanged);
+    const badEmail = rpChanges.filter(p => p.row.email && !a2ValidEmail(p.row.email)).map(p => p.section);
+    if (badEmail.length) {
+      showAmendToast('⚠ Nothing was saved: please enter a valid email address for the Responsible Person of ' + badEmail.join(', ') + '.', true, 9000);
+      return;
+    }
+    const replacing = rpChanges.filter(p => p.priorEmail);
+    if (replacing.length) {
+      const lines = replacing.map(p => '• ' + p.section + ': ' + (p.priorName || p.priorEmail) + (p.row.email ? ' → ' + (p.row.responsible_person || p.row.email) : ' (removed)')).join('\n');
+      if (!confirm('Change the Responsible Person?\n\n' + lines + '\n\nOnce this succeeds, the previous Responsible Person will lose Responsible Person access to ' +
+        (replacing.length === 1 ? 'that section' : 'those sections') + '. Their other section permissions and school membership are not removed.\n\nContinue?')) {
+        showAmendToast('Nothing was saved.', false);
+        return;
       }
     }
 
-    // 4. Synchronise section_access for every section marked pending (new change OR earlier failed sync).
-    const syncOk = [];
-    const syncErrors = [];
+    // 3. Targeted, conditional writes, one section at a time. The first failure stops further writes.
+    const saved = [], writeFailed = [], notAttempted = [];
+    let stopped = false;
     for (const p of plan) {
-      if (!p.needsSync || p.skip) continue;
+      if (p.op === 'none') continue;
+      if (stopped) { notAttempted.push(p.section); continue; }
+      try {
+        let result = null;
+        if (p.op === 'insert') {
+          const { data: exist, error: existErr } = await sb.from('completion_tracker').select('id').eq('school_id', schoolId).eq('section', p.section);
+          if (existErr) throw existErr;
+          if (exist && exist.length) throw new Error('another user has just added an assignment for this section');
+          const { data, error } = await sb.from('completion_tracker').insert([Object.assign({ school_id: schoolId, section: p.section }, p.row)]).select(A2_TRK_COLS);
+          if (error) throw error;
+          a2one(data, 'The insert');
+          result = data[0];
+          const { data: after, error: afterErr } = await sb.from('completion_tracker').select('id').eq('school_id', schoolId).eq('section', p.section);
+          if (afterErr) throw new Error('could not confirm that no duplicate record was created: ' + afterErr.message);
+          if ((after || []).length > 1) {
+            const { data: undo, error: undoErr } = await sb.from('completion_tracker').delete().eq('id', result.id).eq('school_id', schoolId).eq('section', p.section).select('id');
+            if (undoErr || !undo || undo.length !== 1) throw new Error('a duplicate record exists for this section and could not be withdrawn automatically');
+            throw new Error('another user saved this section at the same moment, so your entry was withdrawn');
+          }
+        } else if (p.op === 'update') {
+          const { data, error } = await a2guard(sb.from('completion_tracker').update(p.row), schoolId, p.cur).select(A2_TRK_COLS);
+          if (error) throw error;
+          a2one(data, 'The update');
+          result = data[0];
+        } else if (p.op === 'delete') {
+          const { data, error } = await a2guard(sb.from('completion_tracker').delete(), schoolId, p.cur).select('id');
+          if (error) throw error;
+          a2one(data, 'The removal');
+        }
+        p.committed = result;
+        saved.push(p.section);
+      } catch (e) {
+        console.error('Contributor Tracker write failed for ' + p.section + ':', e);
+        writeFailed.push(p.section + ' (' + (e.message || e) + ')');
+        p.failed = true;
+        stopped = true;
+      }
+    }
+
+    // 4. Synchronise section_access: only for assignments just CONFIRMED written, plus unedited sections whose sync was already pending.
+    const syncOk = [], syncErrors = [], outcomeNotes = [];
+    for (const p of plan) {
+      if (p.failed) continue;
+      const rec = p.op === 'none' ? (p.retry ? p.cur : null) : p.committed;
+      if (!rec || !rec.access_sync_pending) continue;
+      if (p.op !== 'none' && !p.needsSync) continue;
       try {
         const { data, error } = await sb.functions.invoke('sync-responsible-person-access', {
-          body: { school_id: schoolId, section: p.section, new_name: p.responsible_person, new_email: p.email, old_email: p.row.access_sync_previous_email }
+          body: { school_id: schoolId, section: p.section, new_name: rec.responsible_person || null, new_email: rec.email || null, old_email: rec.access_sync_previous_email || null }
         });
-        if (error) {
-          let detail = error.message || 'Unknown error';
-          try { if (error.context && typeof error.context.json === 'function') { const b = await error.context.json(); if (b && b.error) detail = b.error; } } catch (_) { /* keep message */ }
-          throw new Error(detail);
-        }
+        if (error) { const info = await a2ErrInfo(error); const ex = new Error(info.detail); ex.outcome = info.outcome; throw ex; }
         if (data && data.error) throw new Error(data.error);
         syncOk.push(p.section);
-        // Confirmed: clear the pending marker (non-fatal if this fails - a retry is idempotent).
-        const empty = !(p.responsible_person || p.job_title || p.email);
-        const q = empty
-          ? sb.from('completion_tracker').delete().eq('school_id', schoolId).eq('section', p.section).select('section')
-          : sb.from('completion_tracker').update({ access_sync_pending: false, access_sync_previous_email: null }).eq('school_id', schoolId).eq('section', p.section).select('section');
-        const { data: cd, error: ce } = await q;
-        if (ce || !cd || !cd.length) console.error('Could not clear access_sync_pending for ' + p.section + ':', ce || 'no row affected');
+        outcomeNotes.push(a2OutcomeText(data, rec.email || '', p.section));
+        // Confirmed: clear the pending marker with a conditional write (non-fatal; a retry is idempotent).
+        try {
+          const empty = !(rec.responsible_person || rec.job_title || rec.email);
+          const q = empty
+            ? a2guard(sb.from('completion_tracker').delete(), schoolId, rec).select('id')
+            : a2guard(sb.from('completion_tracker').update({ access_sync_pending: false, access_sync_previous_email: null }), schoolId, rec).select('id');
+          const { data: cd, error: ce } = await q;
+          if (ce) throw ce;
+          a2one(cd, 'Clearing the pending marker');
+        } catch (clearErr) { console.error('Could not clear access_sync_pending for ' + p.section + ':', clearErr); }
       } catch (e) {
         console.error('Responsible Person access sync failed for ' + p.section + ':', e);
-        syncErrors.push(p.section + ': ' + (e.message || e));
+        syncErrors.push(p.section + ': ' + (e.message || e) +
+          (e.outcome === 'replacement_partial' ? ' (the new person already has access; removing the previous person is still pending)' : ' (nothing was removed; this update is still pending)'));
       }
     }
 
@@ -4128,11 +4234,11 @@
     await loadAdmin();
     if (writeFailed.length || syncErrors.length) {
       const parts = [];
-      if (writeFailed.length) parts.push('Save failed for: ' + writeFailed.join('; ') + '.');
-      if (syncErrors.length) parts.push('Saved, but Responsible Person access was NOT updated for: ' + syncErrors.join('; ') + '. The change is marked "Sync pending" - press Save again to retry.');
+      if (writeFailed.length) parts.push('Save failed for: ' + writeFailed.join('; ') + '.' + (saved.length ? ' Saved: ' + saved.join(', ') + '.' : '') + (notAttempted.length ? ' Not saved: ' + notAttempted.join(', ') + '.' : '') + ' Reload the page before trying again.');
+      if (syncErrors.length) parts.push('Saved, but Responsible Person access was NOT fully updated for: ' + syncErrors.join('; ') + '. It is marked "Sync pending" - press Save again to retry.');
       showAmendToast('⚠ ' + parts.join(' '), true, 14000);
     } else {
-      showAmendToast('✓ Contributor Tracker saved' + (syncOk.length ? ' · Responsible Person access updated for: ' + syncOk.join(', ') : ''), false, syncOk.length ? 6000 : undefined);
+      showAmendToast('✓ Contributor Tracker saved' + (outcomeNotes.length ? ' · ' + outcomeNotes.join(' ') : ''), false, outcomeNotes.length ? 9000 : undefined);
     }
   }
 

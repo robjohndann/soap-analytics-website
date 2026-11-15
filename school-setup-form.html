@@ -563,12 +563,12 @@
   const SUPABASE_KEY = 'sb_publishable_2CTGR0PKyRPpSk59lcr3sA_hvvUDX97';
   const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
-  function showToast(msg, isError) {
+  function showToast(msg, isError, ms) {   // V77-07 A2: optional duration so longer outcome messages can be read
     const toast = document.getElementById('toast');
     toast.textContent = msg;
     toast.style.background = isError ? 'var(--bad)' : 'var(--good)';
     toast.classList.add('show');
-    setTimeout(() => toast.classList.remove('show'), 3400);
+    setTimeout(() => toast.classList.remove('show'), ms || (msg.length > 160 ? 9000 : 3400));
   }
 
   let currentUserId = null;
@@ -612,6 +612,46 @@
     if (!data || data.length === 0) throw new Error(what + ' did not change any row (it was changed by someone else, or permission was denied)');
     if (data.length > 1) throw new Error(what + ' affected ' + data.length + ' rows instead of one');
   };
+
+  // ============================================================================
+  // V77-07 Amendment 2 helpers (A2-02 email validation, A2-03 accurate outcome wording).
+  // a2ValidEmail mirrors the server's structural check: one '@', local part 1-64 chars, a dotted domain with no empty
+  // label, TLD of 2+ characters, no whitespace, at most 254 characters. Deliberately permissive (+, ', _, -, unicode allowed).
+  // The server re-validates; this only gives an early, friendly message.
+  // ============================================================================
+  function a2ValidEmail(raw) {
+    const s = (raw || '').trim().toLowerCase();
+    if (!s || s.length > 254 || /\s/.test(s)) return false;
+    const at = s.indexOf('@');
+    if (at < 1 || at !== s.lastIndexOf('@') || at > 64) return false;
+    const labels = s.slice(at + 1).split('.');
+    return labels.length >= 2 && labels.every(l => l.length > 0) && labels[labels.length - 1].length >= 2;
+  }
+  async function a2ErrInfo(error) {
+    let detail = (error && error.message) || 'Unknown error', outcome = null, body = null;
+    try {
+      if (error && error.context && typeof error.context.json === 'function') {
+        const b = await error.context.json();
+        if (b) { body = b; outcome = b.outcome || null; if (b.error) detail = b.error; }
+      }
+    } catch (_) { /* fall back to error.message above */ }
+    return { detail, outcome, body };
+  }
+  // What actually happened, in words. 'invited' means the invitation REQUEST was accepted - delivery is never claimed.
+  function a2OutcomeText(res, email, section) {
+    const o = (res && typeof res === 'object') ? res : { outcome: res };
+    const outcome = o.outcome;
+    switch (outcome) {
+      case 'invited': return 'An invitation has been requested for ' + email + ' and access to ' + section + ' granted. Delivery is not confirmed here - if it does not arrive, please contact SOAP Analytics support.';
+      case 'existing_account_granted': return email + ' already has a SOAP Analytics account, so no invitation was sent. Access to ' + section + ' has been granted.';
+      case 'already_in_place': return email + ' already had this access to ' + section + '. No change was needed.';
+      case 'replacement_completed': return 'Responsible Person for ' + section + ' replaced: ' + email + ' now has access and the previous person\'s Responsible Person access has been removed.' +
+        (o.grant === 'invited' ? ' An invitation has been requested for ' + email + ' (delivery is not confirmed here).' : (o.grant === 'existing_account_granted' ? ' ' + email + ' already had an account, so no invitation was sent.' : ''));
+      case 'removal_completed': return 'Responsible Person access for ' + section + ' removed.';
+      case 'no_change': return 'No access change was needed for ' + section + '.';
+      default: return 'Access updated for ' + section + '.';
+    }
+  }
 
   async function requireLogin() {
     const banner = document.getElementById('statusBanner');
@@ -839,7 +879,7 @@
     const msg = formDiv.querySelector('.contrib-msg');
 
     if (!name) { msg.style.color = '#B3261E'; msg.textContent = 'Name is required.'; return; }
-    if (!email || !email.includes('@')) { msg.style.color = '#B3261E'; msg.textContent = 'A valid email is required.'; return; }
+    if (!email || !a2ValidEmail(email)) { msg.style.color = '#B3261E'; msg.textContent = 'A valid email is required.'; return; }
 
     btn.disabled = true;
     btn.textContent = 'Adding…';
@@ -863,6 +903,7 @@
       if (data && data.error) throw new Error(data.error);
 
       await loadContributors(schoolId);
+      showToast(a2OutcomeText(data, email, section), false, 9000);   // V77-07 A2-03
     } catch (err) {
       console.error(err);
       msg.style.color = '#B3261E';
@@ -964,7 +1005,7 @@
     const btn = document.getElementById('addViewerBtn');
     const email = input.value.trim();
 
-    if (!email || !email.includes('@')) {
+    if (!email || !a2ValidEmail(email)) {
       setViewerMsg('A valid email is required.', 'error');
       return;
     }
@@ -999,7 +1040,7 @@
       } else if (data && data.note) {
         setViewerMsg(email + ' — ' + data.note + '.', 'ok');
       } else {
-        setViewerMsg('Viewer access granted to ' + email + '. If they are new to SOAP Analytics, an invitation email has been sent.', 'ok');
+        setViewerMsg('Viewer access granted to ' + email + '. If they are new to SOAP Analytics, an invitation has been requested (delivery is not confirmed here); if they already have an account, no invitation is needed.', 'ok');
       }
       await loadViewers(schoolId);
     } catch (err) {
@@ -1137,7 +1178,8 @@
           access_sync_pending: needsSync, access_sync_previous_email: needsSync ? previous : null
         };
         const hasContent = !!(row.responsible_person || row.job_title || row.email || needsSync);
-        trackerPlan.push({ section: f.section, op: cur ? (hasContent ? 'update' : 'delete') : (hasContent ? 'insert' : 'none'), cur, row, needsSync });
+        trackerPlan.push({ section: f.section, op: cur ? (hasContent ? 'update' : 'delete') : (hasContent ? 'insert' : 'none'), cur, row, needsSync,
+          emailChanged, priorEmail: priorEmail || null, priorName: cs ? cs.rp : null });   // V77-07 A2: used only for the pre-save checks and the confirmation
       });
 
       if (duplicateSections.length) {
@@ -1163,6 +1205,54 @@
         btn.disabled = false;
         btn.textContent = 'Save';
         return;
+      }
+
+      // V77-07 Amendment 2 (A2-02 / A2-04 / A2-06): checks for sections whose Responsible Person is CHANGING.
+      // Nothing has been written yet, so stopping here leaves everything exactly as it was.
+      const rpChanges = trackerPlan.filter(p => p.op !== 'none' && p.emailChanged);
+      const badEmailSections = rpChanges.filter(p => p.row.email && !a2ValidEmail(p.row.email)).map(p => p.section);
+      if (badEmailSections.length) {
+        showToast('⚠ Nothing was saved: please enter a valid email address for the Responsible Person of ' + badEmailSections.join(', ') + '.', true);
+        return;
+      }
+      // Server-side dry run (no writes, no invitation): the same cross-school policy and validation the real sync applies.
+      for (const p of rpChanges.filter(x => x.row.email)) {
+        let dry = null, dryErr = null;
+        try {
+          const r = await sb.functions.invoke('sync-responsible-person-access', {
+            body: { school_id: schoolId, section: p.section, new_email: p.row.email, dry_run: true }
+          });
+          dry = r.data; dryErr = r.error;
+        } catch (e) { dryErr = e; }
+        if (!dryErr && dry && dry.success === true && dry.dry_run !== true) {
+          // A function that does not know dry_run has treated this as a REAL sync. Stop at once and say why.
+          showToast('⚠ Nothing more was saved: the access-update service is not the expected version. Please contact SOAP Analytics support before changing a Responsible Person.', true);
+          return;
+        }
+        if (dryErr || !dry || dry.success !== true) {
+          const info = dryErr ? await a2ErrInfo(dryErr) : { detail: (dry && dry.error) || 'Unknown error', outcome: dry && dry.outcome };
+          if (info.outcome === 'cross_school_review_required') {
+            showToast('⚠ Nothing was saved: ' + p.row.email + ' already holds a leadership or administrator account at another school, so a SOAP Analytics administrator must approve adding them (' + p.section + '). Please contact SOAP Analytics support.', true);
+            return;
+          }
+          if (info.outcome === 'invalid_email') {
+            showToast('⚠ Nothing was saved: please enter a valid email address for the Responsible Person of ' + p.section + '.', true);
+            return;
+          }
+          // Any other failure (outage, network, lookup problem) is NOT a reason to refuse the whole save - this dry run is only an
+          // early courtesy. The real sync re-applies every rule on the server and fails closed, leaving the update pending and retryable
+          // exactly as in Amendment 1.
+          console.warn('Responsible Person pre-check could not be completed for ' + p.section + ':', info.detail);
+        }
+      }
+      const replacing = rpChanges.filter(p => p.priorEmail);
+      if (replacing.length) {
+        const lines = replacing.map(p => '• ' + p.section + ': ' + (p.priorName || p.priorEmail) + (p.row.email ? ' → ' + (p.row.responsible_person || p.row.email) : ' (removed)')).join('\n');
+        if (!confirm('Change the Responsible Person?\n\n' + lines + '\n\nOnce this succeeds, the previous Responsible Person will lose Responsible Person access to ' +
+          (replacing.length === 1 ? 'that section' : 'those sections') + '. Their other section permissions and school membership are not removed.\n\nContinue?')) {
+          showToast('Nothing was saved.', false);
+          return;
+        }
       }
 
       const schoolPayload = {
@@ -1313,6 +1403,7 @@
       // The values sent are the values as STORED (returned by the confirmed write / the fresh read), as before:
       // a genuine change this save, or a retry of a sync that failed on an earlier save.
       const responsiblePersonSyncErrors = [];
+      const rpOutcomeNotes = [];   // V77-07 A2-03: what actually happened, per section
       for (const p of trackerPlan) {
         if (p.failed) continue;
         const rec = p.op === 'none' ? (p.retry ? p.cur : null) : p.committed;
@@ -1334,16 +1425,11 @@
             }
           });
           if (error) {
-            let detail = error.message || 'Unknown error';
-            try {
-              if (error.context && typeof error.context.json === 'function') {
-                const errBody = await error.context.json();
-                if (errBody && errBody.error) detail = errBody.error;
-              }
-            } catch (_) { /* fall back to error.message above */ }
-            throw new Error(detail);
+            const info = await a2ErrInfo(error);
+            const ex = new Error(info.detail); ex.outcome = info.outcome; throw ex;
           }
           if (data && data.error) throw new Error(data.error);
+          rpOutcomeNotes.push(a2OutcomeText(data, rec.email || '', p.section));
 
           // Sync confirmed successful — clear BOTH the pending flag and the preserved previous-email for this section.
           // V77-07 Amendment 1: conditional on the row still being exactly as written (id, email, previous email, pending flag),
@@ -1368,7 +1454,8 @@
           }
         } catch (syncErr) {
           console.error(`Responsible Person access sync failed for ${p.section}:`, syncErr);
-          responsiblePersonSyncErrors.push(`${p.section}: ${syncErr.message}`);
+          responsiblePersonSyncErrors.push(`${p.section}: ${syncErr.message}` +
+            (syncErr.outcome === 'replacement_partial' ? ' (the new person already has access; removing the previous person is still pending and will be retried on the next Save)' : ' (nothing was removed; this update is still pending and will be retried on the next Save)'));
           // Deliberately left access_sync_pending = true and
           // access_sync_previous_email unchanged (their values from the
           // confirmed write above) — this is what makes the failure retryable on
@@ -1402,7 +1489,7 @@
         return;
       }
 
-      showToast(histResult.status === 'failed' ? '⚠ School Setup saved, but' + histWarn : '✓ School Setup saved to the database' + histWarn, histResult.status === 'failed');
+      showToast((histResult.status === 'failed' ? '⚠ School Setup saved, but' + histWarn : '✓ School Setup saved to the database' + histWarn) + (rpOutcomeNotes.length ? ' ' + rpOutcomeNotes.join(' ') : ''), histResult.status === 'failed', rpOutcomeNotes.length ? 9000 : undefined);
     } catch (err) {
       console.error(err);
       showToast('⚠ Save failed — see browser console for details', true);
