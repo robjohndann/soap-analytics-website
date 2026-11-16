@@ -563,17 +563,95 @@
   const SUPABASE_KEY = 'sb_publishable_2CTGR0PKyRPpSk59lcr3sA_hvvUDX97';
   const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
-  function showToast(msg, isError) {
+  function showToast(msg, isError, ms) {   // V77-07 A2: optional duration so longer outcome messages can be read
     const toast = document.getElementById('toast');
     toast.textContent = msg;
     toast.style.background = isError ? 'var(--bad)' : 'var(--good)';
     toast.classList.add('show');
-    setTimeout(() => toast.classList.remove('show'), 3400);
+    setTimeout(() => toast.classList.remove('show'), ms || (msg.length > 160 ? 9000 : 3400));
   }
 
   let currentUserId = null;
   let existingSchoolId = null;
   let viewersOnly = false;   // RC-3.3: IDSR-only packages see the Viewer Tracker only
+
+  // ============================================================================
+  // V77-07 Amendment 1 — Headteacher Responsible Person tracker: targeted per-section saves.
+  // The old Save deleted EVERY completion_tracker row of the school and re-inserted them in bulk, after other tables had
+  // been written; any failure in between left the school with no assignments and lost pending-revocation markers, and a
+  // stale form silently overwrote other people's changes. Now:
+  //   * the tracker as loaded is kept as TRACKER_BASELINE (null = the load failed -> saving is refused);
+  //   * only sections the user actually edited are written; unchanged sections are never touched (ids preserved);
+  //   * before any write the CURRENT stored state is re-read and compared with the baseline: another user's change to an
+  //     edited section stops the whole save with a reload message;
+  //   * every write is a conditional update (compare-and-set on id and the previously read values) that must affect exactly one row;
+  //   * Responsible Person access is synchronised only for sections whose tracker write was confirmed.
+  // RESIDUAL LIMITATION: the table has no unique (school_id, section) index, so two users inserting the SAME previously
+  // empty section at the same instant cannot be fully prevented from the browser; this is detected after the insert and the
+  // row this save created (by its own id) is withdrawn, but it is a mitigation, not a guarantee.
+  // ============================================================================
+  let TRACKER_BASELINE = null;
+  const TRACKER_COLS = 'id, section, responsible_person, job_title, email, access_sync_pending, access_sync_previous_email';
+  const TRACKER_EDIT_COLS = ['responsible_person', 'job_title', 'email', 'access_sync_pending', 'access_sync_previous_email'];
+  const trkNz = v => (v === undefined || v === null || v === '') ? null : v;
+  const trkNormEmail = v => ((v || '').trim().toLowerCase()) || null;
+  const trkSameEmail = (a, b) => trkNormEmail(a) === trkNormEmail(b);
+  const trkState = r => ({ rp: trkNz(r.responsible_person), jt: trkNz(r.job_title), em: trkNz(r.email), pend: !!r.access_sync_pending, prev: trkNz(r.access_sync_previous_email) });
+  const trkSameState = (a, b) => { const x = trkState(a), y = trkState(b); return x.rp === y.rp && x.jt === y.jt && trkSameEmail(x.em, y.em) && x.pend === y.pend && trkSameEmail(x.prev, y.prev); };
+  function trkSnapshot(rows) {
+    const snap = { bySection: {}, duplicates: {}, shown: {} };   // shown = what the form displayed at load (or after the last confirmed write): the reference for "edited"
+    (rows || []).forEach(r => { if (snap.bySection[r.section]) snap.duplicates[r.section] = true; else snap.bySection[r.section] = Object.assign({}, r); });
+    return snap;
+  }
+  const trkGuard = (q, schoolId, section, raw) => {
+    q = q.eq('id', raw.id).eq('school_id', schoolId).eq('section', section);
+    TRACKER_EDIT_COLS.forEach(c => { q = (raw[c] === null || raw[c] === undefined) ? q.is(c, null) : q.eq(c, raw[c]); });
+    return q;
+  };
+  const trkOneRow = (data, what) => {
+    if (!data || data.length === 0) throw new Error(what + ' did not change any row (it was changed by someone else, or permission was denied)');
+    if (data.length > 1) throw new Error(what + ' affected ' + data.length + ' rows instead of one');
+  };
+
+  // ============================================================================
+  // V77-07 Amendment 2 helpers (A2-02 email validation, A2-03 accurate outcome wording).
+  // a2ValidEmail mirrors the server's structural check: one '@', local part 1-64 chars, a dotted domain with no empty
+  // label, TLD of 2+ characters, no whitespace, at most 254 characters. Deliberately permissive (+, ', _, -, unicode allowed).
+  // The server re-validates; this only gives an early, friendly message.
+  // ============================================================================
+  function a2ValidEmail(raw) {
+    const s = (raw || '').trim().toLowerCase();
+    if (!s || s.length > 254 || /\s/.test(s)) return false;
+    const at = s.indexOf('@');
+    if (at < 1 || at !== s.lastIndexOf('@') || at > 64) return false;
+    const labels = s.slice(at + 1).split('.');
+    return labels.length >= 2 && labels.every(l => l.length > 0) && labels[labels.length - 1].length >= 2;
+  }
+  async function a2ErrInfo(error) {
+    let detail = (error && error.message) || 'Unknown error', outcome = null, body = null;
+    try {
+      if (error && error.context && typeof error.context.json === 'function') {
+        const b = await error.context.json();
+        if (b) { body = b; outcome = b.outcome || null; if (b.error) detail = b.error; }
+      }
+    } catch (_) { /* fall back to error.message above */ }
+    return { detail, outcome, body };
+  }
+  // What actually happened, in words. 'invited' means the invitation REQUEST was accepted - delivery is never claimed.
+  function a2OutcomeText(res, email, section) {
+    const o = (res && typeof res === 'object') ? res : { outcome: res };
+    const outcome = o.outcome;
+    switch (outcome) {
+      case 'invited': return 'An invitation has been requested for ' + email + ' and access to ' + section + ' granted. Delivery is not confirmed here - if it does not arrive, please contact SOAP Analytics support.';
+      case 'existing_account_granted': return email + ' already has a SOAP Analytics account, so no invitation was sent. Access to ' + section + ' has been granted.';
+      case 'already_in_place': return email + ' already had this access to ' + section + '. No change was needed.';
+      case 'replacement_completed': return 'Responsible Person for ' + section + ' replaced: ' + email + ' now has access and the previous person\'s Responsible Person access has been removed.' +
+        (o.grant === 'invited' ? ' An invitation has been requested for ' + email + ' (delivery is not confirmed here).' : (o.grant === 'existing_account_granted' ? ' ' + email + ' already had an account, so no invitation was sent.' : ''));
+      case 'removal_completed': return 'Responsible Person access for ' + section + ' removed.';
+      case 'no_change': return 'No access change was needed for ' + section + '.';
+      default: return 'Access updated for ' + section + '.';
+    }
+  }
 
   async function requireLogin() {
     const banner = document.getElementById('statusBanner');
@@ -694,15 +772,30 @@
       if (a.assessment_date) tr.querySelector('input[type="date"]').value = a.assessment_date;
     });
 
-    const { data: tracker } = await sb.from('completion_tracker').select('*').eq('school_id', schoolId);
-    (tracker || []).forEach(t => {
-      const tr = Array.from(document.querySelectorAll('#trackerBody tr')).find(el => el.dataset.section === t.section);
-      if (!tr) return;
-      const texts = tr.querySelectorAll('input[type="text"]');
-      if (t.responsible_person) texts[0].value = t.responsible_person;
-      if (t.job_title) texts[1].value = t.job_title;
-      if (t.email) tr.querySelector('input[type="email"]').value = t.email;
-    });
+    // V77-07 Amendment 1: the read is checked. Its result is kept as the baseline the Save compares against; if it fails
+    // the baseline stays null and Save refuses to touch the tracker (an empty-looking form must never be written over real assignments).
+    TRACKER_BASELINE = null;
+    const { data: tracker, error: trackerLoadErr } = await sb.from('completion_tracker').select(TRACKER_COLS).eq('school_id', schoolId);
+    if (trackerLoadErr) {
+      console.error('Could not load the Contributor Tracker:', trackerLoadErr);
+      const b = document.getElementById('statusBanner');
+      if (b) b.textContent = b.textContent + ' \u26A0 The Contributor Tracker could not be loaded, so Save is disabled. Please reload this page.';
+      showToast('\u26A0 The Contributor Tracker could not be loaded. Saving is disabled \u2014 please reload the page.', true);
+    } else {
+      TRACKER_BASELINE = trkSnapshot(tracker);
+      (tracker || []).forEach(t => {
+        const tr = Array.from(document.querySelectorAll('#trackerBody tr')).find(el => el.dataset.section === t.section);
+        if (!tr) return;
+        const texts = tr.querySelectorAll('input[type="text"]');
+        if (t.responsible_person) texts[0].value = t.responsible_person;
+        if (t.job_title) texts[1].value = t.job_title;
+        if (t.email) tr.querySelector('input[type="email"]').value = t.email;
+      });
+      document.querySelectorAll('#trackerBody tr').forEach(tr => {
+        const x = tr.querySelectorAll('input[type="text"]');
+        TRACKER_BASELINE.shown[tr.dataset.section] = { rp: x[0].value || null, jt: x[1].value || null, em: (tr.querySelector('input[type="email"]').value || '').trim() || null };
+      });
+    }
 
     await loadContributors(schoolId);
   }
@@ -786,7 +879,7 @@
     const msg = formDiv.querySelector('.contrib-msg');
 
     if (!name) { msg.style.color = '#B3261E'; msg.textContent = 'Name is required.'; return; }
-    if (!email || !email.includes('@')) { msg.style.color = '#B3261E'; msg.textContent = 'A valid email is required.'; return; }
+    if (!email || !a2ValidEmail(email)) { msg.style.color = '#B3261E'; msg.textContent = 'A valid email is required.'; return; }
 
     btn.disabled = true;
     btn.textContent = 'Adding…';
@@ -810,6 +903,7 @@
       if (data && data.error) throw new Error(data.error);
 
       await loadContributors(schoolId);
+      showToast(a2OutcomeText(data, email, section), false, 9000);   // V77-07 A2-03
     } catch (err) {
       console.error(err);
       msg.style.color = '#B3261E';
@@ -911,7 +1005,7 @@
     const btn = document.getElementById('addViewerBtn');
     const email = input.value.trim();
 
-    if (!email || !email.includes('@')) {
+    if (!email || !a2ValidEmail(email)) {
       setViewerMsg('A valid email is required.', 'error');
       return;
     }
@@ -946,7 +1040,7 @@
       } else if (data && data.note) {
         setViewerMsg(email + ' — ' + data.note + '.', 'ok');
       } else {
-        setViewerMsg('Viewer access granted to ' + email + '. If they are new to SOAP Analytics, an invitation email has been sent.', 'ok');
+        setViewerMsg('Viewer access granted to ' + email + '. If they are new to SOAP Analytics, an invitation has been requested (delivery is not confirmed here); if they already have an account, no invitation is needed.', 'ok');
       }
       await loadViewers(schoolId);
     } catch (err) {
@@ -1014,52 +1108,92 @@
       if (!existingSchoolId) throw new Error('No authorised school selected. Return to the portal and choose a school.');
       const schoolId = existingSchoolId;
 
-      // V61: fetch the CURRENT completion_tracker state before it gets
-      // replaced below, so we can tell which sections' Responsible Person
-      // actually changed. Without this, there is no way to know who the
-      // PREVIOUS Responsible Person was in order to revoke their access.
-      // The error is now explicitly checked and aborts the save — silently
-      // treating a failed read as "no prior state" would make every
-      // section look brand new, risking unnecessary sync calls.
+      // V77-07 Amendment 1: if the Contributor Tracker did not load when the page opened, nothing may be saved.
+      // (An empty-looking form would otherwise be written over the school's real assignments.)
+      if (!TRACKER_BASELINE) {
+        showToast('⚠ Nothing was saved: the Contributor Tracker did not load when this page opened. Please reload the page and try again.', true);
+        return;
+      }
+
+      // V61: fetch the CURRENT completion_tracker state before anything is written, so we can tell which sections'
+      // Responsible Person actually changed and who the PREVIOUS Responsible Person was (needed to revoke their access).
+      // V77-07 Amendment 1: the same read also supplies the current id/values for the compare-and-set writes below and is
+      // compared with the state loaded when the page opened (TRACKER_BASELINE) to detect changes made by other users.
+      // The error aborts the save: nothing has been written at this point.
       const { data: priorTracker, error: priorTrackerErr } = await sb
         .from('completion_tracker')
-        .select('section, responsible_person, email, access_sync_pending, access_sync_previous_email')
+        .select(TRACKER_COLS)
         .eq('school_id', schoolId);
       if (priorTrackerErr) throw new Error('Could not read the current Completion Tracker state: ' + priorTrackerErr.message);
-      const priorEmailBySection = {};
-      const priorPendingBySection = {};
-      const priorPreviousEmailBySection = {};
-      (priorTracker || []).forEach(t => {
-        priorEmailBySection[t.section] = t.email || null;
-        priorPendingBySection[t.section] = !!t.access_sync_pending;
-        priorPreviousEmailBySection[t.section] = t.access_sync_previous_email || null;
+      const fresh = trkSnapshot(priorTracker);
+
+      // What the user has in the form now (emails trimmed; compared case-insensitively).
+      const formRows = Array.from(document.querySelectorAll('#trackerBody tr')).map(tr => {
+        const texts = tr.querySelectorAll('input[type="text"]');
+        return {
+          section: tr.dataset.section,
+          rp: texts[0].value || null,
+          jt: texts[1].value || null,
+          em: (tr.querySelector('input[type="email"]').value || '').trim() || null
+        };
       });
 
-      // V61 (third correction): if a section's Responsible Person sync is
-      // still pending from an earlier save, block changing that section's
-      // Responsible Person AGAIN until the pending reconciliation has
-      // actually succeeded. Without this, a further change (e.g.
-      // John -> David, while Sarah -> John is still unresolved) would
-      // carry forward only the ORIGINAL previous email (Sarah) and never
-      // reconsider the CURRENT one (John) — and John may have already
-      // received Responsible-Person access from the earlier attempt's
-      // uncertain partial completion, since an Edge Function can fail
-      // after some of its work has already taken effect. Rather than track
-      // every intermediate identity a section passed through while
-      // pending (a queue/history system, deliberately avoided here), this
-      // simply requires resolving one pending change before starting
-      // another — a small, easily understood restriction. Checked BEFORE
-      // any writes begin, so a blocked section stops the whole save with a
-      // clear explanation rather than silently discarding the edit.
+      // A section is "edited" only if the form differs from what was LOADED. Edited sections are the only ones ever written.
+      const trackerPlan = [];
+      const conflictSections = [];
+      const duplicateSections = [];
       const blockedPendingSections = [];
-      document.querySelectorAll('#trackerBody tr').forEach(tr => {
-        const section = tr.dataset.section;
-        if (!priorPendingBySection[section]) return;
-        const currentFormEmail = tr.querySelector('input[type="email"]').value || null;
-        if (currentFormEmail !== priorEmailBySection[section]) {
-          blockedPendingSections.push(section);
+      formRows.forEach(f => {
+        const base = TRACKER_BASELINE.bySection[f.section] || null;
+        const cur = fresh.bySection[f.section] || null;
+        const shown = TRACKER_BASELINE.shown[f.section] || { rp: null, jt: null, em: null };
+        const edited = f.rp !== shown.rp || f.jt !== shown.jt || !trkSameEmail(f.em, shown.em);
+        const unchangedByOthers = (!base && !cur) || (base && cur && base.id === cur.id && trkSameState(base, cur));
+
+        if (!edited) {
+          // Not edited: no tracker write. A section whose access sync was already pending when the page loaded (and is
+          // still exactly as loaded) is retried below, as before; the stored values are used, never the form's.
+          if (base && cur && trkState(base).pend && unchangedByOthers && !TRACKER_BASELINE.duplicates[f.section] && !fresh.duplicates[f.section]) {
+            trackerPlan.push({ section: f.section, op: 'none', retry: true, cur });
+          }
+          return;
         }
+        if (TRACKER_BASELINE.duplicates[f.section] || fresh.duplicates[f.section]) { duplicateSections.push(f.section); return; }
+        if (!unchangedByOthers) { conflictSections.push(f.section); return; }
+
+        const cs = cur ? trkState(cur) : null;
+        // V61 (third correction): a section whose sync is still pending cannot have its Responsible Person changed again
+        // until that pending reconciliation has succeeded (see the original explanation: only ONE previous email is preserved).
+        if (cs && cs.pend && !trkSameEmail(f.em, cs.em)) { blockedPendingSections.push(f.section); return; }
+
+        // V61 (second correction): access_sync_previous_email preserves the ACTUAL email that still needs revoking; it is set
+        // once when a genuine change is first detected and carried forward unchanged across failed retries.
+        const priorEmail = cs ? cs.em : null;
+        const emailChanged = !trkSameEmail(priorEmail, f.em);
+        const wasPending = !!(cs && cs.pend);
+        const needsSync = emailChanged || wasPending;
+        const previous = wasPending ? cs.prev : priorEmail;
+        const row = {
+          responsible_person: f.rp, job_title: f.jt, email: f.em,
+          access_sync_pending: needsSync, access_sync_previous_email: needsSync ? previous : null
+        };
+        const hasContent = !!(row.responsible_person || row.job_title || row.email || needsSync);
+        trackerPlan.push({ section: f.section, op: cur ? (hasContent ? 'update' : 'delete') : (hasContent ? 'insert' : 'none'), cur, row, needsSync,
+          emailChanged, priorEmail: priorEmail || null, priorName: cs ? cs.rp : null });   // V77-07 A2: used only for the pre-save checks and the confirmation
       });
+
+      if (duplicateSections.length) {
+        showToast(`⚠ Nothing was saved: more than one stored Contributor Tracker record exists for ${duplicateSections.join(', ')}. Please contact SOAP Analytics support.`, true);
+        return;
+      }
+      if (conflictSections.length) {
+        showToast(
+          `⚠ Nothing was saved: the Contributor Tracker for ${conflictSections.join(', ')} was changed by someone else after you opened this page. ` +
+          `Please reload the page to see their changes, then make your changes again.`,
+          true
+        );
+        return;
+      }
       if (blockedPendingSections.length) {
         showToast(
           `⚠ Cannot change the Responsible Person for ${blockedPendingSections.join(', ')} right now — ` +
@@ -1071,6 +1205,54 @@
         btn.disabled = false;
         btn.textContent = 'Save';
         return;
+      }
+
+      // V77-07 Amendment 2 (A2-02 / A2-04 / A2-06): checks for sections whose Responsible Person is CHANGING.
+      // Nothing has been written yet, so stopping here leaves everything exactly as it was.
+      const rpChanges = trackerPlan.filter(p => p.op !== 'none' && p.emailChanged);
+      const badEmailSections = rpChanges.filter(p => p.row.email && !a2ValidEmail(p.row.email)).map(p => p.section);
+      if (badEmailSections.length) {
+        showToast('⚠ Nothing was saved: please enter a valid email address for the Responsible Person of ' + badEmailSections.join(', ') + '.', true);
+        return;
+      }
+      // Server-side dry run (no writes, no invitation): the same cross-school policy and validation the real sync applies.
+      for (const p of rpChanges.filter(x => x.row.email)) {
+        let dry = null, dryErr = null;
+        try {
+          const r = await sb.functions.invoke('sync-responsible-person-access', {
+            body: { school_id: schoolId, section: p.section, new_email: p.row.email, dry_run: true }
+          });
+          dry = r.data; dryErr = r.error;
+        } catch (e) { dryErr = e; }
+        if (!dryErr && dry && dry.success === true && dry.dry_run !== true) {
+          // A function that does not know dry_run has treated this as a REAL sync. Stop at once and say why.
+          showToast('⚠ Nothing more was saved: the access-update service is not the expected version. Please contact SOAP Analytics support before changing a Responsible Person.', true);
+          return;
+        }
+        if (dryErr || !dry || dry.success !== true) {
+          const info = dryErr ? await a2ErrInfo(dryErr) : { detail: (dry && dry.error) || 'Unknown error', outcome: dry && dry.outcome };
+          if (info.outcome === 'cross_school_review_required') {
+            showToast('⚠ Nothing was saved: ' + p.row.email + ' already holds a leadership or administrator account at another school, so a SOAP Analytics administrator must approve adding them (' + p.section + '). Please contact SOAP Analytics support.', true);
+            return;
+          }
+          if (info.outcome === 'invalid_email') {
+            showToast('⚠ Nothing was saved: please enter a valid email address for the Responsible Person of ' + p.section + '.', true);
+            return;
+          }
+          // Any other failure (outage, network, lookup problem) is NOT a reason to refuse the whole save - this dry run is only an
+          // early courtesy. The real sync re-applies every rule on the server and fails closed, leaving the update pending and retryable
+          // exactly as in Amendment 1.
+          console.warn('Responsible Person pre-check could not be completed for ' + p.section + ':', info.detail);
+        }
+      }
+      const replacing = rpChanges.filter(p => p.priorEmail);
+      if (replacing.length) {
+        const lines = replacing.map(p => '• ' + p.section + ': ' + (p.priorName || p.priorEmail) + (p.row.email ? ' → ' + (p.row.responsible_person || p.row.email) : ' (removed)')).join('\n');
+        if (!confirm('Change the Responsible Person?\n\n' + lines + '\n\nOnce this succeeds, the previous Responsible Person will lose Responsible Person access to ' +
+          (replacing.length === 1 ? 'that section' : 'those sections') + '. Their other section permissions and school membership are not removed.\n\nContinue?')) {
+          showToast('Nothing was saved.', false);
+          return;
+        }
       }
 
       const schoolPayload = {
@@ -1102,8 +1284,8 @@
         sb.from('key_contacts').delete().eq('school_id', schoolId),
         sb.from('ofsted_judgements').delete().eq('school_id', schoolId),
         sb.from('reporting_periods').delete().eq('school_id', schoolId),
-        sb.from('assessment_setup').delete().eq('school_id', schoolId),
-        sb.from('completion_tracker').delete().eq('school_id', schoolId)
+        sb.from('assessment_setup').delete().eq('school_id', schoolId)
+        // V77-07 Amendment 1: completion_tracker is deliberately NOT deleted here any more (targeted per-section writes below).
       ]);
       const deleteError = deleteResults.find(r => r.error);
       if (deleteError) throw deleteError.error;
@@ -1156,39 +1338,57 @@
         if (error) throw error;
       }
 
-      // V61 (second correction): access_sync_previous_email preserves the
-      // ACTUAL email that still needs revoking, independently of whatever
-      // the tracker's "current" email says — access_sync_pending alone was
-      // not sufficient, since once the tracker is overwritten with the new
-      // person, a naive retry would diff the current value against itself
-      // and silently skip revoking the old one. The value is set once, when
-      // a genuine change is first detected, and carried forward UNCHANGED
-      // across any number of failed retries (wasPending case below) — only
-      // ever cleared once the full old-revoke + new-grant reconciliation
-      // for that section actually succeeds.
-      const allTrackerRows = Array.from(document.querySelectorAll('#trackerBody tr')).map(tr => {
-        const texts = tr.querySelectorAll('input[type="text"]');
-        const email = tr.querySelector('input[type="email"]');
-        const section = tr.dataset.section;
-        const newEmail = email.value || null;
-        const priorEmail = priorEmailBySection[section] || null;
-        const emailChanged = priorEmail !== newEmail;
-        const wasPending = !!priorPendingBySection[section];
-        const emailToRevoke = wasPending ? priorPreviousEmailBySection[section] : priorEmail;
-        return {
-          school_id: schoolId,
-          section,
-          responsible_person: texts[0].value || null,
-          job_title: texts[1].value || null,
-          email: newEmail,
-          access_sync_pending: emailChanged || wasPending,
-          access_sync_previous_email: (emailChanged || wasPending) ? emailToRevoke : null,
-        };
-      });
-      const tracker = allTrackerRows.filter(t => t.responsible_person || t.job_title || t.email || t.access_sync_pending);
-      if (tracker.length) {
-        const { error } = await sb.from('completion_tracker').insert(tracker);
-        if (error) throw error;
+      // V77-07 Amendment 1: targeted, conditional, per-section tracker writes (replaces the school-wide delete + bulk insert).
+      // Each write must affect exactly ONE row. The first failure stops further tracker writes (no half-guessing about
+      // what else to write); sections already committed stay committed and are reported, the rest are listed as not saved.
+      const trackerSaved = [];
+      const trackerFailed = [];
+      const trackerNotAttempted = [];
+      let trackerStopped = false;
+      for (const p of trackerPlan) {
+        if (p.op === 'none') continue;
+        if (trackerStopped) { trackerNotAttempted.push(p.section); continue; }
+        try {
+          let result = null;   // the row as stored after this write (null = row no longer exists)
+          if (p.op === 'insert') {
+            // Narrow the unavoidable race (no unique index): confirm the section is still empty immediately before inserting.
+            const { data: exist, error: existErr } = await sb.from('completion_tracker').select('id').eq('school_id', schoolId).eq('section', p.section);
+            if (existErr) throw existErr;
+            if (exist && exist.length) throw new Error('another user has just added an assignment for this section');
+            const { data, error } = await sb.from('completion_tracker')
+              .insert([Object.assign({ school_id: schoolId, section: p.section }, p.row)]).select(TRACKER_COLS);
+            if (error) throw error;
+            trkOneRow(data, 'The insert');
+            result = data[0];
+            // Detect a simultaneous insert of the same section by someone else; withdraw ONLY the row this save created (by its own id).
+            const { data: after, error: afterErr } = await sb.from('completion_tracker').select('id').eq('school_id', schoolId).eq('section', p.section);
+            if (afterErr) throw new Error('could not confirm that no duplicate record was created: ' + afterErr.message);
+            if ((after || []).length > 1) {
+              const { data: undo, error: undoErr } = await sb.from('completion_tracker').delete().eq('id', result.id).eq('school_id', schoolId).eq('section', p.section).select('id');
+              if (undoErr || !undo || undo.length !== 1) throw new Error('a duplicate record exists for this section and could not be withdrawn automatically; please contact SOAP Analytics support');
+              throw new Error('another user saved this section at the same moment, so your entry was withdrawn');
+            }
+          } else if (p.op === 'update') {
+            const { data, error } = await trkGuard(sb.from('completion_tracker').update(p.row), schoolId, p.section, p.cur).select(TRACKER_COLS);
+            if (error) throw error;
+            trkOneRow(data, 'The update');
+            result = data[0];
+          } else if (p.op === 'delete') {
+            const { data, error } = await trkGuard(sb.from('completion_tracker').delete(), schoolId, p.section, p.cur).select('id');
+            if (error) throw error;
+            trkOneRow(data, 'The removal');
+            result = null;
+          }
+          if (result) TRACKER_BASELINE.bySection[p.section] = Object.assign({}, result); else delete TRACKER_BASELINE.bySection[p.section];
+          TRACKER_BASELINE.shown[p.section] = result ? { rp: trkNz(result.responsible_person), jt: trkNz(result.job_title), em: trkNz(result.email) } : { rp: null, jt: null, em: null };
+          p.committed = result;
+          trackerSaved.push(p.section);
+        } catch (e) {
+          console.error('Contributor Tracker write failed for ' + p.section + ':', e);
+          trackerFailed.push(p.section + ' (' + (e.message || e) + ')');
+          p.failed = true;
+          trackerStopped = true;
+        }
       }
 
       // V68 — previous Ofsted grades: targeted upsert, own failure handling (never aborts the save above).
@@ -1197,71 +1397,87 @@
         ? ' Your previous Ofsted grades could not be saved — please try again.'
         : (histResult.dateIgnored ? ' Note: the inspection date is only kept together with at least one grade.' : '');
 
-      // Sync Responsible Person access for every section marked pending
-      // above — this now covers BOTH a genuine change this save AND a
-      // retry of a section whose sync failed on a previous save, even if
-      // nothing in the form changed again this time.
+      // Sync Responsible Person access. V77-07 Amendment 1: ONLY for assignments whose tracker write was just CONFIRMED
+      // (exactly one row affected), plus the retry of sections whose sync was already pending when the page loaded and
+      // which are still exactly as loaded. A section whose tracker write failed, or was not attempted, is never synchronised.
+      // The values sent are the values as STORED (returned by the confirmed write / the fresh read), as before:
+      // a genuine change this save, or a retry of a sync that failed on an earlier save.
       const responsiblePersonSyncErrors = [];
-      for (const t of allTrackerRows) {
-        if (!t.access_sync_pending) continue; // nothing to do for this section
-
-        const newEmail = t.email || null;
+      const rpOutcomeNotes = [];   // V77-07 A2-03: what actually happened, per section
+      for (const p of trackerPlan) {
+        if (p.failed) continue;
+        const rec = p.op === 'none' ? (p.retry ? p.cur : null) : p.committed;
+        if (!rec || !rec.access_sync_pending) continue;            // nothing to do for this section
+        if (p.op !== 'none' && !p.needsSync) continue;
 
         try {
           const { data, error } = await sb.functions.invoke('sync-responsible-person-access', {
             body: {
               school_id: schoolId,
-              section: t.section,
-              new_name: t.responsible_person || null,
-              new_email: newEmail,
+              section: p.section,
+              new_name: rec.responsible_person || null,
+              new_email: rec.email || null,
               // The email actually pending revocation — NOT necessarily
               // this save's "before" value, since a retry must keep
               // targeting the original previous person until the whole
               // reconciliation succeeds.
-              old_email: t.access_sync_previous_email,
+              old_email: rec.access_sync_previous_email || null,
             }
           });
           if (error) {
-            let detail = error.message || 'Unknown error';
-            try {
-              if (error.context && typeof error.context.json === 'function') {
-                const errBody = await error.context.json();
-                if (errBody && errBody.error) detail = errBody.error;
-              }
-            } catch (_) { /* fall back to error.message above */ }
-            throw new Error(detail);
+            const info = await a2ErrInfo(error);
+            const ex = new Error(info.detail); ex.outcome = info.outcome; throw ex;
           }
           if (data && data.error) throw new Error(data.error);
+          rpOutcomeNotes.push(a2OutcomeText(data, rec.email || '', p.section));
 
-          // Sync confirmed successful — clear BOTH the pending flag and
-          // the preserved previous-email for this section, since the full
-          // old-revoke + new-grant reconciliation has now genuinely
-          // completed. The tracker filter above ensures a row exists to
-          // update here even for a cleared section, as long as it was
-          // pending.
-          const { error: clearPendingErr } = await sb
-            .from('completion_tracker')
-            .update({ access_sync_pending: false, access_sync_previous_email: null })
-            .eq('school_id', schoolId)
-            .eq('section', t.section);
-          if (clearPendingErr) {
-            // Non-fatal: the access change itself succeeded; at worst
-            // this section gets one harmless extra sync attempt next
-            // save (the sync function is idempotent either way).
-            console.error(`Could not clear access_sync_pending for ${t.section}:`, clearPendingErr);
+          // Sync confirmed successful — clear BOTH the pending flag and the preserved previous-email for this section.
+          // V77-07 Amendment 1: conditional on the row still being exactly as written (id, email, previous email, pending flag),
+          // so a newer change made by someone else in the meantime keeps its own pending marker. A row left completely empty by a
+          // cleared assignment is removed by id. Non-fatal either way: the sync function is idempotent, so a marker that
+          // could not be cleared only causes one harmless extra sync on the next save.
+          try {
+            const empty = !(rec.responsible_person || rec.job_title || rec.email);
+            if (empty) {
+              const { data: cd, error: ce } = await trkGuard(sb.from('completion_tracker').delete(), schoolId, p.section, rec).select('id');
+              if (ce) throw ce;
+              trkOneRow(cd, 'Removing the emptied record');
+              delete TRACKER_BASELINE.bySection[p.section];
+            } else {
+              const { data: cd, error: ce } = await trkGuard(sb.from('completion_tracker').update({ access_sync_pending: false, access_sync_previous_email: null }), schoolId, p.section, rec).select(TRACKER_COLS);
+              if (ce) throw ce;
+              trkOneRow(cd, 'Clearing the pending marker');
+              TRACKER_BASELINE.bySection[p.section] = Object.assign({}, cd[0]);
+            }
+          } catch (clearPendingErr) {
+            console.error(`Could not clear access_sync_pending for ${p.section}:`, clearPendingErr);
           }
         } catch (syncErr) {
-          console.error(`Responsible Person access sync failed for ${t.section}:`, syncErr);
-          responsiblePersonSyncErrors.push(`${t.section}: ${syncErr.message}`);
+          console.error(`Responsible Person access sync failed for ${p.section}:`, syncErr);
+          responsiblePersonSyncErrors.push(`${p.section}: ${syncErr.message}` +
+            (syncErr.outcome === 'replacement_partial' ? ' (the new person already has access; removing the previous person is still pending and will be retried on the next Save)' : ' (nothing was removed; this update is still pending and will be retried on the next Save)'));
           // Deliberately left access_sync_pending = true and
           // access_sync_previous_email unchanged (their values from the
-          // insert above) — this is what makes the failure retryable on
+          // confirmed write above) — this is what makes the failure retryable on
           // the next save, targeting the CORRECT original person, even
           // without the field changing again and regardless of whether
           // this attempt failed before or after the old person was
           // actually revoked (the revoke step and the grant step are both
           // independently idempotent, so retrying the whole pair is safe).
         }
+      }
+
+      // V77-07 Amendment 1: a failed tracker save is never reported as a success.
+      if (trackerFailed.length) {
+        showToast(
+          '⚠ The Contributor Tracker was NOT fully saved — ' + trackerFailed.join('; ') + '.' +
+          (trackerSaved.length ? ' Saved: ' + trackerSaved.join(', ') + '.' : '') +
+          (trackerNotAttempted.length ? ' Not saved: ' + trackerNotAttempted.join(', ') + '.' : '') +
+          ' Reload the page to see the current tracker before trying again.' +
+          (responsiblePersonSyncErrors.length ? ' Responsible Person access update also failed for: ' + responsiblePersonSyncErrors.join('; ') + '.' : '') + histWarn,
+          true
+        );
+        return;
       }
 
       if (responsiblePersonSyncErrors.length) {
@@ -1273,7 +1489,7 @@
         return;
       }
 
-      showToast(histResult.status === 'failed' ? '⚠ School Setup saved, but' + histWarn : '✓ School Setup saved to the database' + histWarn, histResult.status === 'failed');
+      showToast((histResult.status === 'failed' ? '⚠ School Setup saved, but' + histWarn : '✓ School Setup saved to the database' + histWarn) + (rpOutcomeNotes.length ? ' ' + rpOutcomeNotes.join(' ') : ''), histResult.status === 'failed', rpOutcomeNotes.length ? 9000 : undefined);
     } catch (err) {
       console.error(err);
       showToast('⚠ Save failed — see browser console for details', true);

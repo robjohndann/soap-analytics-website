@@ -167,6 +167,8 @@
     if (!raw) return null;
     if ((m = /^(\d{4})$/.exec(raw))) { var y = parseInt(m[1], 10); return { label: raw, year: (y - 1) + '/' + String(y).slice(-2), startYear: y - 1, kind: 'annual', n: null }; }
     if ((m = /^(\d{4})\/(\d{2})\s*\((\d+)\s+half\s+terms?\)$/i.exec(raw))) return { label: raw, year: m[1] + '/' + m[2], startYear: parseInt(m[1], 10), kind: 'daily', n: parseInt(m[3], 10) };
+    // V77-07 A4: DfE's '2025/26 (full year)' is the daily-attendance figure for the whole year to date. It is DAILY (never annual/termly) and sorts after every partial-year '(N half terms)' period (n=6).
+    if ((m = /^(\d{4})\/(\d{2})\s*\(full\s+year\)$/i.exec(raw))) return { label: raw, year: m[1] + '/' + m[2], startYear: parseInt(m[1], 10), kind: 'daily', n: 6 };
     if ((m = /^(\d{4})\/(\d{2})\s*\((\d+)\s+terms?\)$/i.exec(raw))) { var n = parseInt(m[3], 10); return { label: raw, year: m[1] + '/' + m[2], startYear: parseInt(m[1], 10), kind: n >= 3 ? 'annual' : 'termly', n: n }; }
     if ((m = /^(\d{4})\/(\d{2})$/.exec(raw))) return { label: raw, year: raw, startYear: parseInt(m[1], 10), kind: 'annual', n: null };
     // V77-03: a single named term ('2024/25 (autumn term)') is a PART-YEAR figure, kept in the termly series and never compared with an annual one.
@@ -1006,6 +1008,12 @@
     if (c) out.cohorts = cohortTable(c, w, label);
     return out;
   }
+  /** V77-07 A4: the "Year 11 context" column of a cohort table holds a plain-text label (e.g. "Low - Stability"), not a figure. Kept verbatim as a text cell; any other text in this column, and every non-label cell elsewhere, still goes through cellOf and warns as before. */
+  function contextLabelCell(colName, rawIn) {
+    if (!/^year 11 context$/i.test(String(colName || '').trim())) return null;
+    var raw = norm(rawIn);
+    return /^[A-Za-z][A-Za-z ]*[A-Za-z]\s*[-\u2013]\s*[A-Za-z][A-Za-z ]*[A-Za-z]$/.test(raw) ? { raw: raw, st: 'label' } : null;
+  }
   function cohortTable(tbl, w, label, prefixGroups) {
     var rows = rowsOf(tbl), heads = []; if (rows.length < 3) return null;
     var sub = rows[1].map(txt), si = 0, names = [];
@@ -1017,7 +1025,7 @@
     var out = { names: names, rows: [] };
     rows.slice(2).forEach(function (cells) {
       var yr = txt(cells[0]); if (!yr) return;
-      var vs = cells.slice(1).map(function (c) { return cellOf(c.textContent); }); countUnparsed(vs, label + ' cohort ' + yr, w);
+      var vs = cells.slice(1).map(function (c, i) { return contextLabelCell(names[i], c.textContent) || cellOf(c.textContent); }); countUnparsed(vs, label + ' cohort ' + yr, w);
       if (vs.length !== names.length) w.push(label + ' cohort ' + yr + ': ' + vs.length + ' cells for ' + names.length + ' headings');
       out.rows.push({ year: yr, cells: vs });
     });
@@ -4311,7 +4319,7 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
   var MISSING = Soap.MISSING;
 
   // ───────────── normalised value tables (single source for render AND tie-out) ─────────────
-  function colLabel(c) { return c.term || /\(\d+\s+half\s+terms?\)\s*$/i.test(c.label || '') ? c.label : (c.year || c.label); }   // V77-05-04: a daily column keeps its full period label, '2025/26 (5 half terms)'   // V77-03: two named terms of one year need their own headings
+  function colLabel(c) { return c.term || /\((?:\d+\s+half\s+terms?|full\s+year)\)\s*$/i.test(c.label || '') ? c.label : (c.year || c.label); }   // V77-05-04: a daily column keeps its full period label, '2025/26 (5 half terms)'   // V77-03: two named terms of one year need their own headings
   function familyOf(label) {
     var l = String(label);
     if (/^English & Maths/i.test(l)) return 'English & Mathematics thresholds';
@@ -4591,17 +4599,27 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
   }
   function colStart(it, i) { return startYearOf(it.tb.nt.cols[i]); }
   function pupilCountOk(c) { return !!c && c.num != null && c.nKind === 'pupils' && typeof c.n === 'number' && c.n >= MIN_COHORT; }
+  /** V77-07 A4: why a rated measure is not entered in the Strengths / Areas for Improvement ranking (shown to the reader under Additional concerns when the rating is adverse). */
+  function unrankedReason(c) {
+    if (c && c.nKind === 'entries') return 'counted in entries, not pupils, so it is not ranked (the ranking uses pupil measures with at least ' + MIN_COHORT + ' pupils)' + (typeof c.n === 'number' ? ' — ' + c.n + ' entries' : '');
+    if (c && c.nKind === 'pupils' && typeof c.n === 'number' && c.n < MIN_COHORT) return 'fewer than ' + MIN_COHORT + ' pupils (' + c.n + '), so it is not ranked';
+    return 'no verified pupil count is published, so it is not ranked';
+  }
   function analytics(tables, pred) {
     var items = rowsAll(tables).filter(function (it) { return !(it.tb.key === 'termly' || it.tb.key === 'daily' || it.tb.key === 'r3') && it.tb.key !== 'gap' && (!pred || pred(it)); });
-    var gaps = [], deltas = [], seenGap = {}, seenDelta = {}, excluded = { duplicate: 0, noPupilCount: 0, smallCohort: 0, preComparable: 0, singleYear: 0 };
+    var gaps = [], pool = [], deltas = [], seenGap = {}, seenPool = {}, seenDelta = {}, excluded = { duplicate: 0, noPupilCount: 0, smallCohort: 0, preComparable: 0, singleYear: 0 };
     items.forEach(function (it) {
       var r = it.row, isCnt = r.kind === 'count', th = isCnt ? 1 : Core.THRESH[r.kind], li = latestIdx(r); if (li < 0) return;   // V75: permanent-exclusion COUNTS are ranked in units of one pupil, so a red/blue count is never invisible in the panels
       var key = rankKey(it), c = r.cells[li];
       if (c.nat && c.nat.num != null && !c.nat.est && th) {
         var rt = rateOf(c, it.tb.nt, r.lowerBetter);
         if (rt.band) {
+          var gp = { it: it, li: li, c: c, band: rt.band, basis: rt.basis, gap: ((c.num - c.nat.num) * (r.lowerBetter ? -1 : 1)) / th };
           if (seenGap[key]) excluded.duplicate++;
-          else { seenGap[key] = 1; gaps.push({ it: it, li: li, c: c, band: rt.band, basis: rt.basis, gap: ((c.num - c.nat.num) * (r.lowerBetter ? -1 : 1)) / th }); }
+          else { seenGap[key] = 1; gaps.push(gp); }   // every rated measure is still counted, once, exactly as before (rating counts, tiles and Additional concerns are unchanged)
+          // V77-07 A4 ranking correction: Strengths and Areas for Improvement are ranked only from measures whose latest cell has a verified PUPIL count of at least MIN_COHORT
+          // (permanent-exclusion counts keep their approved V75 rule and have no cohort). The test is applied BEFORE de-duplication, so a small-cohort copy can never hide an eligible one.
+          if (!seenPool[key] && (isCnt || pupilCountOk(c))) { seenPool[key] = 1; pool.push(gp); }
         }
       }
       if (!th || isCnt) return;   // counts have no pupil cohort: never ranked for change
@@ -4621,10 +4639,14 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
       seenDelta[key] = 1;
       var d = r.cells[lj].num - r.cells[fi].num; deltas.push({ it: it, fi: fi, li: lj, raw: d, norm: (d * (r.lowerBetter ? -1 : 1)) / th });
     });
-    var good = gaps.filter(function (g) { return g.band === 'exceptional' || g.band === 'strong'; }).sort(function (a, b) { return b.gap - a.gap; });
-    var bad = gaps.filter(function (g) { return g.band === 'attention' || g.band === 'urgent'; }).sort(function (a, b) { return a.gap - b.gap; });
+    var good = pool.filter(function (g) { return g.band === 'exceptional' || g.band === 'strong'; }).sort(function (a, b) { return b.gap - a.gap; });
+    var bad = pool.filter(function (g) { return g.band === 'attention' || g.band === 'urgent'; }).sort(function (a, b) { return a.gap - b.gap; });
+    var rankedKeys = {}; pool.forEach(function (g) { rankedKeys[rankKey(g.it)] = 1; });
+    var notRanked = gaps.filter(function (g) { return !rankedKeys[rankKey(g.it)]; }), unranked = notRanked.filter(function (g) { return g.band === 'attention' || g.band === 'urgent'; }).map(function (g) { return { g: g, reason: unrankedReason(g.c) }; });
+    var before = function (arr, bands) { return arr.filter(function (g) { return bands.indexOf(g.band) >= 0; }); }, ids = function (arr, dir) { return arr.slice().sort(function (a, b) { return dir * (a.gap - b.gap); }).slice(0, 3).map(function (g) { return rankKey(g.it); }).join('|'); };
+    var cohortChanged = ids(before(gaps, ['exceptional', 'strong']), -1) !== ids(before(pool, ['exceptional', 'strong']), -1) || ids(before(gaps, ['attention', 'urgent']), 1) !== ids(before(pool, ['attention', 'urgent']), 1) || unranked.length > 0;
     var up = deltas.filter(function (d) { return d.norm > 0; }).sort(function (a, b) { return b.norm - a.norm; }), down = deltas.filter(function (d) { return d.norm < 0; }).sort(function (a, b) { return a.norm - b.norm; });
-    return { strengths: good.slice(0, 3), attention: bad.slice(0, 3), improved: up.slice(0, 3), regressed: down.slice(0, 3), eligible: gaps.length, comparable: deltas.length, excluded: excluded, all: { gaps: gaps, deltas: deltas } };
+    return { strengths: good.slice(0, 3), attention: bad.slice(0, 3), improved: up.slice(0, 3), regressed: down.slice(0, 3), eligible: gaps.length, comparable: deltas.length, excluded: excluded, all: { gaps: gaps, deltas: deltas, pool: pool }, unranked: unranked, notRankedAbove: notRanked.filter(function (g) { return g.band === 'exceptional' || g.band === 'strong'; }).length, notRankedBelow: unranked.length, cohortChanged: cohortChanged };
   }
 
   // ───────────── V75 Rev 3: additional concerns flagged by the source IDSR ─────────────
@@ -4643,17 +4665,19 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
     var out = [], seen = {}, rankedAdverse = {};
     function PH(it) { return phaseFn ? phaseFn(it) : undefined; }
     // coverage rule: an adverse official judgement is either in the ranked set (counted in the Areas for Improvement figures) or it is listed here. Membership is taken from the ranking itself, not re-derived.
-    A.all.gaps.forEach(function (g) { if (g.band === 'attention' || g.band === 'urgent') rankedAdverse[rankKey(g.it)] = 1; });
+    (phaseFn ? A.all.gaps : (A.all.pool || A.all.gaps)).forEach(function (g) { if (g.band === 'attention' || g.band === 'urgent') rankedAdverse[rankKey(g.it)] = 1; });
+    var unrankedBy = {}; (phaseFn ? [] : (A.unranked || [])).forEach(function (u) { unrankedBy[rankKey(u.g.it)] = u; });   // V77-07 A4: adverse ratings that the cohort rule keeps out of the ranking are listed here instead, never dropped
     rowsAll(tables).filter(function (it) { return it.tb.key !== 'gap'; }).forEach(function (it) {
       var r = it.row, li = latestIdx(r); if (li < 0) return;
       var inYear = it.tb.key === 'termly' || it.tb.key === 'daily' || it.tb.key === 'r3', isR3 = it.tb.key === 'r3';   // part-year figures are never ranked; an adverse one is still listed, labelled as in-year
       var key = rankKey(it) + (inYear ? '|in-year' : ''); if (seen[key] || (!inYear && rankedAdverse[key])) return;
       var d = describe(it), cols = it.tb.nt.cols, lc = r.cells[li], lb = r.lowerBetter, nt = it.tb.nt;
-      if (adverseOfficial(lc, nt, lb)) {
+      var ur = !inYear ? unrankedBy[key] : null;
+      if (adverseOfficial(lc, nt, lb) || ur) {
         var hasNat = lc.nat && lc.nat.num != null && !lc.nat.est;
         seen[key] = 1;
-        out.push({ key: key, kind: 'current', measure: d.measure, group: d.group, year: (inYear ? String(cols[li]).replace(/\s*\(\d+\s+half\s+terms?\)\s*$/i, '') : cols[li]) + (isR3 ? ' (DfE published average)' : inYear ? ' (in-year, part of a year)' : ''), judgement: lc.officialRaw, phase: PH(it),
-          why: isR3 ? 'DfE’s published three-year figure, not a single year, so it is never ranked' : inYear ? 'in-year figure for part of the year, not an annual result, so it is never ranked' : !hasNat ? 'no national figure is published to rank it against' + (lb ? ' (for this measure, higher than national is worse)' : '') : 'not entered in the numerical ranking (no banding threshold for this measure, or another table’s figures for the same measure and pupil group are ranked instead)',
+        out.push({ key: key, kind: 'current', measure: d.measure, group: d.group, year: (inYear ? String(cols[li]).replace(/\s*\(\d+\s+half\s+terms?\)\s*$/i, '') : cols[li]) + (isR3 ? ' (DfE published average)' : inYear ? ' (in-year, part of a year)' : ''), judgement: lc.officialRaw || (ur ? LABEL[ur.g.band] : ''), phase: PH(it),
+          why: ur ? ur.reason : isR3 ? 'DfE’s published three-year figure, not a single year, so it is never ranked' : inYear ? 'in-year figure for part of the year, not an annual result, so it is never ranked' : !hasNat ? 'no national figure is published to rank it against' + (lb ? ' (for this measure, higher than national is worse)' : '') : 'not entered in the numerical ranking (no banding threshold for this measure, or another table’s figures for the same measure and pupil group are ranked instead)',
           go: it.page, chart: isR3 ? null : it.chid });
         return;
       }
@@ -4684,6 +4708,13 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
   function concernItem(c) {
     var go = ' data-go="' + esc(c.go) + '"' + (c.chart ? ' data-chart="' + esc(c.chart) + '"' : '');
     return '<div class="exec-item go concern ' + c.kind + '" tabindex="0" role="link"' + go + '><div><div class="em-label">' + esc(c.measure) + '</div><div class="em-card">' + (c.phase ? '<span class="phtag">' + esc(PHASE_SHORT[c.phase]) + '</span> ' : '') + esc(c.group) + ' · ' + esc(c.year) + ' · ' + (c.kind === 'earlier' ? '<b>Earlier year, not the current position</b> — ' : '') + esc(c.why.replace(/^earlier year, not the current position[:;]?\s*/, '')) + '</div></div><span class="badge ' + (c.kind === 'earlier' ? 'neutral' : 'attention') + '">' + esc(c.judgement) + '</span></div>';
+  }
+  /** V77-07 A4: shown only when the cohort rule kept rated measures out of the Strengths / Areas for Improvement ranking. */
+  function cohortNote(A, inConcerns) {
+    var a = A.notRankedAbove, b = A.notRankedBelow;
+    return '<p class="xnote cohort-note">Strengths and Areas for Improvement are ranked only from pupil measures with at least ' + MIN_COHORT + ' pupils (permanent-exclusion counts follow their own rule). ' +
+      (a ? a + ' measure' + (a === 1 ? '' : 's') + ' rated above national ' + (a === 1 ? 'was' : 'were') + ' not ranked because the group is under ' + MIN_COHORT + ' pupils or is counted in entries; all stay on their own pages with their ratings. ' : '') +
+      (b ? b + ' rated below national ' + (b === 1 ? 'is' : 'are') + (inConcerns ? ' listed under Additional concerns with the reason. ' : ' not ranked here (entries-based results are reported separately); they stay on their own pages with their ratings. ') : '') + 'Their ratings are unchanged.</p>';
   }
   function concernsPanel(list) {
     var shown = list.slice(0, 8), rest = list.slice(8);
@@ -4723,8 +4754,8 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
     var bc = {}; A.all.gaps.forEach(function (g) { bc[g.band] = (bc[g.band] || 0) + 1; });
     var nHigh = (bc.exceptional || 0) + (bc.strong || 0), nExp = bc.expected || 0, nLow = (bc.attention || 0) + (bc.urgent || 0), nAll = A.eligible;
     var lead = nAll ? '<div class="narrative-item narrative-lead">Of the <b>' + nAll + '</b> measures with a national comparison (each measure and pupil group counted once), <b>' + nHigh + '</b> are rated Exceptional or Strong, <b>' + nExp + '</b> Expected and <b>' + nLow + '</b> below national (Needs attention or Urgent improvement).' +
-      (nLow ? ' The ' + Math.min(nLow, 3) + ' furthest below national are listed under Areas for Improvement.' : ' None is rated below national, so there are no Areas for Improvement to list; measures rated Expected are in line with national and are not flagged as weaknesses.') +
-      (nHigh > 3 ? ' The three largest margins above national are listed under Areas of Strength.' : '') +
+      (nLow ? (A.attention.length ? ' The ' + A.attention.length + ' furthest below national' + (A.attention.length === 1 ? ' is' : ' are') + ' listed under Areas for Improvement.' : ' None of them meets the ' + MIN_COHORT + '-pupil rule for ranking, so they are listed under Additional concerns.') : ' None is rated below national, so there are no Areas for Improvement to list; measures rated Expected are in line with national and are not flagged as weaknesses.') +
+      (nHigh > 3 && A.strengths.length === 3 ? ' The three largest margins above national are listed under Areas of Strength.' : '') +
       (CN.length ? ' The source IDSR also flags ' + CN.length + ' additional concern' + (CN.length === 1 ? '' : 's') + ' that SOAP cannot rank; ' + (CN.length === 1 ? 'it is' : 'they are') + ' listed separately under “Additional concerns flagged by the source IDSR”.' : '') + '</div>' : '';
     h += '<div class="heatmap-title" id="sub-narrative">Performance Narrative</div><div class="narrative-panel">' + (lead + A.strengths.map(function (g) { return perfSentence(g, true); }).join('') + A.attention.map(function (g) { return perfSentence(g, false); }).join('') || '<div class="narrative-item muted">No rated areas to describe.</div>') + '</div>';
     h += '<div class="exec-grid">' +
@@ -4735,6 +4766,7 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
     h += concernsPanel(CN);
     h += '<div class="heatmap-title">Improvement Narrative</div><div class="narrative-panel">' + (A.improved.map(function (d) { return changeSentence(d, true); }).join('') + A.regressed.map(function (d) { return changeSentence(d, false); }).join('') || '<div class="narrative-item muted">No year-on-year change to describe.</div>') + '</div>';
     h += '<p class="xnote">Ratings are SOAP’s five-colour national rating, taken from the official position and significance (permanent-exclusion counts follow their own count rule). “Strength” and “improvement” list only areas with a national comparison; areas the source withholds or has no national figure for are not ranked. Strengths and areas for improvement are ranked by ' + STRENGTH_METHOD + '; each measure and pupil group is listed once. An area is only listed for improvement if it is genuinely rated below national: nothing is added to fill the panel. Most improved and most regressed compare the earliest and latest comparable years from 2022/23 onwards (2021/22 is not used because of post-pandemic comparability), and only where both years have a published pupil count of at least 20; measures without a verified pupil count (including A-level figures published per entry) are shown in the tables and charts but are not ranked for change.</p>';
+    if (A.cohortChanged) h += cohortNote(A, true);
     h += ctxBlock;
     // School-context tiles (original .tile style)
     var tiles = [['yeargroup', 'Attendance by Year Group', 'yearGroupAbsence'], ['behaviour', 'Suspensions & Exclusions', ['suspensions', 'permExclusions']], ['movement', 'Pupil Movement & AP', ['pupilMovement', 'alternativeProvision']], ['ks4entries', 'KS4 Subject Entries', 'ks4Entries'], ['sixthform', 'Sixth Form', ['post16QualTypes', 'post16Retention', 'post16Entries', 'post16Summary']], ['similar', 'Similar-School Comparison', 'ks4Summary'], ['destdetail', 'Destinations in Detail', 'destinationsDetail'], ['findings', 'Context & Official Findings', 'officialFindings']];
@@ -4752,8 +4784,8 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
   function narrLib() { return typeof require === 'function' && typeof module === 'object' ? require('./idsr-narrative.js') : (typeof self !== 'undefined' ? self : this).IdsrNarrative; }
   /** Per-phase analytics (unchanged functions, one call per phase) plus the source-flagged concerns. Computed once per build. */
   function atAnalysis(model, ex, tables) {
-    var per = {}, merged = { all: { gaps: [] } };
-    PHASES.forEach(function (p) { per[p[0]] = analytics(tables, function (it) { return phaseOfItem(it) === p[0]; }); merged.all.gaps = merged.all.gaps.concat(per[p[0]].all.gaps); });
+    var per = {}, merged = { all: { gaps: [], pool: [] }, unranked: [] };
+    PHASES.forEach(function (p) { per[p[0]] = analytics(tables, function (it) { return phaseOfItem(it) === p[0]; }); merged.all.gaps = merged.all.gaps.concat(per[p[0]].all.gaps); merged.all.pool = merged.all.pool.concat(per[p[0]].all.pool); merged.unranked = merged.unranked.concat(per[p[0]].unranked); });
     return { per: per, CN: concerns(model, ex, tables, merged, phaseOfItem) };
   }
   function okPupils(g) { return pupilCountOk(g.c); }
@@ -4807,7 +4839,7 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
       panel('Areas for Improvement', '&#9888;', 'Up to 3 measures in this phase rated below national; ranked by gap to national in multiples of each measure’s banding threshold', A.attention.map(function (g) { return execItem(g, 'band', ph); }), 'No measure with a national comparison is currently rated below national.') +
       panel('Top 3 Most Improved', '&#8599;', 'Biggest rise between comparable full years (2022/23 onwards; both years need at least 20 pupils)', A.improved.map(function (d) { return execItem(d, 'change', ph); }), 'No improvements to report.') +
       panel('Top 3 Most Regressed', '&#8600;', 'Biggest fall between comparable full years (2022/23 onwards; both years need at least 20 pupils)', A.regressed.map(function (d) { return execItem(d, 'change', ph); }), 'No declines to report.') + '</div>' +
-      (imp ? '<div class="narrative-panel phase-change">' + imp + '</div>' : '') + '<p class="xnote"><b>Fell materially:</b> ' + esc(narrLib().materialTip(Core.THRESH)) + '</p></div>';
+      (A.cohortChanged ? cohortNote(A, false) : '') + (imp ? '<div class="narrative-panel phase-change">' + imp + '</div>' : '') + '<p class="xnote"><b>Fell materially:</b> ' + esc(narrLib().materialTip(Core.THRESH)) + '</p></div>';
   }
   var CONTEXT_TILES = [['yeargroup', 'Attendance by Year Group', 'yearGroupAbsence'], ['behaviour', 'Suspensions & Exclusions', ['suspensions', 'permExclusions']], ['movement', 'Pupil Movement & AP', ['pupilMovement', 'alternativeProvision']], ['ks4entries', 'KS4 Subject Entries', 'ks4Entries'], ['sixthform', 'Sixth Form', ['post16QualTypes', 'post16Retention', 'post16Entries', 'post16Summary']], ['similar', 'Similar-School Comparison', 'ks4Summary'], ['ks2summary', 'KS2 National & Similar Schools', 'ks2Summary'], ['eyfs', 'EYFS National Context', 'eyfsNationals'], ['destdetail', 'Destinations in Detail', 'destinationsDetail'], ['findings', 'Context & Official Findings', 'officialFindings']];
   /** The School Context page (G2): the five context tabs and the section tiles, moved verbatim from the Overview. */
@@ -5402,7 +5434,7 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
     var hasFsm = Object.keys(model.measures).some(function (k) { return /^FSM - /.test(k); }), hasFsm6 = Object.keys(model.measures).some(function (k) { return /^FSM6 - /.test(k); });
     if (hasFsm !== hasFsm6) warnings.push({ code: 'only_one_of_fsm_fsm6', detail: hasFsm ? 'FSM only' : 'FSM6 only' });
 
-    (model.warnings || []).forEach(function (w) { warnings.push({ code: 'parser_' + w.code, detail: (w.where || '') + ' ' + (w.value || '') }); });
+    (model.warnings || []).forEach(function (w) { if (typeof w === 'string') warnings.push({ code: 'parser_extractor_failed', detail: w }); else warnings.push({ code: 'parser_' + w.code, detail: (w.where || '') + ' ' + (w.value || '') }); });   // V77-07 A4: a string warning (additional-section extractor failure) now has its own code instead of 'parser_undefined'
     return finish();
     function finish() {
       var cats = inventory.byCategory;
@@ -5616,6 +5648,7 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
     all_through_unattributed_measure: 'This all-through IDSR contains a measure that SOAP Analytics cannot attribute to a phase, so it cannot be published until that measure is catalogued.',
     all_through_primary_not_displayed: 'This all-through IDSR contains a primary measure that the report does not display, so it cannot be published.',
     validation_failed: 'This IDSR failed validation, so it cannot be published.',
+    data_not_displayed: 'Information in this IDSR could not be read or displayed (see the import diagnostics for what and where), so it cannot be published until that is corrected. This cannot be overridden by acknowledging it.',
     exemplar_for_real_school: 'This file is the government’s exemplar IDSR (URN 999999), not a real school’s data. It cannot be published to a school whose URN is not 999999.'
   };
 
@@ -5633,6 +5666,36 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
     return bits;
   }
 
+  /**
+   * V77-07 A4. MATERIAL omission = data that IS in the source IDSR but was dropped or misread by the reader: a period label that is not recognised (row not shown),
+   * a row or table that could not be read, a value that could not be parsed, or an additional-section extractor that failed. These block publication; there is no acknowledgement override.
+   * Everything else (measures the IDSR does not contain, tables/measures of a kind not yet displayed, sections only partly read) is a NON-material coverage limitation.
+   */
+  var COVERAGE_NOTE = 'Some information in the original Ofsted IDSR is not included in this summary. Please refer to the original IDSR for full details.';
+  function materialOmissions(rc, cov) {
+    var out = [];
+    ((rc && rc.warnings) || []).forEach(function (w) { if (/^parser_/.test(w.code) || w.code === 'unparsed_value_cell') out.push({ code: w.code, detail: String(w.detail || '').replace(/\s+$/, '') }); });
+    if (cov && cov.failed) cov.failed.forEach(function (k) { out.push({ code: 'section_not_read', detail: String(k) }); });
+    return out;
+  }
+  /** Source information that exists but is not shown (the only case in which the school-facing coverage note applies). */
+  function coverageLimited(rc, cov, mc) {
+    return !!((mc && mc.undisplayed.length) || (rc && rc.inventory && rc.inventory.unrecognisedCount) || (cov && (cov.partial.length || cov.failed.length)));
+  }
+  /**
+   * School-facing split of a stored report's limitation text (works for new AND existing publications, at render time).
+   *  absent  = plain-English statements that the IDSR itself does not contain something ("not in this report") — kept as before, they explain the "not available" cells;
+   *  note    = source information exists but is not shown → the single approved coverage sentence. New publications carry report.coverageNote (exact); older ones are classified from their stored text,
+   *            and a stored data-warning count of unknown nature is treated as possible omission (safe side). Counts of data warnings and administrator instructions are never shown to schools.
+   */
+  var ABSENT_RE = /normally shown here (?:is|are) not in this report|^not in this report:|additional sections? (?:is|are) not in this report/;
+  function schoolLimitations(report) {
+    var bits = (report && report.limitations) || [], absent = [], legacyNote = false;
+    for (var i = 0; i < bits.length; i++) { var b = String(bits[i]); if (ABSENT_RE.test(b)) absent.push(b); else legacyNote = true; }
+    return { absent: absent, note: report && typeof report.coverageNote === 'boolean' ? report.coverageNote : legacyNote };
+  }
+  function schoolCoverageNote(report) { return schoolLimitations(report).note; }
+
   var SNAPSHOT_SCHEMA = 1, BUILDER = 'soap-analytics-idsr-77.3.0-s3';
   /**
    * Everything the publish function needs, built from ONE parsed model: the two frozen snapshots (no school id, no live links, Dashboard links included —
@@ -5641,13 +5704,14 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
   function buildCandidate(model, src, rc, cov, mc, school, sourceSha) {
     var as = assess(model, rc, school, true, src), rcx = reportContext(model, src), AT_ON = rcx.ctx.reportType === 'all-through';
     if (AT_ON && mc && mc.primary) { if (mc.primary.unattributed.length) as.blockPublish = as.blockPublish || 'all_through_unattributed_measure'; if (mc.primary.notDisplayed.length) as.blockPublish = as.blockPublish || 'all_through_primary_not_displayed'; }
+    var mat = materialOmissions(rc, cov); as.materialOmissions = mat; if (mat.length) as.blockPublish = as.blockPublish || 'data_not_displayed';   // V77-07 A4: no acknowledgement can override this
     var ctx = { schoolName: (school && school.name) || '', periodLabel: monthYear(model.meta.releaseDate) ? 'IDSR ' + monthYear(model.meta.releaseDate) : '', releaseDate: model.meta.releaseDate || null, sourceSha256: sourceSha, modelSha256: Core.modelHash(model), dashboardAvailable: true };
     for (var ck in rcx.ctx) ctx[ck] = rcx.ctx[ck];
     var soap = Snap.buildSoapSnapshot(model, ctx), dash = Dash.buildDashboardSnapshot(model, ctx);
     var tieSoap = Rec.verifySnapshot(Snap.expectedCells(model, 'soap', AT_ON ? ctx : undefined), soap), tieDash = Rec.verifySnapshot(Snap.expectedCells(model, 'dash', AT_ON ? ctx : undefined), dash);
     var parsed = Core.canonical(model);
     var report = { status: rc.status, tieSoap: tieSoap.status, tieDash: tieDash.status, urn: as.urn, exemplar: as.exemplar, limitations: limitationBits(rc, cov, mc),
-      hard: rc.hard.length, warnings: rc.warnings.length, tablesInFile: rc.inventory.totalTables, unrecognised: rc.inventory.unrecognisedCount, performanceCellsTied: rc.tieOut.cellsTied + '/' + rc.tieOut.cellsChecked,
+      hard: rc.hard.length, warnings: rc.warnings.length, warningDetails: rc.warnings.slice(0, 40).map(function (w) { return { code: w.code, detail: String(w.detail || '').slice(0, 200) }; }), materialOmissions: mat.length, coverageNote: coverageLimited(rc, cov, mc), tablesInFile: rc.inventory.totalTables, unrecognised: rc.inventory.unrecognisedCount, performanceCellsTied: rc.tieOut.cellsTied + '/' + rc.tieOut.cellsChecked,
       absentMeasures: mc ? mc.absent.length : null, undisplayedMeasures: mc ? mc.undisplayed.length : null, absentStructures: mc ? mc.absentStructures : [], displayCells: { soap: tieSoap.cells, dash: tieDash.cells },
       reportType: rcx.cls.type, classification: { type: rcx.cls.type, evidence: rcx.cls.evidence, version: rcx.cls.version } };
     if (AT_ON) { report.sourceIdentity = ctx.sourceIdentityLine; report.primaryMeasures = mc && mc.primary ? { total: mc.primary.total, displayed: mc.primary.displayed.length, absentFromSource: mc.primary.absentFromSource, notPublishedInSource: (ctx.notPublished || []).map(function (n) { return n.heading; }) } : null; }
@@ -5755,6 +5819,7 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
       if (mc && mc.primary) lines.push('Primary measures displayed: ' + mc.primary.displayed.length + ' of ' + mc.primary.total + (mc.primary.absentFromSource.length ? ' · not in this report: ' + mc.primary.absentFromSource.length : '') + (mc.primary.unattributed.length ? ' · UNATTRIBUTED measures: ' + mc.primary.unattributed.length : ''));
       lines.push('Display tie-out: SOAP ' + info.tieSoap.status + ' (' + info.tieSoap.cells + ' cells), Dashboard ' + info.tieDash.status + ' (' + info.tieDash.cells + ' cells)');
       lines.push('Report URN: ' + (info.assess.urn || 'not stated') + ' · file: ' + ((S.sub && S.sub.file_name) || (S.legacy && S.legacy.file_name) || '?') + ' · source sha256 ' + String(info.sha || '').slice(0, 16));
+      if (info.assess && info.assess.materialOmissions && info.assess.materialOmissions.length) lines.unshift('PUBLICATION BLOCKED — information in this IDSR was not read or displayed (' + info.assess.materialOmissions.length + '). It must be corrected before this can be published; acknowledging does not override it: ' + info.assess.materialOmissions.slice(0, 8).map(function (m) { return m.code + (m.detail ? ' [' + m.detail + ']' : ''); }).join('; '));
       var sum = el('summary', { text: 'Import diagnostics (administrators only)' }); var ul = el('ul');
       lines.forEach(function (l) { ul.appendChild(el('li', { text: l })); });
       var more = [].concat(rc.hard.map(function (h) { return 'HARD: ' + h.code + ' ' + (h.detail || ''); }), rc.warnings.slice(0, 40).map(function (w) { return 'warn: ' + w.code + ' ' + (w.detail || ''); }),
@@ -5763,6 +5828,12 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
       d.appendChild(sum); d.appendChild(ul); d.style.display = 'block';
     }
     function limitationText(bits) { return bits && bits.length ? 'Limitations: ' + bits.join('; ') + '. Nothing missing has been estimated or filled in. ' + (S.isAdmin ? 'Administrators: see the import diagnostics (preview of the submission) for detail.' : 'Please tell SOAP Analytics if something looks wrong.') : ''; }
+    /** V77-07 A4: administrators keep the full technical text; schools see only the plain coverage note, and only when applicable (applied at render time, so existing publications are covered too). */
+    function bannerLimitation(report) {
+      if (S.isAdmin) return limitationText(report && report.limitations);
+      var sl = schoolLimitations(report), t = sl.absent.length ? 'Limitations: ' + sl.absent.join('; ') + '. Nothing missing has been estimated or filled in. Please tell SOAP Analytics if something looks wrong.' : '';
+      return sl.note ? (t ? t + ' ' : '') + COVERAGE_NOTE : t;
+    }
 
     function openOther(which, p) {
       var id = S.viewSchoolId; if (!id || !UUID.test(id)) return;
@@ -5806,15 +5877,16 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
         var mc = measureCoverage(model, reportContext(model, src).ctx), cand = buildCandidate(model, src, rc, cov, mc, S.school, sha);
         if (cand.tieSoap.status !== 'pass' || cand.tieDash.status !== 'pass') { S.diag.blockPublish = 'validation_failed'; diagnosticsPanel({ rc: rc, coverage: cov, mc: mc, tieSoap: cand.tieSoap, tieDash: cand.tieDash, assess: as, sha: sha }); return fail('tie', { code: 'display_tie_out_failed', message: 'The displayed figures did not match the extracted data.' }); }
         if (cand.as.blockPublish && !S.diag.blockPublish) S.diag.blockPublish = cand.as.blockPublish;
-        diagnosticsPanel({ rc: rc, coverage: cov, mc: mc, tieSoap: cand.tieSoap, tieDash: cand.tieDash, assess: as, sha: sha, report: cand.report });
-        return { cand: cand, as: as, rc: rc };
+        diagnosticsPanel({ rc: rc, coverage: cov, mc: mc, tieSoap: cand.tieSoap, tieDash: cand.tieDash, assess: cand.as, sha: sha, report: cand.report });
+        return { cand: cand, as: cand.as, rc: rc };
       });
     }
     function bannerFor(report, as, extra) {
-      var lt = limitationText(report && report.limitations), parts = [], tone = 'info';
+      var lt = bannerLimitation(report), parts = [], tone = 'info';
       if (extra) { parts.push(extra.text); tone = extra.tone || tone; }
       if (report && report.exemplar) { parts.unshift('TEST DATA — this is the government’s exemplar IDSR (URN 999999), not a real school’s results.'); tone = 'bad'; }
       if (lt) { parts.push(lt); if (tone === 'info') tone = 'warn'; }
+      if (as && as.blockPublish === 'data_not_displayed' && S.isAdmin) { parts.push(BLOCK_TEXT.data_not_displayed); tone = 'bad'; }
       notice(parts.join(' '), tone);
     }
 
@@ -5956,6 +6028,6 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
     return run();
   }
 
-  return { VIEWER_VERSION: VIEWER_VERSION, boot: boot, assess: assess, measureCoverage: measureCoverage, reportContext: reportContext, limitationBits: limitationBits, buildCandidate: buildCandidate, SNAPSHOT_SCHEMA: SNAPSHOT_SCHEMA, featuresFor: featuresFor, PACKAGE_FEATURES: PACKAGE_FEATURES, FULL_ACCESS_ROLES: FULL_ACCESS_ROLES, BLOCK_TEXT: BLOCK_TEXT, EXEMPLAR_URN: EXEMPLAR_URN, VIEW_LIMITS: VIEW_LIMITS };
+  return { VIEWER_VERSION: VIEWER_VERSION, boot: boot, assess: assess, measureCoverage: measureCoverage, reportContext: reportContext, limitationBits: limitationBits, materialOmissions: materialOmissions, coverageLimited: coverageLimited, schoolCoverageNote: schoolCoverageNote, schoolLimitations: schoolLimitations, COVERAGE_NOTE: COVERAGE_NOTE, BLOCK_TEXT: BLOCK_TEXT, buildCandidate: buildCandidate, SNAPSHOT_SCHEMA: SNAPSHOT_SCHEMA, featuresFor: featuresFor, PACKAGE_FEATURES: PACKAGE_FEATURES, FULL_ACCESS_ROLES: FULL_ACCESS_ROLES, BLOCK_TEXT: BLOCK_TEXT, EXEMPLAR_URN: EXEMPLAR_URN, VIEW_LIMITS: VIEW_LIMITS };
 });
 
