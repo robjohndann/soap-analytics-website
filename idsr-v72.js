@@ -1008,6 +1008,12 @@
     if (c) out.cohorts = cohortTable(c, w, label);
     return out;
   }
+  /** V77-07 A4: the "Year 11 context" column of a cohort table holds a plain-text label (e.g. "Low - Stability"), not a figure. Kept verbatim as a text cell; any other text in this column, and every non-label cell elsewhere, still goes through cellOf and warns as before. */
+  function contextLabelCell(colName, rawIn) {
+    if (!/^year 11 context$/i.test(String(colName || '').trim())) return null;
+    var raw = norm(rawIn);
+    return /^[A-Za-z][A-Za-z ]*[A-Za-z]\s*[-\u2013]\s*[A-Za-z][A-Za-z ]*[A-Za-z]$/.test(raw) ? { raw: raw, st: 'label' } : null;
+  }
   function cohortTable(tbl, w, label, prefixGroups) {
     var rows = rowsOf(tbl), heads = []; if (rows.length < 3) return null;
     var sub = rows[1].map(txt), si = 0, names = [];
@@ -1019,7 +1025,7 @@
     var out = { names: names, rows: [] };
     rows.slice(2).forEach(function (cells) {
       var yr = txt(cells[0]); if (!yr) return;
-      var vs = cells.slice(1).map(function (c) { return cellOf(c.textContent); }); countUnparsed(vs, label + ' cohort ' + yr, w);
+      var vs = cells.slice(1).map(function (c, i) { return contextLabelCell(names[i], c.textContent) || cellOf(c.textContent); }); countUnparsed(vs, label + ' cohort ' + yr, w);
       if (vs.length !== names.length) w.push(label + ' cohort ' + yr + ': ' + vs.length + ' cells for ' + names.length + ' headings');
       out.rows.push({ year: yr, cells: vs });
     });
