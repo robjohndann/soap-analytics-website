@@ -167,6 +167,8 @@
     if (!raw) return null;
     if ((m = /^(\d{4})$/.exec(raw))) { var y = parseInt(m[1], 10); return { label: raw, year: (y - 1) + '/' + String(y).slice(-2), startYear: y - 1, kind: 'annual', n: null }; }
     if ((m = /^(\d{4})\/(\d{2})\s*\((\d+)\s+half\s+terms?\)$/i.exec(raw))) return { label: raw, year: m[1] + '/' + m[2], startYear: parseInt(m[1], 10), kind: 'daily', n: parseInt(m[3], 10) };
+    // V77-07 A4: DfE's '2025/26 (full year)' is the daily-attendance figure for the whole year to date. It is DAILY (never annual/termly) and sorts after every partial-year '(N half terms)' period (n=6).
+    if ((m = /^(\d{4})\/(\d{2})\s*\(full\s+year\)$/i.exec(raw))) return { label: raw, year: m[1] + '/' + m[2], startYear: parseInt(m[1], 10), kind: 'daily', n: 6 };
     if ((m = /^(\d{4})\/(\d{2})\s*\((\d+)\s+terms?\)$/i.exec(raw))) { var n = parseInt(m[3], 10); return { label: raw, year: m[1] + '/' + m[2], startYear: parseInt(m[1], 10), kind: n >= 3 ? 'annual' : 'termly', n: n }; }
     if ((m = /^(\d{4})\/(\d{2})$/.exec(raw))) return { label: raw, year: raw, startYear: parseInt(m[1], 10), kind: 'annual', n: null };
     // V77-03: a single named term ('2024/25 (autumn term)') is a PART-YEAR figure, kept in the termly series and never compared with an annual one.
@@ -4311,7 +4313,7 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
   var MISSING = Soap.MISSING;
 
   // ───────────── normalised value tables (single source for render AND tie-out) ─────────────
-  function colLabel(c) { return c.term || /\(\d+\s+half\s+terms?\)\s*$/i.test(c.label || '') ? c.label : (c.year || c.label); }   // V77-05-04: a daily column keeps its full period label, '2025/26 (5 half terms)'   // V77-03: two named terms of one year need their own headings
+  function colLabel(c) { return c.term || /\((?:\d+\s+half\s+terms?|full\s+year)\)\s*$/i.test(c.label || '') ? c.label : (c.year || c.label); }   // V77-05-04: a daily column keeps its full period label, '2025/26 (5 half terms)'   // V77-03: two named terms of one year need their own headings
   function familyOf(label) {
     var l = String(label);
     if (/^English & Maths/i.test(l)) return 'English & Mathematics thresholds';
@@ -5402,7 +5404,7 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
     var hasFsm = Object.keys(model.measures).some(function (k) { return /^FSM - /.test(k); }), hasFsm6 = Object.keys(model.measures).some(function (k) { return /^FSM6 - /.test(k); });
     if (hasFsm !== hasFsm6) warnings.push({ code: 'only_one_of_fsm_fsm6', detail: hasFsm ? 'FSM only' : 'FSM6 only' });
 
-    (model.warnings || []).forEach(function (w) { warnings.push({ code: 'parser_' + w.code, detail: (w.where || '') + ' ' + (w.value || '') }); });
+    (model.warnings || []).forEach(function (w) { if (typeof w === 'string') warnings.push({ code: 'parser_extractor_failed', detail: w }); else warnings.push({ code: 'parser_' + w.code, detail: (w.where || '') + ' ' + (w.value || '') }); });   // V77-07 A4: a string warning (additional-section extractor failure) now has its own code instead of 'parser_undefined'
     return finish();
     function finish() {
       var cats = inventory.byCategory;
@@ -5616,6 +5618,7 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
     all_through_unattributed_measure: 'This all-through IDSR contains a measure that SOAP Analytics cannot attribute to a phase, so it cannot be published until that measure is catalogued.',
     all_through_primary_not_displayed: 'This all-through IDSR contains a primary measure that the report does not display, so it cannot be published.',
     validation_failed: 'This IDSR failed validation, so it cannot be published.',
+    data_not_displayed: 'Information in this IDSR could not be read or displayed (see the import diagnostics for what and where), so it cannot be published until that is corrected. This cannot be overridden by acknowledging it.',
     exemplar_for_real_school: 'This file is the government’s exemplar IDSR (URN 999999), not a real school’s data. It cannot be published to a school whose URN is not 999999.'
   };
 
@@ -5633,6 +5636,36 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
     return bits;
   }
 
+  /**
+   * V77-07 A4. MATERIAL omission = data that IS in the source IDSR but was dropped or misread by the reader: a period label that is not recognised (row not shown),
+   * a row or table that could not be read, a value that could not be parsed, or an additional-section extractor that failed. These block publication; there is no acknowledgement override.
+   * Everything else (measures the IDSR does not contain, tables/measures of a kind not yet displayed, sections only partly read) is a NON-material coverage limitation.
+   */
+  var COVERAGE_NOTE = 'Some information in the original Ofsted IDSR is not included in this summary. Please refer to the original IDSR for full details.';
+  function materialOmissions(rc, cov) {
+    var out = [];
+    ((rc && rc.warnings) || []).forEach(function (w) { if (/^parser_/.test(w.code) || w.code === 'unparsed_value_cell') out.push({ code: w.code, detail: String(w.detail || '').replace(/\s+$/, '') }); });
+    if (cov && cov.failed) cov.failed.forEach(function (k) { out.push({ code: 'section_not_read', detail: String(k) }); });
+    return out;
+  }
+  /** Source information that exists but is not shown (the only case in which the school-facing coverage note applies). */
+  function coverageLimited(rc, cov, mc) {
+    return !!((mc && mc.undisplayed.length) || (rc && rc.inventory && rc.inventory.unrecognisedCount) || (cov && (cov.partial.length || cov.failed.length)));
+  }
+  /**
+   * School-facing split of a stored report's limitation text (works for new AND existing publications, at render time).
+   *  absent  = plain-English statements that the IDSR itself does not contain something ("not in this report") — kept as before, they explain the "not available" cells;
+   *  note    = source information exists but is not shown → the single approved coverage sentence. New publications carry report.coverageNote (exact); older ones are classified from their stored text,
+   *            and a stored data-warning count of unknown nature is treated as possible omission (safe side). Counts of data warnings and administrator instructions are never shown to schools.
+   */
+  var ABSENT_RE = /normally shown here (?:is|are) not in this report|^not in this report:|additional sections? (?:is|are) not in this report/;
+  function schoolLimitations(report) {
+    var bits = (report && report.limitations) || [], absent = [], legacyNote = false;
+    for (var i = 0; i < bits.length; i++) { var b = String(bits[i]); if (ABSENT_RE.test(b)) absent.push(b); else legacyNote = true; }
+    return { absent: absent, note: report && typeof report.coverageNote === 'boolean' ? report.coverageNote : legacyNote };
+  }
+  function schoolCoverageNote(report) { return schoolLimitations(report).note; }
+
   var SNAPSHOT_SCHEMA = 1, BUILDER = 'soap-analytics-idsr-77.3.0-s3';
   /**
    * Everything the publish function needs, built from ONE parsed model: the two frozen snapshots (no school id, no live links, Dashboard links included —
@@ -5641,13 +5674,14 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
   function buildCandidate(model, src, rc, cov, mc, school, sourceSha) {
     var as = assess(model, rc, school, true, src), rcx = reportContext(model, src), AT_ON = rcx.ctx.reportType === 'all-through';
     if (AT_ON && mc && mc.primary) { if (mc.primary.unattributed.length) as.blockPublish = as.blockPublish || 'all_through_unattributed_measure'; if (mc.primary.notDisplayed.length) as.blockPublish = as.blockPublish || 'all_through_primary_not_displayed'; }
+    var mat = materialOmissions(rc, cov); as.materialOmissions = mat; if (mat.length) as.blockPublish = as.blockPublish || 'data_not_displayed';   // V77-07 A4: no acknowledgement can override this
     var ctx = { schoolName: (school && school.name) || '', periodLabel: monthYear(model.meta.releaseDate) ? 'IDSR ' + monthYear(model.meta.releaseDate) : '', releaseDate: model.meta.releaseDate || null, sourceSha256: sourceSha, modelSha256: Core.modelHash(model), dashboardAvailable: true };
     for (var ck in rcx.ctx) ctx[ck] = rcx.ctx[ck];
     var soap = Snap.buildSoapSnapshot(model, ctx), dash = Dash.buildDashboardSnapshot(model, ctx);
     var tieSoap = Rec.verifySnapshot(Snap.expectedCells(model, 'soap', AT_ON ? ctx : undefined), soap), tieDash = Rec.verifySnapshot(Snap.expectedCells(model, 'dash', AT_ON ? ctx : undefined), dash);
     var parsed = Core.canonical(model);
     var report = { status: rc.status, tieSoap: tieSoap.status, tieDash: tieDash.status, urn: as.urn, exemplar: as.exemplar, limitations: limitationBits(rc, cov, mc),
-      hard: rc.hard.length, warnings: rc.warnings.length, tablesInFile: rc.inventory.totalTables, unrecognised: rc.inventory.unrecognisedCount, performanceCellsTied: rc.tieOut.cellsTied + '/' + rc.tieOut.cellsChecked,
+      hard: rc.hard.length, warnings: rc.warnings.length, warningDetails: rc.warnings.slice(0, 40).map(function (w) { return { code: w.code, detail: String(w.detail || '').slice(0, 200) }; }), materialOmissions: mat.length, coverageNote: coverageLimited(rc, cov, mc), tablesInFile: rc.inventory.totalTables, unrecognised: rc.inventory.unrecognisedCount, performanceCellsTied: rc.tieOut.cellsTied + '/' + rc.tieOut.cellsChecked,
       absentMeasures: mc ? mc.absent.length : null, undisplayedMeasures: mc ? mc.undisplayed.length : null, absentStructures: mc ? mc.absentStructures : [], displayCells: { soap: tieSoap.cells, dash: tieDash.cells },
       reportType: rcx.cls.type, classification: { type: rcx.cls.type, evidence: rcx.cls.evidence, version: rcx.cls.version } };
     if (AT_ON) { report.sourceIdentity = ctx.sourceIdentityLine; report.primaryMeasures = mc && mc.primary ? { total: mc.primary.total, displayed: mc.primary.displayed.length, absentFromSource: mc.primary.absentFromSource, notPublishedInSource: (ctx.notPublished || []).map(function (n) { return n.heading; }) } : null; }
@@ -5755,6 +5789,7 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
       if (mc && mc.primary) lines.push('Primary measures displayed: ' + mc.primary.displayed.length + ' of ' + mc.primary.total + (mc.primary.absentFromSource.length ? ' · not in this report: ' + mc.primary.absentFromSource.length : '') + (mc.primary.unattributed.length ? ' · UNATTRIBUTED measures: ' + mc.primary.unattributed.length : ''));
       lines.push('Display tie-out: SOAP ' + info.tieSoap.status + ' (' + info.tieSoap.cells + ' cells), Dashboard ' + info.tieDash.status + ' (' + info.tieDash.cells + ' cells)');
       lines.push('Report URN: ' + (info.assess.urn || 'not stated') + ' · file: ' + ((S.sub && S.sub.file_name) || (S.legacy && S.legacy.file_name) || '?') + ' · source sha256 ' + String(info.sha || '').slice(0, 16));
+      if (info.assess && info.assess.materialOmissions && info.assess.materialOmissions.length) lines.unshift('PUBLICATION BLOCKED — information in this IDSR was not read or displayed (' + info.assess.materialOmissions.length + '). It must be corrected before this can be published; acknowledging does not override it: ' + info.assess.materialOmissions.slice(0, 8).map(function (m) { return m.code + (m.detail ? ' [' + m.detail + ']' : ''); }).join('; '));
       var sum = el('summary', { text: 'Import diagnostics (administrators only)' }); var ul = el('ul');
       lines.forEach(function (l) { ul.appendChild(el('li', { text: l })); });
       var more = [].concat(rc.hard.map(function (h) { return 'HARD: ' + h.code + ' ' + (h.detail || ''); }), rc.warnings.slice(0, 40).map(function (w) { return 'warn: ' + w.code + ' ' + (w.detail || ''); }),
@@ -5763,6 +5798,12 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
       d.appendChild(sum); d.appendChild(ul); d.style.display = 'block';
     }
     function limitationText(bits) { return bits && bits.length ? 'Limitations: ' + bits.join('; ') + '. Nothing missing has been estimated or filled in. ' + (S.isAdmin ? 'Administrators: see the import diagnostics (preview of the submission) for detail.' : 'Please tell SOAP Analytics if something looks wrong.') : ''; }
+    /** V77-07 A4: administrators keep the full technical text; schools see only the plain coverage note, and only when applicable (applied at render time, so existing publications are covered too). */
+    function bannerLimitation(report) {
+      if (S.isAdmin) return limitationText(report && report.limitations);
+      var sl = schoolLimitations(report), t = sl.absent.length ? 'Limitations: ' + sl.absent.join('; ') + '. Nothing missing has been estimated or filled in. Please tell SOAP Analytics if something looks wrong.' : '';
+      return sl.note ? (t ? t + ' ' : '') + COVERAGE_NOTE : t;
+    }
 
     function openOther(which, p) {
       var id = S.viewSchoolId; if (!id || !UUID.test(id)) return;
@@ -5806,15 +5847,16 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
         var mc = measureCoverage(model, reportContext(model, src).ctx), cand = buildCandidate(model, src, rc, cov, mc, S.school, sha);
         if (cand.tieSoap.status !== 'pass' || cand.tieDash.status !== 'pass') { S.diag.blockPublish = 'validation_failed'; diagnosticsPanel({ rc: rc, coverage: cov, mc: mc, tieSoap: cand.tieSoap, tieDash: cand.tieDash, assess: as, sha: sha }); return fail('tie', { code: 'display_tie_out_failed', message: 'The displayed figures did not match the extracted data.' }); }
         if (cand.as.blockPublish && !S.diag.blockPublish) S.diag.blockPublish = cand.as.blockPublish;
-        diagnosticsPanel({ rc: rc, coverage: cov, mc: mc, tieSoap: cand.tieSoap, tieDash: cand.tieDash, assess: as, sha: sha, report: cand.report });
-        return { cand: cand, as: as, rc: rc };
+        diagnosticsPanel({ rc: rc, coverage: cov, mc: mc, tieSoap: cand.tieSoap, tieDash: cand.tieDash, assess: cand.as, sha: sha, report: cand.report });
+        return { cand: cand, as: cand.as, rc: rc };
       });
     }
     function bannerFor(report, as, extra) {
-      var lt = limitationText(report && report.limitations), parts = [], tone = 'info';
+      var lt = bannerLimitation(report), parts = [], tone = 'info';
       if (extra) { parts.push(extra.text); tone = extra.tone || tone; }
       if (report && report.exemplar) { parts.unshift('TEST DATA — this is the government’s exemplar IDSR (URN 999999), not a real school’s results.'); tone = 'bad'; }
       if (lt) { parts.push(lt); if (tone === 'info') tone = 'warn'; }
+      if (as && as.blockPublish === 'data_not_displayed' && S.isAdmin) { parts.push(BLOCK_TEXT.data_not_displayed); tone = 'bad'; }
       notice(parts.join(' '), tone);
     }
 
@@ -5956,6 +5998,6 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
     return run();
   }
 
-  return { VIEWER_VERSION: VIEWER_VERSION, boot: boot, assess: assess, measureCoverage: measureCoverage, reportContext: reportContext, limitationBits: limitationBits, buildCandidate: buildCandidate, SNAPSHOT_SCHEMA: SNAPSHOT_SCHEMA, featuresFor: featuresFor, PACKAGE_FEATURES: PACKAGE_FEATURES, FULL_ACCESS_ROLES: FULL_ACCESS_ROLES, BLOCK_TEXT: BLOCK_TEXT, EXEMPLAR_URN: EXEMPLAR_URN, VIEW_LIMITS: VIEW_LIMITS };
+  return { VIEWER_VERSION: VIEWER_VERSION, boot: boot, assess: assess, measureCoverage: measureCoverage, reportContext: reportContext, limitationBits: limitationBits, materialOmissions: materialOmissions, coverageLimited: coverageLimited, schoolCoverageNote: schoolCoverageNote, schoolLimitations: schoolLimitations, COVERAGE_NOTE: COVERAGE_NOTE, BLOCK_TEXT: BLOCK_TEXT, buildCandidate: buildCandidate, SNAPSHOT_SCHEMA: SNAPSHOT_SCHEMA, featuresFor: featuresFor, PACKAGE_FEATURES: PACKAGE_FEATURES, FULL_ACCESS_ROLES: FULL_ACCESS_ROLES, BLOCK_TEXT: BLOCK_TEXT, EXEMPLAR_URN: EXEMPLAR_URN, VIEW_LIMITS: VIEW_LIMITS };
 });
 
