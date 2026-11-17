@@ -165,8 +165,9 @@
   .testimonials-header { text-align: center; margin-bottom: 48px; }
   .testimonials-eyebrow { font-size: 12px; font-weight: 600; letter-spacing: 2px; color: #0D7377; text-transform: uppercase; margin-bottom: 16px; }
   .testimonials-h2 { font-family: 'Playfair Display', serif; font-size: clamp(24px,3vw,32px); font-weight: 700; color: #0D2B4E; margin: 0; }
-  .testimonials-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 32px; align-items: start; }
-  .testimonial-card { background: #fff; border: 1px solid rgba(13,43,78,0.08); border-left: 3px solid #3DCFB8; border-radius: 12px; padding: 32px 28px; }
+  .testimonials-grid { column-count: 2; column-gap: 32px; }
+  @media (max-width: 760px) { .testimonials-grid { column-count: 1; } }
+  .testimonial-card { break-inside: avoid; -webkit-column-break-inside: avoid; page-break-inside: avoid; margin: 0 0 32px; background: #fff; border: 1px solid rgba(13,43,78,0.08); border-left: 3px solid #3DCFB8; border-radius: 12px; padding: 32px 28px; }
   .testimonial-quote-mark { font-family: 'Playfair Display', serif; font-size: 56px; color: #3DCFB8; opacity: 0.3; line-height: 1; margin-bottom: -10px; }
   .testimonial-quote { font-size: 15px; color: #33455C; line-height: 1.75; margin: 0 0 20px; }
   .testimonial-attr { display: flex; align-items: center; gap: 12px; }
@@ -392,6 +393,18 @@
           </div>
         </div>
       </div>
+      <div class="testimonial-card">
+        <div class="testimonial-quote-mark">&ldquo;</div>
+        <p class="testimonial-quote">SOAP Analytics has been absolutely fantastic for our school IDSR analysis! It makes the process so much easier, quicker and more manageable, helping us instantly make sense of the data and identify strengths and key areas for improvement. The one-page SOAP is such a useful feature and the whole dashboard is intuitive, incredibly useful and a real game-changer. For anyone responsible for IDSR analysis, I cannot recommend SOAP enough.</p>
+        <div class="testimonial-attr">
+          <div class="testimonial-attr-bar"></div>
+          <div>
+            <div class="testimonial-name">Claire Devereux</div>
+            <div class="testimonial-role">Deputy Headteacher &nbsp;·&nbsp; Swakeleys School for Girls</div>
+          </div>
+        </div>
+      </div>
+
       <div class="testimonial-card">
         <div class="testimonial-quote-mark">&ldquo;</div>
         <p class="testimonial-quote">SOAP Analytics has been an invaluable tool for my leadership team this year. It has provided the foundations for strategic conversations, helping us to question why certain trends are emerging and allowing us to review the impact of our actions once they have been taken. As the academic year progresses and trends begin to emerge, these conversations become more in-depth, and the data provides even greater insight. I would strongly recommend SOAP Analytics to any school.</p>
