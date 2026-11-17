@@ -5740,8 +5740,16 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
     function notice(text, tone) { var n = $('hostNotice'); if (!n) return; n.textContent = text || ''; n.className = 'notice ' + (tone || 'info'); n.style.display = text ? 'block' : 'none'; }
     function qs(extra) { var o = { school_id: S.viewSchoolId }; for (var k in extra) if (extra[k]) o[k] = extra[k]; return '?' + Object.keys(o).map(function (k) { return k + '=' + encodeURIComponent(o[k]); }).join('&'); }
     function pubBase(p) { return (p.period_label || 'IDSR') + ' · published ' + fmtDate(p.published_at) + (p.release_date ? ' · government release ' + fmtDate(p.release_date) : ''); }
-    // V77-04: every non-current version is labelled as historical so it can never be mistaken for the current report.
-    function pubLabel(p) { return pubBase(p) + (p.is_current ? ' — Current' : (!p.retracted && !p.removed ? ' — historical, not current' : '')) + (p.retracted ? ' — RETRACTED' : '') + (p.removed ? ' — REMOVED' : '') + (S.isAdmin && p.out_of_sequence ? ' — out of sequence' : ''); }
+    // V77-07 A5: dropdown / version-list label = UK publication date (Europe/London), IDSR period label where available, and "— Current" for the existing current-publication pointer only.
+    // Two or more versions published on the same London date also show HH:MM. "out of sequence" and "historical, not current" are no longer in the label (the HISTORICAL banner, the pill and the admin panel still carry them); RETRACTED / REMOVED stay for administrators.
+    function pubDay(iso) { var d = iso ? new Date(iso) : null; return d && !isNaN(d) ? d.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Europe/London' }) : ''; }
+    function pubTime(iso) { var d = iso ? new Date(iso) : null; return d && !isNaN(d) ? d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZone: 'Europe/London' }) : ''; }
+    function pubsNewestFirst(list) { return (list || S.pubs || []).slice().sort(function (a, b) { var ta = Date.parse(a.published_at) || 0, tb = Date.parse(b.published_at) || 0; return tb - ta || (String(b.id) < String(a.id) ? -1 : String(b.id) > String(a.id) ? 1 : 0); }); }
+    function pubLabel(p) {
+      var day = pubDay(p.published_at), time = pubTime(p.published_at);
+      var same = day ? (S.pubs || []).filter(function (q) { return pubDay(q.published_at) === day; }).length > 1 : false;
+      return (day ? day + (same && time ? ', ' + time : '') : 'Publication date unavailable') + (p.period_label ? ' · ' + p.period_label : '') + (p.is_current ? ' — Current' : '') + (p.retracted ? ' — RETRACTED' : '') + (p.removed ? ' — REMOVED' : '');
+    }
 
     function button(id, text, ghost) { var b = el('button', { class: 'publish-btn', id: id, type: 'button', text: text }); b.style.marginRight = '10px'; if (ghost) { b.style.background = 'transparent'; b.style.border = '1px solid rgba(255,255,255,.6)'; } return b; }
     function printFrame() { var f = $('snapFrame'); if (f && f.contentWindow) f.contentWindow.postMessage({ type: 'idsr-print' }, '*'); }
@@ -5787,7 +5795,7 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
       var bar = $('versionBar'); if (!bar) return; bar.textContent = ''; if (S.mode !== 'publication' || !S.pubs.length) { bar.style.display = 'none'; return; }
       bar.appendChild(el('label', { for: 'versionSelect', text: 'IDSR version: ' }));
       if (S.pubs.length === 1) bar.appendChild(el('span', { id: 'versionOnly', text: pubLabel(S.pubs[0]) }));
-      else { var sel = el('select', { id: 'versionSelect' }); S.pubs.forEach(function (p) { var o = el('option', { value: p.id, text: pubLabel(p) }); if (S.pub && p.id === S.pub.id) o.selected = true; sel.appendChild(o); }); sel.addEventListener('change', function () { win.location.href = win.location.pathname.replace(/^.*\//, '') + qs({ publication_id: sel.value }) + (win.location.hash || ''); }); bar.appendChild(sel); }
+      else { var sel = el('select', { id: 'versionSelect' }); pubsNewestFirst().forEach(function (p) { var o = el('option', { value: p.id, text: pubLabel(p) }); if (S.pub && p.id === S.pub.id) o.selected = true; sel.appendChild(o); }); sel.addEventListener('change', function () { win.location.href = win.location.pathname.replace(/^.*\//, '') + qs({ publication_id: sel.value }) + (win.location.hash || ''); }); bar.appendChild(sel); }
       bar.style.display = 'block';
     }
 
@@ -5924,7 +5932,7 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
       var host = $('emptyState'), old = $('historicalList'); if (old && old.parentNode) old.parentNode.removeChild(old);
       var list = el('ul', { id: 'historicalList' }); list.style.cssText = 'text-align:left;max-width:640px;margin:14px auto 0;padding-left:18px;';
       var pubsForList = S.isAdmin ? S.pubs : hist;
-      pubsForList.forEach(function (p) { var li = el('li'); var a = el('a', { href: win.location.pathname.replace(/^.*\//, '') + qs({ publication_id: p.id }) + (win.location.hash || ''), text: pubLabel(p) }); li.appendChild(a); list.appendChild(li); });
+      pubsNewestFirst(pubsForList).forEach(function (p) { var li = el('li'); var a = el('a', { href: win.location.pathname.replace(/^.*\//, '') + qs({ publication_id: p.id }) + (win.location.hash || ''), text: pubLabel(p) }); li.appendChild(a); list.appendChild(li); });
       if (pubsForList.length) host.appendChild(list);
       S.mode = null; topbar(); versionBar();
       return null;
