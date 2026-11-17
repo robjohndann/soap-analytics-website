@@ -251,7 +251,7 @@
 
 <header>
   <div style="display:flex;align-items:center;gap:14px;">
-    <a href="index.html"><img src="images/logo-navy.png" alt="SOAP Analytics" style="height:36px;width:auto;border-radius:6px;display:block;"></a>
+    <a href='/'><img src="images/logo-navy.png" alt="SOAP Analytics" style="height:36px;width:auto;border-radius:6px;display:block;"></a>
     <span style="font-weight:700;font-size:15px;">— Admin</span>
     <a href="#messagesSection" id="msgUnreadLink" class="unread-link" style="display:none;" onclick="msgUnreadOpen(event); return false;"></a>
   </div>
@@ -4333,16 +4333,61 @@
     });
   }
 
+  // V77-07 Amendment 3A - Admin Context save protection. Fail-closed checks run BEFORE the existing school-wide delete-then-insert:
+  //  1 fresh read with an exact row count; 2 it must equal what this page loaded; 3 an empty form is refused; 4 stored rows with no cell in this editor are refused.
+  // The delete-then-insert itself is unchanged and is still NOT atomic: if the insert fails after the delete, stored Context rows are gone (see the warning shown).
+  // A retry after that failure never issues another DELETE: it only inserts, and only if a fresh read finds the school has no stored rows.
   async function saveAmendContext(schoolId) {
-    const rows = collectAmendRows(schoolId);
-    const { error: delErr } = await sb.from('context_data').delete().eq('school_id', schoolId);
-    if (delErr) { showAmendToast('⚠ Save failed — see browser console', true); console.error(delErr); return; }
-    if (rows.length) {
+    const D = SCHOOL_AMEND_DATA[schoolId];
+    if (!D) return;
+    if (D.contextSaving) return;
+    D.contextSaving = true;
+    try {
+      const refuse = msg => showAmendToast('⚠ ' + msg + ' Nothing was saved.', true, 15000);
+      const rows = collectAmendRows(schoolId);
+      const { data: fresh, error: readErr, count } = await sb.from('context_data').select('category, metric, period, value', { count: 'exact' }).eq('school_id', schoolId);
+      if (readErr || !Array.isArray(fresh) || typeof count !== 'number' || count !== fresh.length) {
+        console.error('Context save refused: stored rows not read completely', { error: readErr, rows: Array.isArray(fresh) ? fresh.length : null, count });
+        return refuse('The stored Context data could not be read completely, so it cannot be safely replaced.');
+      }
+      const failedAfterDelete = (detail) => {
+        D.contextInsertFailed = true;
+        console.error('Context insert failed after the delete', detail);
+        showAmendToast('⚠ Context was NOT saved. The existing Context records for this school were already deleted before the new values could be written, so some or all stored Context data may now be missing. The values you entered are still on this page: do not close or reload it. You may try Save again, but that may fail and may not restore everything. Check this school\'s Context data afterwards and use the latest backup if records are missing.', true, 60000);
+      };
+      if (D.contextInsertFailed) {   // retry after a failed insert: INSERT ONLY, never another delete, and only if the school still has no stored rows
+        if (fresh.length) return refuse('Stored Context rows now exist for this school, so the retry was not attempted. Reload the Admin page and review them.');
+        if (!rows.length) return refuse('No values are entered, so there is nothing to save.');
+        const { error: retryErr } = await sb.from('context_data').insert(rows);
+        if (retryErr) return failedAfterDelete(retryErr);
+        D.contextInsertFailed = false; D.contextRows = rows;
+        showAmendToast('✓ Context saved');
+        return;
+      }
+      const key = r => [r.category, r.metric, r.period, r.value == null ? '' : r.value].join('\u0001');
+      const loaded = D.contextRows || [];
+      if (fresh.length !== loaded.length || fresh.map(key).sort().join('\u0002') !== loaded.map(key).sort().join('\u0002')) {
+        return refuse('This school\'s stored Context data is different from what this page loaded (it has changed, or it did not load correctly). Reload the Admin page and try again.');
+      }
+      if (!rows.length) return refuse('No values are entered, so there is nothing to save.');
+      const shown = new Set();
+      document.getElementById('amendBody-' + schoolId).querySelectorAll('[data-category]').forEach(el => {
+        el.querySelectorAll('input, select').forEach(i => shown.add([el.dataset.category, el.dataset.metric, i.dataset.period].join('\u0001')));
+      });
+      const hidden = fresh.filter(r => !shown.has([r.category, r.metric, r.period].join('\u0001')));
+      if (hidden.length) {
+        const eg = hidden.slice(0, 3).map(r => r.category + ' / ' + r.metric + ' / ' + r.period).join('; ');
+        return refuse(hidden.length + ' stored Context value' + (hidden.length === 1 ? '' : 's') + ' for this school ' + (hidden.length === 1 ? 'has' : 'have') + ' no cell in this editor (' + eg + (hidden.length > 3 ? '; …' : '') + '), and saving would delete ' + (hidden.length === 1 ? 'it' : 'them') + '.');
+      }
+      const { error: delErr } = await sb.from('context_data').delete().eq('school_id', schoolId);
+      if (delErr) { showAmendToast('⚠ Context save failed at the delete step. Existing records should be unchanged, but if this was a network error that cannot be guaranteed: check this school\'s Context data before relying on it.', true, 20000); console.error(delErr); return; }
       const { error } = await sb.from('context_data').insert(rows);
-      if (error) { showAmendToast('⚠ Save failed — see browser console', true); console.error(error); return; }
+      if (error) return failedAfterDelete(error);
+      D.contextRows = rows;
+      showAmendToast('✓ Context saved');
+    } finally {
+      D.contextSaving = false;
     }
-    if (SCHOOL_AMEND_DATA[schoolId]) SCHOOL_AMEND_DATA[schoolId].contextRows = rows;
-    showAmendToast('✓ Context saved');
   }
 
   function buildAmendSafeguarding(schoolId) {
