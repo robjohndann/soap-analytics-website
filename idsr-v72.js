@@ -19,7 +19,7 @@
 })(typeof self !== 'undefined' ? self : this, function () {
   'use strict';
 
-  var CORE_VERSION = '77.3.0-s3';
+  var CORE_VERSION = '79.0.0-qa2';
   var CLASSIFICATION_VERSION = 'soap-heuristic-v71-thresholds';   // thresholds deliberately UNCHANGED from V71
   var SCHEMA_VERSION = 1;
   var MAX_SOURCE_BYTES = 26214400;                                // 25 MiB hard cap (matches draft DB check)
@@ -230,6 +230,33 @@
     if (t[0].startYear - t[1].startYear !== 1 || t[1].startYear - t[2].startYear !== 1) return { value: null, dp: 0, reason: 'not_consecutive', years: t.map(function (p) { return p.startYear; }) };
     var s = t[0].num + t[1].num + t[2].num;
     return { value: s / 3, dp: Math.max(t[0].dp, t[1].dp, t[2].dp), reason: null, years: t.map(function (p) { return p.startYear; }) };
+  }
+  // V79: derived NATIONAL comparisons use academic years from 2022/23.
+  // threeYearMean itself is unchanged: destinations and annual rating inputs retain their approved behaviour.
+  function nationalMean(pts) {
+    return threeYearMean(pts.filter(function (p) { return p && p.startYear >= 2022; }));
+  }
+  function nationalComparison(row, cols) {
+    if (row.natThreeYr && row.natThreeYr.num != null) return row.natThreeYr;
+    for (var i = cols.length - 1; i >= 0; i--) {
+      var c = row.cells[i];
+      if (cols[i].startYear >= 2022 && c && c.nat && c.nat.num != null && !c.nat.est)
+        return { num: c.nat.num, disp: c.nat.disp, annual: cols[i].label, reason: null };
+    }
+    return { num: null, disp: '—', reason: 'no_eligible_national' };
+  }
+  function sourceAnomaly(raw) {
+    return /^close to average\s*\(sig[+-]\)$/i.test(norm(raw || ''));
+  }
+  // Use several independent source sections, never missing attainment alone.
+  function noSixthForm(model) {
+    var C = model.context || {}, ch = C.characteristics, S = model.extra && model.extra.sections;
+    if (!ch || !S || !ch.rows.some(function (r) { return r.label === 'School number on roll'; })) return false;
+    if (ch.rows.some(function (r) { return /^Sixth form/i.test(r.label); })) return false;
+    var yg = S.yearGroupProfile;
+    if (!yg || yg.status !== 'ok' || !yg.data || !yg.data.rows || !yg.data.rows.length) return false;
+    if (yg.data.rows.some(function (r) { return /^Year (12|13|14)$/i.test(r.year); })) return false;
+    return ['post16QualTypes', 'post16Retention', 'post16Entries', 'post16Summary'].every(function (k) { return S[k] && S[k].status === 'absent'; });
   }
   function fmt(num, dp, unit) {
     if (num == null || !isFinite(num)) return '—';
@@ -453,11 +480,26 @@
   function parseStaffing(doc) {
     var panel = doc.getElementById ? doc.getElementById('staffing') : null;
     if (!panel) return null;
-    function inDetails(el) { for (var p = el.parentNode; p && p !== panel; p = p.parentNode) if (tag(p) === 'DETAILS') return true; return false; }   // guidance text is not data
-    var items = arr(panel.querySelectorAll('li')).filter(function (li) { return !inDetails(li); }).map(function (li) { return norm(li.textContent); }).filter(Boolean);
+    var roots = [panel];
+    // Older reports put the id on the heading and the data in following siblings.
+    if (/^H[1-6]$/.test(tag(panel))) {
+      roots = []; var level = +tag(panel).slice(1), next = panel.nextElementSibling;
+      while (next && !(/^H[1-6]$/.test(tag(next)) && +tag(next).slice(1) <= level)) { roots.push(next); next = next.nextElementSibling; }
+    }
+    function inDetails(el) { for (var p = el; p; p = p.parentNode) if (tag(p) === 'DETAILS') return true; return false; }   // guidance text is not data
+    var items = [];
+    roots.forEach(function (root) {
+      var candidates = tag(root) === 'LI' || tag(root) === 'P' ? [root] : arr(root.querySelectorAll('li,p'));
+      candidates.forEach(function (el) {
+        if (inDetails(el) || (tag(el) === 'P' && el.closest('li'))) return;
+        var t = norm(el.textContent);
+        if (t && !/^Data source:|^Back to contents$/i.test(t)) items.push(t);
+      });
+    });
     return { sentences: items.map(function (t) {
       for (var i = 0; i < STAFF_TEMPLATES.length; i++) { var m = STAFF_TEMPLATES[i][1].exec(t); if (m) return { kind: STAFF_TEMPLATES[i][0], text: t, data: STAFF_TEMPLATES[i][2](m) }; }
-      return { kind: 'unparsed', text: t, data: null };
+      var topic = /staff turnover/i.test(t) ? 'staffTurnover' : /days lost to teacher absence/i.test(t) ? 'teacherAbsenceDays' : /vacant teacher posts?/i.test(t) ? 'vacantPosts' : /support staff.*teaching staff/i.test(t) ? 'supportStaffRatio' : /teachers.*sickness absence/i.test(t) ? 'teacherSickness' : null;
+      return { kind: topic || 'unparsed', text: t, data: topic ? { verbatim: true } : null };
     }) };
   }
 
@@ -593,7 +635,7 @@
     function keyOf(x) { return annual && x.startYear != null ? 'y' + x.startYear : x.label; }
     if (e) e.rows.forEach(function (r) { if (r.periodKind === kind) byLabel[keyOf(r)] = r; });
     // National 3-yr mean (official national values only) → the ONLY source of an *estimated* benchmark.
-    var natMean = annual ? threeYearMean(cols.map(function (c) { var r = byLabel[keyOf(c)]; return r && r.nat && r.nat.num != null ? { startYear: c.startYear, num: r.nat.num, dp: r.nat.dp } : null; })) : { value: null, dp: 0, reason: 'not_annual' };
+    var natMean = annual ? nationalMean(cols.map(function (c) { var r = byLabel[keyOf(c)]; return r && r.nat && r.nat.num != null ? { startYear: c.startYear, num: r.nat.num, dp: r.nat.dp } : null; })) : { value: null, dp: 0, reason: 'not_annual' };
     var unit = cls.kind === 'pct' ? '%' : '';
     var cells = cols.map(function (c) {
       var r = byLabel[keyOf(c)];
@@ -655,7 +697,7 @@
       // Measure-specific averaging: permanent exclusions are small whole-number COUNTS. A mean of 3, 4 and 4 shown at the
       // source precision (0 dp) would read "4" for a true 3.67, so count means are shown to at least 1 dp and labelled "mean per year".
       var tm = threeYearMean(cells.map(function (x, i) { return x.num != null ? { startYear: cols[i].startYear, num: x.num, dp: 0 } : null; }));
-      var ntm = threeYearMean(cells.map(function (x, i) { return x.nat.num != null ? { startYear: cols[i].startYear, num: x.nat.num, dp: x.nat.dp == null ? 0 : x.nat.dp } : null; }));
+      var ntm = nationalMean(cells.map(function (x, i) { return x.nat.num != null ? { startYear: cols[i].startYear, num: x.nat.num, dp: x.nat.dp == null ? 0 : x.nat.dp } : null; }));
       function cmean(m) { return m.value == null ? { disp: '\u2014', reason: m.reason } : { num: m.value, disp: fmt(m.value, Math.max(m.dp, 1), ''), dp: Math.max(m.dp, 1), reason: null, years: m.years, note: 'mean count per year' }; }
       perm = { section: 'Permanent Exclusions', group: 'All pupils', measure: 'Permanent exclusions', kind: 'count', lowerBetter: true, unit: '', present: true, tableCount: 1, cells: cells,
         threeYr: cmean(tm), natThreeYr: cmean(ntm) };
@@ -725,7 +767,7 @@
     CORE_VERSION: CORE_VERSION, CLASSIFICATION_VERSION: CLASSIFICATION_VERSION, SCHEMA_VERSION: SCHEMA_VERSION, MAX_SOURCE_BYTES: MAX_SOURCE_BYTES, THRESH: THRESH,
     stripSource: stripSource, sha256Hex: sha256Hex, sha256Base64: sha256Base64, canonical: canonical, modelHash: modelHash,
     parse: parse, parseVal: parseVal, parseOfficial: parseOfficial, parsePeriod: parsePeriod, classify: classify, computeBand: computeBand,
-    bandExclusionCount: bandExclusionCount, bandFromSig: bandFromSig, threeYearMean: threeYearMean, buildViews: buildViews, buildAttendance: buildAttendance, buildDestinations: buildDestinations, destDisplay: destDisplay, DEST_DISPLAY: DEST_DISPLAY,
+    bandExclusionCount: bandExclusionCount, bandFromSig: bandFromSig, threeYearMean: threeYearMean, nationalMean: nationalMean, nationalComparison: nationalComparison, sourceAnomaly: sourceAnomaly, noSixthForm: noSixthForm, buildViews: buildViews, buildAttendance: buildAttendance, buildDestinations: buildDestinations, destDisplay: destDisplay, DEST_DISPLAY: DEST_DISPLAY,
     findEntry: findEntry, trackLookups: trackLookups, fmt: fmt, norm: norm, buildRow: buildRow, buildSimple: buildSimple, SUBJECTS: SUBJECTS, GCSE_METRICS: GCSE_METRICS, PRIOR_METRICS: PRIOR_METRICS, PRIOR_COHORTS: PRIOR_COHORTS, axisFor: axisFor, officialMark: officialMark, parseContext: parseContext
   };
   return api;
@@ -2708,9 +2750,15 @@
       return { num: x.v.num, disp: Core.fmt(x.v.num, 0, ''), band: band, basis: band ? 'count-rule' : 'no-national', kind: 'value', official: null, say: null };
     });
     // Counts: unweighted arithmetic mean of the latest three consecutive annual years, 1 dp, labelled "mean count per year" (approved).
-    var tm = Core.threeYearMean(vals), nm = Core.threeYearMean(natVals);
+    var tm = Core.threeYearMean(vals);
+    // Exclusions can lag attendance by a year: use their own complete national series.
+    natVals = Object.keys(byYear).map(function (y) { var n = byYear[y].n; return n && n.num != null ? { startYear: +y, num: n.num, dp: n.dp || 0 } : null; });
+    var nm = Core.nationalMean(natVals);
     function cm(m) { return m.value == null ? { reason: m.reason } : { num: m.value, disp: Core.fmt(m.value, Math.max(m.dp, 1), ''), reason: null, note: 'mean count per year' }; }
-    return { cells: cells, nat: cm(nm), avg: cm(tm) };
+    var ncells = cols.map(function (c) { var x = byYear[c.startYear]; return { col: c.label, nat: x && x.n ? { num: x.n.num, disp: Core.fmt(x.n.num, x.n.dp || 0, ''), est: false } : null }; });
+    var nationalCols = Object.keys(byYear).map(Number).sort(function (a, b) { return a - b; }).map(function (y) { return { startYear: y, label: y + '/' + String(y + 1).slice(-2) }; });
+    var nationalCells = nationalCols.map(function (c) { var n = byYear[c.startYear].n; return { col: c.label, nat: n ? { num: n.num, disp: Core.fmt(n.num, n.dp || 0, ''), est: false } : null }; });
+    return { cells: cells, nat: cm(nm), avg: cm(tm), cellsWithNational: ncells, nationalCols: nationalCols, nationalCells: nationalCells };
   }
 
   function retentionFor(model, label, cols) {
@@ -2732,7 +2780,7 @@
   }
   /** Latest annual national figure, used (and flagged) only when no 3-year mean exists. */
   function latestNational(built) {
-    for (var i = built.cells.length - 1; i >= 0; i--) { var c = built.cells[i]; if (c && c.nat && c.nat.num != null && !c.nat.est) return { num: c.nat.num, disp: c.nat.disp, col: c.col }; }
+    for (var i = built.cells.length - 1; i >= 0; i--) { var c = built.cells[i]; if (c && c.nat && c.nat.num != null && !c.nat.est && Core.parsePeriod(c.col).startYear >= 2022) return { num: c.nat.num, disp: c.nat.disp, col: c.col }; }
     return null;
   }
   /** Right-hand national cell. The approved rule is unchanged: only a 3-year mean of three CONSECUTIVE annual values is shown; otherwise "\u2014".
@@ -2752,7 +2800,7 @@
     (opts && opts.cards ? opts.cards : Spec.cards).forEach(function (sc) {
       if (sc.kind === 'scale') { cards.push(sc.sheet ? { column: sc.column, title: sc.title, kind: 'scale', n: ci++, sheet: sc.sheet } : { column: sc.column, title: sc.title, kind: 'scale', n: ci++ }); return; }
       if (sc.kind === 'note') { cards.push({ column: sc.column, title: sc.title, kind: 'note', n: ci++, sheet: sc.sheet, phase: sc.phase, phaseLabel: sc.phaseLabel, lines: sc.lines }); return; }
-      var geom = GEOM[sc.title] || {}, card = { column: sc.column, title: sc.title, n: ci++, geom: geom, rows: [], cols: [], right: 'National', rightTitle: 'National comparison. Bold italic = three-year average: unweighted mean of the three latest consecutive annual national values. Grey italic with a year (for example 24/25) = the latest single-year national figure, shown only where a three-year average cannot be calculated; it is not a three-year average. A dash = no national figure published (the Dashboard shows each year\u2019s national figure)', notes: [] };
+      var geom = GEOM[sc.title] || {}, card = { column: sc.column, title: sc.title, n: ci++, geom: geom, rows: [], cols: [], right: 'Nat Avg', rightTitle: 'National comparison. Bold italic = three-year average: unweighted mean of the three latest consecutive annual national values. Grey italic with a year (for example 24/25) = the latest single-year national figure, shown only where a three-year average cannot be calculated; it is not a three-year average. A dash = no national figure published (the Dashboard shows each year\u2019s national figure)', notes: [] };
       if (sc.phase) { card.phase = sc.phase; card.phaseLabel = sc.phaseLabel; card.sheet = sc.sheet || 1; }
       if (sc.sheet && !sc.phase) card.sheet = sc.sheet;   // V77-03: all-through only; a secondary card never carries these
       if (geom.dest) {
@@ -2814,10 +2862,13 @@
         if (r.special && /permExclusions/.test(r.special)) {
           var pr = buildPermRow(model, card.cols);
           var cells = pr ? pr.cells.map(function (c, k) { c.id = rowId + ':' + k; return c; }) : card.cols.map(function (c, k) { return { id: rowId + ':' + k, num: null, disp: '—', say: missing('no_row')[1], kind: 'value', missing: 'no_row', band: null }; });
-          card.rows.push({ label: r.label, cells: cells, right: pr ? avgCell(pr.nat, rowId + ':nat', 'mean count per year (national)') : avgCell(null, rowId + ':nat'), countRow: true, avg: pr ? pr.avg : null });
+          card.rows.push({ label: r.label, cells: cells, right: pr ? natRight({ natThreeYr: pr.nat, cells: pr.cellsWithNational }, rowId + ':nat') : avgCell(null, rowId + ':nat'), countRow: true, avg: pr ? pr.avg : null });
+          if (pr && pr.nationalCols.length === card.cols.length) card.rows.push({ label: 'National permanent exclusions', national: true, subhead: { label: 'National exclusions — source years', cols: pr.nationalCols.map(function (c) { return c.label; }), right: 'Nat Avg' }, cells: pr.nationalCells.map(function (c, k) { return { id: rowId + ':national:' + k, num: c.nat ? c.nat.num : null, disp: c.nat ? c.nat.disp : '—', kind: 'value', band: null, say: 'Annual national permanent-exclusion count for ' + c.col + ', not a rate' }; }), right: natRight({ natThreeYr: pr.nat, cells: pr.nationalCells }, rowId + ':national:nat') });
+          else if (pr) card.notes.push('National permanent exclusions: ' + pr.nationalCells.map(function (c) { return c.col + ': ' + (c.nat ? c.nat.disp : '—'); }).join('; ') + '. Counts, not rates.');
           return;
         }
         var sp = splitKey(r.key), built = Core.buildRow(model, { section: r.label, group: sp.group, measure: sp.measure }, card.cols, 'annual');
+        if (built.cells.some(function (c) { return Core.sourceAnomaly(c.officialRaw); })) card.notes.push(r.label + ': source classification anomaly — Close to average with a significance marker; source wording and existing rating retained.');
         var cells2 = built.cells.map(function (c, k) { return resolveValueCell(c, rowId + ':' + k, built.lowerBetter); });
         var lbl = r.label;
         if (sc.entriesOnly) {   // V77-03 Stage 3: only measures published per ENTRY whose latest figure is rated below national; the entry count is shown, never a pupil count
@@ -2834,6 +2885,7 @@
         card.displayTitle = sc.title; cards.push(card); return;
       }
       if (sc.title === 'A Level Headline') {
+        if (Core.noSixthForm(model)) { card.kind = 'note'; card.lines = ['No sixth form']; cards.push(card); return; }
         // V75 (req 14): Tech Level APS was parsed but never shown
         var tspec = { section: 'Tech Level APS', group: 'All students', measure: 'Tech level APS', optional: true }, tb = Core.findEntry(model, tspec.group, tspec.measure, true) ? Core.buildRow(model, tspec, card.cols, 'annual') : null;
         if (tb && tb.cells.some(function (c) { return c.num != null; })) {
@@ -2942,13 +2994,13 @@
     var S = C.staffing, byKind = {};
     if (S) S.sentences.forEach(function (s) { if (s.kind !== 'unparsed') (byKind[s.kind] = byKind[s.kind] || []).push(s); });
     function sent(kind) { return byKind[kind] ? byKind[kind][0] : null; }
-    var d = sent('teacherAbsenceDays'), v = sent('vacantPosts'), t = sent('staffTurnover'), r = sent('supportStaffRatio'), sk = sent('teacherSickness');
-    bot2.push(d ? item('teacherAbsence', d.data.days + ' days lost to teacher absence — nothing to highlight (' + d.data.year + ')', d.text) : absent('teacherAbsence', 'Days lost to teacher absence'));
-    bot2.push(v ? item('vacancies', v.data.count === 0 ? 'No FT vacant teacher posts (' + v.data.census.replace(/^(\w{3})\w*/, '$1') + ')' : v.data.count + ' FT vacant teacher posts (' + v.data.census.replace(/^(\w{3})\w*/, '$1') + ')', v.text, v.data.count > 0) : absent('vacancies', 'Vacant teacher posts'));
-    bot2.push(t ? item('turnover', 'Staff turnover: nothing to highlight', t.text) : absent('turnover', 'Staff turnover'));
-    bot2.push(r ? item('supportRatio', 'Support staff ratio: ' + r.data.end + ' ' + r.data.pct + '% nationally (' + r.data.year + ')', r.text, r.data.end === 'highest') : absent('supportRatio', 'Support staff ratio'));
-    if (sk) bot2.push(item('teacherSickness', 'Teacher sickness significantly ' + sk.data.direction + ' national (' + sk.data.years + ')', sk.text, sk.data.direction === 'above'));
-    if (S) S.sentences.forEach(function (s, i) { if (s.kind === 'unparsed') bot2.push(item('staffingUnparsed', s.text, 'Staffing sentence shown exactly as published; SOAP could not classify it.', true)); });
+    var topics = [['teacherAbsenceDays', 'teacherAbsence', 'Days lost to teacher absence'], ['vacantPosts', 'vacancies', 'Vacant teacher posts'], ['staffTurnover', 'turnover', 'Staff turnover'], ['supportStaffRatio', 'supportRatio', 'Support staff ratio'], ['teacherSickness', 'teacherSickness', 'Teacher sickness']];
+    topics.forEach(function (topic) {
+      var ss = byKind[topic[0]] || [];
+      if (!ss.length) { if (topic[0] !== 'teacherSickness') bot2.push(absent(topic[1], topic[2])); return; }
+      ss.forEach(function (x) { bot2.push(item(topic[1], x.text, 'Ofsted staffing statement, quoted from the source.', !/nothing to highlight|no full-time vacant/i.test(x.text))); });
+    });
+    if (S) S.sentences.forEach(function (x) { if (x.kind === 'unparsed') bot2.push(item('staffingUnparsed', x.text, 'Staffing sentence shown exactly as published; SOAP could not classify it.', true)); });
 
     // 16–18 permanent exclusions: facts only (school count, national average count), no interpretation.
     var X = C.exclusions1618, extra = [];
@@ -3074,7 +3126,7 @@
     '.cols{flex:1;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:0 3mm;min-height:0}.col{display:flex;flex-direction:column;gap:1.8mm;min-width:0}' +
     '.card{background:#fff;color:var(--text);display:flex;flex-direction:column;flex:var(--n,1) 1 auto}.card>table{flex:1 1 auto}.chead{position:relative;background:var(--navy)}.ct{margin:0;color:#fff;font:700 9pt/1.25 Arial,"Liberation Sans",Arimo,Helvetica,"Nimbus Sans",FreeSans,"SOAP Fallback Condensed","SOAP Fallback",sans-serif;text-align:center;padding:.7mm 7mm}' +
     'table{width:100%;border-collapse:collapse;table-layout:fixed;font-size:' + BODY_PT + 'pt;line-height:1.2}th,td{padding:' + ROW_PAD + ' .5mm;text-align:center;white-space:nowrap;overflow:visible;font-weight:400}' +
-    'table.many thead th:last-child{width:16%}table.few th.lab{width:41%}table.dest th.lab{width:62%}thead th{background:var(--teal);color:#fff;font-weight:700}th.lab{width:35%;text-align:left;padding-left:1.2mm}th[scope=row]{text-align:left;padding-left:1.2mm;white-space:normal;font-weight:400}' +
+    'thead th:last-child{white-space:normal;overflow-wrap:normal}table.many thead th:last-child{width:16%}table.few th.lab{width:41%}table.dest th.lab{width:62%}thead th{background:var(--teal);color:#fff;font-weight:700}th.lab{width:35%;text-align:left;padding-left:1.2mm}th[scope=row]{text-align:left;padding-left:1.2mm;white-space:normal;font-weight:400}' +
     'tbody tr{background:var(--pale)}tbody tr.alt{background:#fff}td.rt{font-weight:700;font-style:italic}td.avg{font-weight:700;font-style:italic}td.annual{font-weight:400;padding-left:0;padding-right:0}td.annual .ann{font-weight:400;font-style:italic;color:#475569}td.annual .ann i{font-size:1em;font-style:normal;color:#475569;margin-right:.4mm}td.na{color:var(--muted)}' +
     '.cell-exceptional{background:var(--exceptional)}.cell-strong{background:var(--strong)}.cell-expected{background:var(--expected)}.cell-attention{background:var(--attention)}.cell-urgent{background:var(--urgent)}' +
     'tr.subh th{background:var(--navy);color:#fff;font-weight:700;text-align:center;white-space:nowrap}tr.subh th.lab{text-align:left;padding-left:1.2mm}tr.subh th.lab.wrap{white-space:normal}.sheet.tight .card table{line-height:1.1}tr.inyear td{font-style:italic}tr.natrow th,tr.natrow td{font-style:italic;font-weight:700}tfoot td.fn{background:#fff;color:var(--muted);font-style:italic;text-align:left;white-space:normal;padding:.2mm 1.2mm;line-height:1.2}' +
@@ -3187,7 +3239,7 @@
     if (e) e.rows.forEach(function (r) { if (r.periodKind === 'annual' && r.cohort && r.cohort.num != null && (!last || r.startYear > last.startYear)) last = r; });
     if (last) top.push([item('ks2Cohort', 'Key stage 2 cohort ' + last.year + ': ' + last.cohort.num + ' pupils', 'Cohort count printed beside the reading, writing and maths expected-standard result for ' + last.year)]);
     bot.push([item('ks2Years', 'Key stage 2 = Year 6 · Multiplication tables check = Year 4 · Phonics screening check = Year 1 (as labelled in the IDSR)', 'Year groups as headed in the IDSR key stage 2, MTC and phonics summary')]);
-    bot.push([item('ks2Nat', 'National column = average of the three latest annual national figures. DfE’s own published “3-year” figures are in the Dashboard.', 'Same rule as the secondary cards')]);
+    bot.push([item('ks2Nat', 'Nat Avg = mean of three consecutive annual national figures from 2022/23 onwards, or the latest eligible annual figure with its year. DfE’s own published “3-year” figures are in the Dashboard.', 'Same rule as the secondary cards')]);
     return { top: top, bottom: bot };
   }
 
@@ -3250,7 +3302,7 @@
 })(typeof self !== 'undefined' ? self : this, function (Core, Soap) {
   'use strict';
 
-  var SNAPSHOT_VERSION = '77.3.0-s3';
+  var SNAPSHOT_VERSION = '79.0.0-qa2';
   var SNAPSHOT_SCHEMA_VERSION = 2;
 
   function esc(v) {
@@ -3303,8 +3355,8 @@
     return '<td class="' + esc(cls.join(' ')) + '" data-id="' + esc(id) + '" data-v="' + (c.num == null ? '' : esc(String(c.num))) + '" data-d="' + esc(c.disp) + '" title="' + esc(title.join(' | ')) + '">' + esc(c.disp) + mark + '</td>';
   }
   function avgHtml(a, id, cls) {
-    var t = a.reason ? 'Unavailable: ' + a.reason.replace(/_/g, ' ') : '3-yr unweighted mean' + (a.note ? ' (' + a.note + ')' : '');
-    return '<td class="avg ' + esc(cls || '') + '" data-id="' + esc(id) + '" data-v="' + (a.num == null ? '' : esc(String(a.num))) + '" data-d="' + esc(a.disp) + '" title="' + esc(t) + '">' + esc(a.disp) + '</td>';
+    var t = a.annual ? 'Latest annual national figure (' + a.annual + '), not a three-year average' : a.reason ? 'Unavailable: ' + a.reason.replace(/_/g, ' ') : '3-yr unweighted mean' + (a.note ? ' (' + a.note + ')' : '');
+    return '<td class="avg ' + esc(cls || '') + '" data-id="' + esc(id) + '" data-v="' + (a.num == null ? '' : esc(String(a.num))) + '" data-d="' + esc(a.disp) + '" title="' + esc(t) + '">' + (a.annual ? '<span class="annual">' + esc(a.annual) + ' ' + esc(a.disp) + '</span>' : esc(a.disp)) + '</td>';
   }
 
   // ───────────────────────────── SVG chart ─────────────────────────────
@@ -3388,7 +3440,7 @@
       var fam = o.sectionField ? r.section : (o.families === false ? null : familyOf(r.section));
       if (fam && fam !== last) { rows.push({ type: 'sec', text: fam }); last = fam; }
       var label = o.labelField === 'group' ? r.group : r.section;
-      rows.push({ type: 'row', idx: ri++, label: label, group: o.labelField === 'group' ? null : (hasGroups ? r.group : null), unit: r.unit || '', cells: r.cells, avg: r.threeYr, navg: r.natThreeYr, gapSrc: r });
+      rows.push({ type: 'row', idx: ri++, label: label, group: o.labelField === 'group' ? null : (hasGroups ? r.group : null), unit: r.unit || '', cells: r.cells, avg: r.threeYr, navg: Core.nationalComparison(r, t.cols), gapSrc: r });
     });
     return { cols: t.cols.map(function (c) { return c.label; }), rows: rows, nat3: o.withNat3 !== false };
   }
@@ -3406,7 +3458,7 @@
     var rows = [], ri = 0, last = null;
     t.rows.forEach(function (r) {
       if (r.section !== last) { rows.push({ type: 'sec', text: r.section }); last = r.section; }
-      rows.push({ type: 'row', idx: ri++, label: r.group, group: null, unit: r.unit || '', cells: r.cells, avg: r.threeYr, navg: r.natThreeYr, gapSrc: r, measure: r.section });
+      rows.push({ type: 'row', idx: ri++, label: r.group, group: null, unit: r.unit || '', cells: r.cells, avg: r.threeYr, navg: Core.nationalComparison(r, t.cols), gapSrc: r, measure: r.section });
     });
     return { cols: t.cols.map(function (c) { return c.label; }), rows: rows, nat3: !!isAnnual, noAvg: !isAnnual };
   }
@@ -3495,7 +3547,7 @@
     var span = 1 + (hasGroupCol ? 1 : 0) + nCols * (hasNatCols ? 2 : 1) + (nt.noAvg ? 0 : 1) + (nt.nat3 ? 1 : 0) + (withGap ? 1 : 0);
     var h = '<table class="dt" id="tbl-' + esc(paneKey + '-' + tblKey) + '"><thead><tr><th class="l" rowspan="' + (hasNatCols ? 2 : 1) + '">' + esc(opts.firstCol || 'Measure') + '</th>' + (hasGroupCol ? '<th class="l" rowspan="2">Pupils</th>' : '') +
       cols.map(function (c) { return '<th class="yr"' + (hasNatCols ? ' colspan="2"' : '') + '>' + esc(c) + '</th>'; }).join('') +
-      (nt.noAvg ? '' : '<th rowspan="' + (hasNatCols ? 2 : 1) + '" class="yr">3-yr</th>') + (nt.nat3 ? '<th rowspan="2">Nat 3-yr</th>' : '') + (withGap ? '<th rowspan="2">Latest gap</th>' : '') + '</tr>' +
+      (nt.noAvg ? '' : '<th rowspan="' + (hasNatCols ? 2 : 1) + '" class="yr">3-yr</th>') + (nt.nat3 ? '<th rowspan="2">Nat Avg</th>' : '') + (withGap ? '<th rowspan="2">Latest gap</th>' : '') + '</tr>' +
       (hasNatCols ? '<tr>' + cols.map(function () { return '<th class="sn yr">School</th><th class="sn">National</th>'; }).join('') + '</tr>' : '') + '</thead><tbody>';
     var charts = [];
     nt.rows.forEach(function (r, rix) {
@@ -4311,7 +4363,7 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
 })(typeof self !== 'undefined' ? self : this, function (Core, Soap, X, Snap, LOGO) {
   'use strict';
 
-  var DASH_VERSION = '77.3.0-s3';
+  var DASH_VERSION = '79.0.0-qa2';
   var esc = X.esc, SI = Snap._internals;
   var ORDER = ['exceptional', 'strong', 'expected', 'attention', 'urgent'];
   var LABEL = { exceptional: 'Exceptional', strong: 'Strong Standard', expected: 'Expected Standard', attention: 'Needs Attention', urgent: 'Urgent Improvement' };
@@ -4320,6 +4372,12 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
 
   // ───────────── normalised value tables (single source for render AND tie-out) ─────────────
   function colLabel(c) { return c.term || /\((?:\d+\s+half\s+terms?|full\s+year)\)\s*$/i.test(c.label || '') ? c.label : (c.year || c.label); }   // V77-05-04: a daily column keeps its full period label, '2025/26 (5 half terms)'   // V77-03: two named terms of one year need their own headings
+  // V79: the labelled annual national fallback is shown with the same academic-year heading as the table columns ('2023/24', not the source year '2024').
+  function dashNational(r, cols) {
+    var n = Core.nationalComparison(r, cols);
+    if (n && n.annual != null) { var col = cols.filter(function (c) { return c.label === n.annual; })[0]; if (col) n = { num: n.num, disp: n.disp, annual: colLabel(col), reason: n.reason }; }
+    return n;
+  }
   function familyOf(label) {
     var l = String(label);
     if (/^English & Maths/i.test(l)) return 'English & Mathematics thresholds';
@@ -4336,7 +4394,7 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
       if (r.present === false) return;
       var fam = o.sectionOf ? o.sectionOf(r) : (o.families === false ? null : familyOf(r.section));
       if (fam && fam !== last) { rows.push({ type: 'sec', text: fam }); last = fam; }
-      rows.push({ type: 'row', idx: ri++, label: o.labelOf ? o.labelOf(r) : r.section, unit: r.unit || '', kind: r.kind, lowerBetter: !!r.lowerBetter, cells: r.cells, avg: r.threeYr, navg: r.natThreeYr, src: r });
+      rows.push({ type: 'row', idx: ri++, label: o.labelOf ? o.labelOf(r) : r.section, unit: r.unit || '', kind: r.kind, lowerBetter: !!r.lowerBetter, cells: r.cells, avg: r.threeYr, navg: dashNational(r, t.cols), src: r });
     });
     return { cols: t.cols.map(colLabel), rows: rows, nat3: o.nat3 !== false, avgLabel: o.avgLabel, natLabel: o.natLabel };
   }
@@ -4344,9 +4402,9 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
     var rows = [], ri = 0, last = null;
     t.rows.forEach(function (r) {
       if (r.section !== last) { rows.push({ type: 'sec', text: r.section }); last = r.section; }
-      rows.push({ type: 'row', idx: ri++, label: r.group, long: r.section + ' — ' + r.group, unit: r.unit || '', kind: r.kind, lowerBetter: !!r.lowerBetter, cells: r.cells, avg: r.threeYr, navg: r.natThreeYr, src: r });
+      rows.push({ type: 'row', idx: ri++, label: r.group, long: r.section + ' — ' + r.group, unit: r.unit || '', kind: r.kind, lowerBetter: !!r.lowerBetter, cells: r.cells, avg: r.threeYr, navg: dashNational(r, t.cols), src: r });
     });
-    return { cols: t.cols.map(colLabel), rows: rows, nat3: !!annual, noAvg: !annual, avgLabel: '3-yr', natLabel: 'Nat 3-yr' };
+    return { cols: t.cols.map(colLabel), rows: rows, nat3: !!annual, noAvg: !annual, avgLabel: '3-yr', natLabel: 'Nat Avg' };
   }
   function destNorm(D) {
     var rows = [], ri = 0, last = null;
@@ -4460,6 +4518,7 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
     if (rt.band) t.push('SOAP rating: ' + LABEL[rt.band] + (rt.basis === 'count-rule' ? ' (permanent-exclusions count rule: zero is Exceptional; below national Strong; equal Expected; 1–2 above Needs attention; 3 or more above Urgent — no significance test is published for counts)' : rt.basis === 'difference-only' ? ' (difference from national only — no official significance published)' : ' (from the official ' + (nt.dest ? 'significance verdict' : 'position and significance') + ')'));
     else if (rt.basis && Soap.BASIS_TEXT[rt.basis]) t.push(Soap.BASIS_TEXT[rt.basis]);
     if (c.officialRaw) t.push('official: ' + c.officialRaw);
+    if (Core.sourceAnomaly(c.officialRaw)) t.push('Source classification anomaly: close to average with a significance marker; original wording and existing rating retained');
     if (c.nat && c.nat.num != null) t.push('national ' + c.nat.disp + (c.nat.est ? ' (ESTIMATED, not official)' : ''));
     if (c.n != null) t.push('n = ' + c.n);
     return t.join(' | ');
@@ -4471,12 +4530,14 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
     if (c.est) cls.push('cell-est');
     if (c.num == null) cls.push('cell-miss');
     var d = c.num == null ? missTok(c.reason)[0] : c.disp;
-    return '<td class="' + esc(cls.join(' ')) + '" data-id="' + esc(id) + '" data-v="' + (c.num == null ? '' : esc(String(c.num))) + '" data-d="' + esc(d) + '" title="' + esc(cellTitle(c, rt, nt)) + '">' + esc(d) + '</td>';
+    return '<td class="' + esc(cls.join(' ')) + '" data-id="' + esc(id) + '" data-v="' + (c.num == null ? '' : esc(String(c.num))) + '" data-d="' + esc(d) + '" title="' + esc(cellTitle(c, rt, nt)) + '">' + esc(d) + (Core.sourceAnomaly(c.officialRaw) ? ' <span title="Source classification anomaly: contradictory position and significance; original source retained">⚠</span>' : '') + '</td>';
   }
   function avgCell(a, id, cls) {
     if (!a) return '<td class="natavg">—</td>';
-    var t = a.reason ? 'Unavailable: ' + String(a.reason).replace(/_/g, ' ') : '3-yr unweighted mean' + (a.note ? ' (' + a.note + ')' : '');
-    return '<td class="natavg ' + esc(cls || '') + '" data-id="' + esc(id) + '" data-v="' + (a.num == null ? '' : esc(String(a.num))) + '" data-d="' + esc(a.disp) + '" title="' + esc(t) + '">' + esc(a.disp) + '</td>';
+    var t = a.annual ? 'Latest annual national figure (' + a.annual + '), not a three-year average' : a.reason ? 'Unavailable: ' + String(a.reason).replace(/_/g, ' ') : '3-yr unweighted mean' + (a.note ? ' (' + a.note + ')' : '');
+    // V79 tie-out contract (same as the SOAP): a labelled single-year national figure never replaces the unavailable average in data-v/data-d; it travels in data-annual / data-annual-year.
+    var an = a.annual != null;
+    return '<td class="natavg ' + esc(cls || '') + '" data-id="' + esc(id) + '" data-v="' + (an || a.num == null ? '' : esc(String(a.num))) + '" data-d="' + (an ? '\u2014' : esc(a.disp)) + '"' + (an ? ' data-annual="' + esc(a.disp) + '" data-annual-year="' + esc(a.annual) + '"' : '') + ' title="' + esc(t) + '">' + (an ? '<span class="annual">' + esc(a.annual) + ' ' + esc(a.disp) + '</span>' : esc(a.disp)) + '</td>';
   }
   function hasNat(r) { return r.cells.some(function (c) { return c && c.nat && c.nat.num != null; }); }
   function rowCharts(nt, r) { return r.cells.some(function (c) { return c && c.num != null; }); }
@@ -4492,7 +4553,7 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
     var span = 1 + nt.cols.length + (nt.noAvg ? 0 : 1) + (nt.gap ? nt.cols.length : 0) + 0;
     var head = '<table class="data-table" id="tbl-' + esc(pageKey + '-' + tb.key) + '"><thead><tr><th>' + esc(o.firstCol || 'Metric') + '</th>' +
       nt.cols.map(function (c) { return '<th' + (nt.gap ? ' colspan="2"' : '') + '>' + esc(c) + '</th>'; }).join('') +
-      (nt.noAvg ? '' : '<th title="' + esc(nt.dest ? 'Mean of the school’s own three leaver years (the national row, where shown, is not averaged here)' : 'National: unweighted mean of three consecutive annual national values. Each year’s own national figure is in the chart for the row.') + '">' + esc(nt.dest ? '3-Yr Avg' : (nt.natLabel || 'Nat 3-Yr')) + '</th>') + '</tr>' +
+      (nt.noAvg ? '' : '<th title="' + esc(nt.dest ? 'Mean of the school’s own three leaver years (the national row, where shown, is not averaged here)' : 'National: three consecutive academic years from 2022/23 onwards; otherwise the latest eligible annual figure, labelled with its year. No two-year averages. Each year’s own national figure remains in the chart.') + '">' + esc(nt.dest ? '3-Yr Avg' : (nt.natLabel || 'Nat Avg')) + '</th>') + '</tr>' +
       (nt.gap ? '<tr class="sub"><th><span class="vh">Row</span></th>' + nt.cols.map(function () { return '<th class="s2">School</th><th class="s2">Gap</th>'; }).join('') + '</tr>' : '') + '</thead><tbody>';
     var body = '';
     nt.rows.forEach(function (r) {
@@ -5029,7 +5090,7 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
     var pageHtml = {}, AN = AT ? atAnalysis(model, ex, tables) : null, FIRSTPH = {}; if (AT) PHASES.forEach(function (p) { FIRSTPH[PHASE_FIRST[p[0]]] = p[0]; });
     function valuePage(key, extraBefore) {
       var tbs = tables.filter(function (t) { return t.page === key; }), h = '<h1 class="page-title" tabindex="-1">' + esc(pageTitleOf(key)) + '</h1><div class="page-sub">' + esc(SUBS[key] || '') + ' — click any row to chart it</div>';
-      if (key === 'alevel' && !hasSixth) return h + absentValuePage(key, 'No A level or applied-general results were found in this report; the school may have no sixth form.');
+      if (key === 'alevel' && !hasSixth) return h + absentValuePage(key, Core.noSixthForm(model) ? 'No sixth form' : 'No A level or applied-general results were found in this report; the school may have no sixth form.');
       if (AT && FIRSTPH[key]) extraBefore = (extraBefore || '') + phaseHighlights(AN, FIRSTPH[key]);
       if (AT && (key === 'ks2' || key === 'ks2dis')) extraBefore = (extraBefore || '') + atNotPublished(ctx);
       return h + (extraBefore || '') + tbs.map(function (tb) { return block(key, tb); }).join('') + (key === 'disadvantaged' ? disadvOfficial(S('officialFindings')) : '');
@@ -5101,7 +5162,12 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
             if (r.cells.some(function (x) { return x && x.natOther && x.natOther.num != null; }) && c.natOther) add(b + ':' + ci + ':o', c.natOther.num, c.natOther.num != null ? c.natOther.disp : '—');
           }
         });
-        if (!nt.noAvg) { var a = nt.dest ? r.avg : r.navg; if (a) add(b + (nt.dest ? ':3y' : ':n3y'), a.num, a.disp); }
+        if (!nt.noAvg) {
+          var a = nt.dest ? r.avg : r.navg;
+          if (a && !nt.dest && a.annual != null) {   // labelled annual national fallback: the average itself is unavailable (data-v '' / data-d '\u2014'); the figure and its year are declared separately
+            out.push({ id: b + ':n3y', v: '', d: '\u2014', annual: a.disp, annualYear: a.annual, visible: a.annual + ' ' + a.disp });
+          } else if (a) add(b + (nt.dest ? ':3y' : ':n3y'), a.num, a.disp);
+        }
       });
     });
     return out.concat(X.expected(model.extra || null, model));
@@ -5577,7 +5643,7 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
   else root.IdsrViewer = factory(root.IdsrCore, root.IdsrGuard, root.IdsrReconcile, root.IdsrSnapshot, root.IdsrDash, root.IdsrClassify, root.IdsrAllThrough, root.IdsrSpecAllThrough, root.IdsrPrintOverview);
 })(typeof self !== 'undefined' ? self : this, function (Core, Guard, Rec, Snap, Dash, Cls, AT, SpecAT, PrintOv) {
   'use strict';
-  var VIEWER_VERSION = '77.5.2';
+  var VIEWER_VERSION = '79.0.0-qa2';
   // IDENTICAL to the lists in V71 idsr-soap.html / idsr-dashboard.html / portal.html (a test compares them to the V71 source).
   var FULL_ACCESS_ROLES = ['Headteacher', 'multi_school_leader', 'Executive Headteacher', 'CEO', 'School Improvement Director'];
   var PACKAGE_FEATURES = {
@@ -5836,6 +5902,9 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
     function limitationText(bits) { return bits && bits.length ? 'Limitations: ' + bits.join('; ') + '. Nothing missing has been estimated or filled in. ' + (S.isAdmin ? 'Administrators: see the import diagnostics (preview of the submission) for detail.' : 'Please tell SOAP Analytics if something looks wrong.') : ''; }
     /** V77-07 A4: administrators keep the full technical text; schools see only the plain coverage note, and only when applicable (applied at render time, so existing publications are covered too). */
     function bannerLimitation(report) {
+      // V79: published school views never display diagnostic/limitations banners.
+      // Keep stored diagnostics, administrator visibility and publication gates intact.
+      if (!S.isAdmin && S.mode === 'publication') return '';
       if (S.isAdmin) return limitationText(report && report.limitations);
       var sl = schoolLimitations(report), t = sl.absent.length ? 'Limitations: ' + sl.absent.join('; ') + '. Nothing missing has been estimated or filled in. Please tell SOAP Analytics if something looks wrong.' : '';
       return sl.note ? (t ? t + ' ' : '') + COVERAGE_NOTE : t;
