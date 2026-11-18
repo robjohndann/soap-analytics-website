@@ -19,7 +19,7 @@
 })(typeof self !== 'undefined' ? self : this, function () {
   'use strict';
 
-  var CORE_VERSION = '79.0.0-qa2';
+  var CORE_VERSION = '79.0.0-qa3';
   var CLASSIFICATION_VERSION = 'soap-heuristic-v71-thresholds';   // thresholds deliberately UNCHANGED from V71
   var SCHEMA_VERSION = 1;
   var MAX_SOURCE_BYTES = 26214400;                                // 25 MiB hard cap (matches draft DB check)
@@ -964,7 +964,12 @@
     var w = [], terms = [];
     secs.forEach(function (s) {
       var h = s.querySelector('h3'), label = norm(h ? h.textContent : s.id).replace(/^Links to AP\s*[-–]\s*/i, ''), tbl = topTables(s)[0];
-      if (!tbl) { w.push(label + ': table missing'); terms.push({ label: label, header: [], rows: [], state: 'failed' }); return; }
+      if (!tbl) {
+        // The IDSR states, in the section body (not the guidance), that it holds no data for this school (or that it was incomplete). That is a source-stated empty section, not an unreadable one.
+        var stated = arr(s.querySelectorAll('p')).some(function (p) { return !(p.closest && p.closest('details')) && /there is no data in this section for this school or it was incomplete/i.test(norm(p.textContent)); });
+        if (stated) { terms.push({ label: label, header: [], rows: [], state: 'empty', sourceStatedNoData: true }); return; }
+        w.push(label + ': table missing'); terms.push({ label: label, header: [], rows: [], state: 'failed' }); return;
+      }
       var rows = rowsOf(tbl), header = rows[0].map(txt), body = rows.slice(1).filter(function (r) { return r.some(function (c) { return txt(c); }); });
       var parsed = body.map(function (r) {
         var v = r.map(txt), counts = v.slice(6).map(function (t) { var m = /^(\d+)\s*\((\d+)\)$/.exec(t); if (m) return { raw: t, st: 'value', num: +m[1], leftDuring: +m[2], zero: +m[1] === 0 }; var c = cellOf(t); if (c.st === 'unparsed') w.push(label + ': unrecognised count "' + t + '"'); return c; });
@@ -973,7 +978,7 @@
       terms.push({ label: label, header: header, rows: parsed, state: body.length ? 'rows' : 'empty' });
     });
     var any = terms.some(function (t) { return t.state === 'rows'; });
-    return res(K, T, any ? statusFrom(w, true) : (w.length ? 'failed' : 'empty'), { terms: terms }, any ? null : 'The source lists no alternative-provision links for these terms. This is “none listed”, not a missing section.', w);
+    return res(K, T, any ? statusFrom(w, true) : (w.length ? 'failed' : 'empty'), { terms: terms }, any ? null : (terms.length && terms.every(function (t) { return t.sourceStatedNoData; }) ? 'The IDSR states there is no data in this section for this school, or that it was incomplete.' : 'The source lists no alternative-provision links for these terms. This is “none listed”, not a missing section.'), w);
   }
 
   function carryTable(sec, w, cfg) {
@@ -1052,7 +1057,7 @@
   }
   /** V77-07 A4: the "Year 11 context" column of a cohort table holds a plain-text label (e.g. "Low - Stability"), not a figure. Kept verbatim as a text cell; any other text in this column, and every non-label cell elsewhere, still goes through cellOf and warns as before. */
   function contextLabelCell(colName, rawIn) {
-    if (!/^year 11 context$/i.test(String(colName || '').trim())) return null;
+    if (!/^year (?:11|12|13) context$/i.test(String(colName || '').trim())) return null;   // the label is kept literally; it is never mapped to another cohort
     var raw = norm(rawIn);
     return /^[A-Za-z][A-Za-z ]*[A-Za-z]\s*[-\u2013]\s*[A-Za-z][A-Za-z ]*[A-Za-z]$/.test(raw) ? { raw: raw, st: 'label' } : null;
   }
@@ -2868,7 +2873,6 @@
           return;
         }
         var sp = splitKey(r.key), built = Core.buildRow(model, { section: r.label, group: sp.group, measure: sp.measure }, card.cols, 'annual');
-        if (built.cells.some(function (c) { return Core.sourceAnomaly(c.officialRaw); })) card.notes.push(r.label + ': source classification anomaly — Close to average with a significance marker; source wording and existing rating retained.');
         var cells2 = built.cells.map(function (c, k) { return resolveValueCell(c, rowId + ':' + k, built.lowerBetter); });
         var lbl = r.label;
         if (sc.entriesOnly) {   // V77-03 Stage 3: only measures published per ENTRY whose latest figure is rated below national; the entry count is shown, never a pupil count
@@ -3302,7 +3306,7 @@
 })(typeof self !== 'undefined' ? self : this, function (Core, Soap) {
   'use strict';
 
-  var SNAPSHOT_VERSION = '79.0.0-qa2';
+  var SNAPSHOT_VERSION = '79.0.0-qa3';
   var SNAPSHOT_SCHEMA_VERSION = 2;
 
   function esc(v) {
@@ -4363,7 +4367,7 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
 })(typeof self !== 'undefined' ? self : this, function (Core, Soap, X, Snap, LOGO) {
   'use strict';
 
-  var DASH_VERSION = '79.0.0-qa2';
+  var DASH_VERSION = '79.0.0-qa3';
   var esc = X.esc, SI = Snap._internals;
   var ORDER = ['exceptional', 'strong', 'expected', 'attention', 'urgent'];
   var LABEL = { exceptional: 'Exceptional', strong: 'Strong Standard', expected: 'Expected Standard', attention: 'Needs Attention', urgent: 'Urgent Improvement' };
@@ -5643,7 +5647,7 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
   else root.IdsrViewer = factory(root.IdsrCore, root.IdsrGuard, root.IdsrReconcile, root.IdsrSnapshot, root.IdsrDash, root.IdsrClassify, root.IdsrAllThrough, root.IdsrSpecAllThrough, root.IdsrPrintOverview);
 })(typeof self !== 'undefined' ? self : this, function (Core, Guard, Rec, Snap, Dash, Cls, AT, SpecAT, PrintOv) {
   'use strict';
-  var VIEWER_VERSION = '79.0.0-qa2';
+  var VIEWER_VERSION = '79.0.0-qa3';
   // IDENTICAL to the lists in V71 idsr-soap.html / idsr-dashboard.html / portal.html (a test compares them to the V71 source).
   var FULL_ACCESS_ROLES = ['Headteacher', 'multi_school_leader', 'Executive Headteacher', 'CEO', 'School Improvement Director'];
   var PACKAGE_FEATURES = {
