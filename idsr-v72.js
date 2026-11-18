@@ -19,7 +19,7 @@
 })(typeof self !== 'undefined' ? self : this, function () {
   'use strict';
 
-  var CORE_VERSION = '79.0.0-qa1';
+  var CORE_VERSION = '79.0.0-qa2';
   var CLASSIFICATION_VERSION = 'soap-heuristic-v71-thresholds';   // thresholds deliberately UNCHANGED from V71
   var SCHEMA_VERSION = 1;
   var MAX_SOURCE_BYTES = 26214400;                                // 25 MiB hard cap (matches draft DB check)
@@ -3302,7 +3302,7 @@
 })(typeof self !== 'undefined' ? self : this, function (Core, Soap) {
   'use strict';
 
-  var SNAPSHOT_VERSION = '79.0.0-qa1';
+  var SNAPSHOT_VERSION = '79.0.0-qa2';
   var SNAPSHOT_SCHEMA_VERSION = 2;
 
   function esc(v) {
@@ -4363,7 +4363,7 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
 })(typeof self !== 'undefined' ? self : this, function (Core, Soap, X, Snap, LOGO) {
   'use strict';
 
-  var DASH_VERSION = '79.0.0-qa1';
+  var DASH_VERSION = '79.0.0-qa2';
   var esc = X.esc, SI = Snap._internals;
   var ORDER = ['exceptional', 'strong', 'expected', 'attention', 'urgent'];
   var LABEL = { exceptional: 'Exceptional', strong: 'Strong Standard', expected: 'Expected Standard', attention: 'Needs Attention', urgent: 'Urgent Improvement' };
@@ -4372,6 +4372,12 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
 
   // ───────────── normalised value tables (single source for render AND tie-out) ─────────────
   function colLabel(c) { return c.term || /\((?:\d+\s+half\s+terms?|full\s+year)\)\s*$/i.test(c.label || '') ? c.label : (c.year || c.label); }   // V77-05-04: a daily column keeps its full period label, '2025/26 (5 half terms)'   // V77-03: two named terms of one year need their own headings
+  // V79: the labelled annual national fallback is shown with the same academic-year heading as the table columns ('2023/24', not the source year '2024').
+  function dashNational(r, cols) {
+    var n = Core.nationalComparison(r, cols);
+    if (n && n.annual != null) { var col = cols.filter(function (c) { return c.label === n.annual; })[0]; if (col) n = { num: n.num, disp: n.disp, annual: colLabel(col), reason: n.reason }; }
+    return n;
+  }
   function familyOf(label) {
     var l = String(label);
     if (/^English & Maths/i.test(l)) return 'English & Mathematics thresholds';
@@ -4388,7 +4394,7 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
       if (r.present === false) return;
       var fam = o.sectionOf ? o.sectionOf(r) : (o.families === false ? null : familyOf(r.section));
       if (fam && fam !== last) { rows.push({ type: 'sec', text: fam }); last = fam; }
-      rows.push({ type: 'row', idx: ri++, label: o.labelOf ? o.labelOf(r) : r.section, unit: r.unit || '', kind: r.kind, lowerBetter: !!r.lowerBetter, cells: r.cells, avg: r.threeYr, navg: Core.nationalComparison(r, t.cols), src: r });
+      rows.push({ type: 'row', idx: ri++, label: o.labelOf ? o.labelOf(r) : r.section, unit: r.unit || '', kind: r.kind, lowerBetter: !!r.lowerBetter, cells: r.cells, avg: r.threeYr, navg: dashNational(r, t.cols), src: r });
     });
     return { cols: t.cols.map(colLabel), rows: rows, nat3: o.nat3 !== false, avgLabel: o.avgLabel, natLabel: o.natLabel };
   }
@@ -4396,7 +4402,7 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
     var rows = [], ri = 0, last = null;
     t.rows.forEach(function (r) {
       if (r.section !== last) { rows.push({ type: 'sec', text: r.section }); last = r.section; }
-      rows.push({ type: 'row', idx: ri++, label: r.group, long: r.section + ' — ' + r.group, unit: r.unit || '', kind: r.kind, lowerBetter: !!r.lowerBetter, cells: r.cells, avg: r.threeYr, navg: Core.nationalComparison(r, t.cols), src: r });
+      rows.push({ type: 'row', idx: ri++, label: r.group, long: r.section + ' — ' + r.group, unit: r.unit || '', kind: r.kind, lowerBetter: !!r.lowerBetter, cells: r.cells, avg: r.threeYr, navg: dashNational(r, t.cols), src: r });
     });
     return { cols: t.cols.map(colLabel), rows: rows, nat3: !!annual, noAvg: !annual, avgLabel: '3-yr', natLabel: 'Nat Avg' };
   }
@@ -4529,7 +4535,9 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
   function avgCell(a, id, cls) {
     if (!a) return '<td class="natavg">—</td>';
     var t = a.annual ? 'Latest annual national figure (' + a.annual + '), not a three-year average' : a.reason ? 'Unavailable: ' + String(a.reason).replace(/_/g, ' ') : '3-yr unweighted mean' + (a.note ? ' (' + a.note + ')' : '');
-    return '<td class="natavg ' + esc(cls || '') + '" data-id="' + esc(id) + '" data-v="' + (a.num == null ? '' : esc(String(a.num))) + '" data-d="' + esc(a.disp) + '" title="' + esc(t) + '">' + (a.annual ? '<span class="annual">' + esc(a.annual) + ' ' + esc(a.disp) + '</span>' : esc(a.disp)) + '</td>';
+    // V79 tie-out contract (same as the SOAP): a labelled single-year national figure never replaces the unavailable average in data-v/data-d; it travels in data-annual / data-annual-year.
+    var an = a.annual != null;
+    return '<td class="natavg ' + esc(cls || '') + '" data-id="' + esc(id) + '" data-v="' + (an || a.num == null ? '' : esc(String(a.num))) + '" data-d="' + (an ? '\u2014' : esc(a.disp)) + '"' + (an ? ' data-annual="' + esc(a.disp) + '" data-annual-year="' + esc(a.annual) + '"' : '') + ' title="' + esc(t) + '">' + (an ? '<span class="annual">' + esc(a.annual) + ' ' + esc(a.disp) + '</span>' : esc(a.disp)) + '</td>';
   }
   function hasNat(r) { return r.cells.some(function (c) { return c && c.nat && c.nat.num != null; }); }
   function rowCharts(nt, r) { return r.cells.some(function (c) { return c && c.num != null; }); }
@@ -5154,7 +5162,12 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
             if (r.cells.some(function (x) { return x && x.natOther && x.natOther.num != null; }) && c.natOther) add(b + ':' + ci + ':o', c.natOther.num, c.natOther.num != null ? c.natOther.disp : '—');
           }
         });
-        if (!nt.noAvg) { var a = nt.dest ? r.avg : r.navg; if (a) add(b + (nt.dest ? ':3y' : ':n3y'), a.num, a.disp); }
+        if (!nt.noAvg) {
+          var a = nt.dest ? r.avg : r.navg;
+          if (a && !nt.dest && a.annual != null) {   // labelled annual national fallback: the average itself is unavailable (data-v '' / data-d '\u2014'); the figure and its year are declared separately
+            out.push({ id: b + ':n3y', v: '', d: '\u2014', annual: a.disp, annualYear: a.annual, visible: a.annual + ' ' + a.disp });
+          } else if (a) add(b + (nt.dest ? ':3y' : ':n3y'), a.num, a.disp);
+        }
       });
     });
     return out.concat(X.expected(model.extra || null, model));
@@ -5630,7 +5643,7 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
   else root.IdsrViewer = factory(root.IdsrCore, root.IdsrGuard, root.IdsrReconcile, root.IdsrSnapshot, root.IdsrDash, root.IdsrClassify, root.IdsrAllThrough, root.IdsrSpecAllThrough, root.IdsrPrintOverview);
 })(typeof self !== 'undefined' ? self : this, function (Core, Guard, Rec, Snap, Dash, Cls, AT, SpecAT, PrintOv) {
   'use strict';
-  var VIEWER_VERSION = '79.0.0-qa1';
+  var VIEWER_VERSION = '79.0.0-qa2';
   // IDENTICAL to the lists in V71 idsr-soap.html / idsr-dashboard.html / portal.html (a test compares them to the V71 source).
   var FULL_ACCESS_ROLES = ['Headteacher', 'multi_school_leader', 'Executive Headteacher', 'CEO', 'School Improvement Director'];
   var PACKAGE_FEATURES = {
