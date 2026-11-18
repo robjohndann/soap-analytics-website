@@ -19,7 +19,7 @@
 })(typeof self !== 'undefined' ? self : this, function () {
   'use strict';
 
-  var CORE_VERSION = '79.0.0-qa3';
+  var CORE_VERSION = '79.0.0-qa4';
   var CLASSIFICATION_VERSION = 'soap-heuristic-v71-thresholds';   // thresholds deliberately UNCHANGED from V71
   var SCHEMA_VERSION = 1;
   var MAX_SOURCE_BYTES = 26214400;                                // 25 MiB hard cap (matches draft DB check)
@@ -978,7 +978,10 @@
       terms.push({ label: label, header: header, rows: parsed, state: body.length ? 'rows' : 'empty' });
     });
     var any = terms.some(function (t) { return t.state === 'rows'; });
-    return res(K, T, any ? statusFrom(w, true) : (w.length ? 'failed' : 'empty'), { terms: terms }, any ? null : (terms.length && terms.every(function (t) { return t.sourceStatedNoData; }) ? 'The IDSR states there is no data in this section for this school, or that it was incomplete.' : 'The source lists no alternative-provision links for these terms. This is “none listed”, not a missing section.'), w);
+    var apStated = !any && !w.length && terms.length > 0 && terms.every(function (t) { return t.sourceStatedNoData; });
+    var apRes = res(K, T, any ? statusFrom(w, true) : (w.length ? 'failed' : 'empty'), { terms: terms }, any ? null : (terms.length && terms.every(function (t) { return t.sourceStatedNoData; }) ? 'The IDSR states there is no data in this section for this school, or that it was incomplete.' : 'The source lists no alternative-provision links for these terms. This is “none listed”, not a missing section.'), w);
+    if (apStated) apRes.sourceStatedNoData = true;
+    return apRes;
   }
 
   function carryTable(sec, w, cfg) {
@@ -3306,7 +3309,7 @@
 })(typeof self !== 'undefined' ? self : this, function (Core, Soap) {
   'use strict';
 
-  var SNAPSHOT_VERSION = '79.0.0-qa3';
+  var SNAPSHOT_VERSION = '79.0.0-qa4';
   var SNAPSHOT_SCHEMA_VERSION = 2;
 
   function esc(v) {
@@ -3816,7 +3819,7 @@
 
   // ───────────── generic page furniture ─────────────
   var CHIP = { ok: ['Parsed in full', 'st-ok'], partial: ['Partly parsed', 'st-partial'], empty: ['Present: none listed', 'st-empty'], absent: ['Not in this report', 'st-absent'], failed: ['Could not be read', 'st-failed'] };
-  function chip(sec) { var c = CHIP[sec.status] || CHIP.failed; return '<span class="stchip ' + c[1] + '">' + c[0] + '</span>'; }
+  function chip(sec) { var c = (sec.status === 'empty' && sec.sourceStatedNoData) ? ['No data or incomplete', 'st-empty'] : (CHIP[sec.status] || CHIP.failed); return '<span class="stchip ' + c[1] + '">' + c[0] + '</span>'; }
   function guidance(sec) {
     var g = (sec.sources || []).concat(sec.guidance || []); if (!g.length) return '';
     return '<details class="src"><summary>Official data source and guidance</summary>' + g.map(function (t) { return '<p>' + esc(t) + '</p>'; }).join('') + '</details>';
@@ -3826,7 +3829,7 @@
     var h = '';
     if (sec.status === 'absent') h = '<div class="notice n-absent"><b>Not in this report.</b> ' + esc(sec.note || '') + ' Nothing is shown for ' + esc(what || sec.title) + ' and nothing is treated as zero.</div>';
     else if (sec.status === 'failed') h = '<div class="notice n-failed"><b>This section is in the report but could not be read reliably.</b> ' + esc((sec.warnings && sec.warnings[0]) || sec.note || '') + ' It is deliberately left blank rather than shown as zero.</div>';
-    else if (sec.status === 'empty') h = '<div class="notice n-empty"><b>Present, with nothing listed.</b> ' + esc(sec.note || '') + '</div>';
+    else if (sec.status === 'empty') h = '<div class="notice n-empty"><b>' + (sec.sourceStatedNoData ? 'No data or incomplete.' : 'Present, with nothing listed.') + '</b> ' + esc(sec.note || '') + '</div>';
     else if (sec.status === 'partial') h = '<div class="notice n-partial"><b>Partly parsed.</b> ' + esc(sec.warnings.slice(0, 3).join('; ')) + (sec.warnings.length > 3 ? ' (+' + (sec.warnings.length - 3) + ' more, see Data coverage)' : '') + '</div>';
     return h;
   }
@@ -3926,7 +3929,7 @@
     if (ap.status === 'ok' || ap.status === 'partial') {
       ap.data.terms.forEach(function (term, ti) {
         h += '<div class="panel"><h4 aria-level="2">' + esc(term.label) + '</h4>';
-        if (term.state === 'empty') h += '<p class="xnote">The source lists no placements for this term.</p>';
+        if (term.state === 'empty') h += '<p class="xnote">' + (term.sourceStatedNoData ? 'The IDSR states no data or incomplete for this term.' : 'The source lists no placements for this term.') + '</p>';
         else if (term.state === 'failed') h += '<p class="xnote">The table is in the source but could not be read.</p>';
         else {
           h += '<div class="tblscroll"><table class="data-table ap" aria-label="Alternative provision ' + esc(term.label) + '"><thead><tr>' + term.header.map(function (x) { return th(x); }).join('') + '</tr></thead><tbody>';
@@ -4367,7 +4370,7 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
 })(typeof self !== 'undefined' ? self : this, function (Core, Soap, X, Snap, LOGO) {
   'use strict';
 
-  var DASH_VERSION = '79.0.0-qa3';
+  var DASH_VERSION = '79.0.0-qa4';
   var esc = X.esc, SI = Snap._internals;
   var ORDER = ['exceptional', 'strong', 'expected', 'attention', 'urgent'];
   var LABEL = { exceptional: 'Exceptional', strong: 'Strong Standard', expected: 'Expected Standard', attention: 'Needs Attention', urgent: 'Urgent Improvement' };
@@ -4837,7 +4840,7 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
     var tiles = [['yeargroup', 'Attendance by Year Group', 'yearGroupAbsence'], ['behaviour', 'Suspensions & Exclusions', ['suspensions', 'permExclusions']], ['movement', 'Pupil Movement & AP', ['pupilMovement', 'alternativeProvision']], ['ks4entries', 'KS4 Subject Entries', 'ks4Entries'], ['sixthform', 'Sixth Form', ['post16QualTypes', 'post16Retention', 'post16Entries', 'post16Summary']], ['similar', 'Similar-School Comparison', 'ks4Summary'], ['destdetail', 'Destinations in Detail', 'destinationsDetail'], ['findings', 'Context & Official Findings', 'officialFindings']];
     h += '<div class="heatmap-title" style="margin-top:24px;">School Context sections (September 2026 additions)</div><div class="heatmap-grid">' + tiles.map(function (t) {
       var keys = [].concat(t[2]), secs = keys.map(sx), rank = { failed: 4, partial: 3, ok: 0, empty: 1, absent: 2 }, worst = secs.slice().sort(function (a, b) { return (rank[b.status] || 0) - (rank[a.status] || 0); })[0];
-      var allAbsent = secs.every(function (s) { return s.status === 'absent'; }), st = allAbsent ? { status: 'absent' } : (secs.some(function (s) { return s.status === 'failed'; }) ? { status: 'failed' } : secs.some(function (s) { return s.status === 'partial'; }) ? { status: 'partial' } : secs.every(function (s) { return s.status === 'ok' || s.status === 'absent'; }) ? { status: 'ok' } : { status: 'empty' });
+      var allAbsent = secs.every(function (s) { return s.status === 'absent'; }), st = allAbsent ? { status: 'absent' } : (secs.some(function (s) { return s.status === 'failed'; }) ? { status: 'failed' } : secs.some(function (s) { return s.status === 'partial'; }) ? { status: 'partial' } : secs.every(function (s) { return s.status === 'ok' || s.status === 'absent'; }) ? { status: 'ok' } : { status: 'empty', sourceStatedNoData: secs.filter(function (s) { return s.status === 'empty'; }).every(function (s) { return s.sourceStatedNoData; }) });
       return '<div class="tile go" tabindex="0" role="link" data-go="' + t[0] + '"><div class="tile-name">' + esc(t[1]) + '</div><div class="tile-meta">' + X.chip(st) + '</div></div>';
     }).join('') + '</div>';
     return h;
@@ -4916,7 +4919,7 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
       tabs.map(function (t, i) { return '<div class="context-panel ctxp" data-cpane="' + t[0] + '" role="tabpanel"' + (i ? ' hidden' : '') + '>' + t[2] + '</div>'; }).join('') + '</div>';
     h += '<div class="heatmap-title" style="margin-top:24px;">School context sections</div><div class="heatmap-grid">' + CONTEXT_TILES.map(function (t) {
       var secs = [].concat(t[2]).map(sx), allAbsent = secs.every(function (s) { return s.status === 'absent'; });
-      var st = allAbsent ? { status: 'absent' } : (secs.some(function (s) { return s.status === 'failed'; }) ? { status: 'failed' } : secs.some(function (s) { return s.status === 'partial'; }) ? { status: 'partial' } : secs.every(function (s) { return s.status === 'ok' || s.status === 'absent'; }) ? { status: 'ok' } : { status: 'empty' });
+      var st = allAbsent ? { status: 'absent' } : (secs.some(function (s) { return s.status === 'failed'; }) ? { status: 'failed' } : secs.some(function (s) { return s.status === 'partial'; }) ? { status: 'partial' } : secs.every(function (s) { return s.status === 'ok' || s.status === 'absent'; }) ? { status: 'ok' } : { status: 'empty', sourceStatedNoData: secs.filter(function (s) { return s.status === 'empty'; }).every(function (s) { return s.sourceStatedNoData; }) });
       return '<div class="tile go" tabindex="0" role="link" data-go="' + t[0] + '"><div class="tile-name">' + esc(t[1]) + '</div><div class="tile-meta">' + X.chip(st) + '</div></div>';
     }).join('') + '</div>';
     return h;
@@ -5647,7 +5650,7 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
   else root.IdsrViewer = factory(root.IdsrCore, root.IdsrGuard, root.IdsrReconcile, root.IdsrSnapshot, root.IdsrDash, root.IdsrClassify, root.IdsrAllThrough, root.IdsrSpecAllThrough, root.IdsrPrintOverview);
 })(typeof self !== 'undefined' ? self : this, function (Core, Guard, Rec, Snap, Dash, Cls, AT, SpecAT, PrintOv) {
   'use strict';
-  var VIEWER_VERSION = '79.0.0-qa3';
+  var VIEWER_VERSION = '79.0.0-qa4';
   // IDENTICAL to the lists in V71 idsr-soap.html / idsr-dashboard.html / portal.html (a test compares them to the V71 source).
   var FULL_ACCESS_ROLES = ['Headteacher', 'multi_school_leader', 'Executive Headteacher', 'CEO', 'School Improvement Director'];
   var PACKAGE_FEATURES = {
