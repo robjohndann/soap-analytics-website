@@ -202,7 +202,11 @@
     total += 3 * 6; // Staff Absence & Cover: 3 rows x 6 periods
     total += 5; // Resource Effectiveness: 5 rows
     total += 1; // Overall Rating
-    const filled = (financeRows || []).length;
+    // V80: the per-school 'Lessons per day' setting is stored as a finance_data row but is a setting,
+    // not an entered figure - it must never count towards (or inflate) Finance & Resources completion.
+    const filled = (financeRows || []).filter(function (r) {
+      return !(r && r.category === 'Staff Absence & Cover' && r.metric === 'Lessons per Day' && r.period === 'Setting');
+    }).length;
     const pct = total ? Math.round((Math.min(filled, total) / total) * 100) : 0;
     return { pct, filled, total };
   }
