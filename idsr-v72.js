@@ -19,7 +19,7 @@
 })(typeof self !== 'undefined' ? self : this, function () {
   'use strict';
 
-  var CORE_VERSION = '79.0.0-qa4';
+  var CORE_VERSION = '79.0.0-qa5';
   var CLASSIFICATION_VERSION = 'soap-heuristic-v71-thresholds';   // thresholds deliberately UNCHANGED from V71
   var SCHEMA_VERSION = 1;
   var MAX_SOURCE_BYTES = 26214400;                                // 25 MiB hard cap (matches draft DB check)
@@ -266,11 +266,13 @@
   }
 
   // ───────────────────────────── DOM helpers ─────────────────────────────
-  function nextTable(h) {
+  function nextTable(h, stopAtHeading) {
     var cursor = h;
     while (cursor) {
       cursor = cursor.nextElementSibling;
       if (!cursor) break;
+      // V79 qa5: a section heading with no table of its own (the IDSR prints 'There is no data in this section…') must not adopt the NEXT section's table.
+      if (stopAtHeading && /^H[1-3]$/.test(tag(cursor))) return null;
       if (tag(cursor) === 'TABLE') return cursor;
       var found = cursor.querySelector && cursor.querySelector('table');
       if (found) return found;
@@ -318,7 +320,7 @@
       var label = norm(h3.textContent);
       if (label.indexOf(' - ') === -1) return;
       var split = label.indexOf(' - '), group = label.slice(0, split).trim(), measure = label.slice(split + 3).trim();
-      var tbl = nextTable(h3);
+      var tbl = nextTable(h3, true);
       if (!tbl) return;
       var colIds = colIdsFor(tbl);
       if (!colIds) { stats.tablesWithoutHeader++; warnings.push({ code: 'table_without_thead', where: label }); return; }
@@ -3309,7 +3311,7 @@
 })(typeof self !== 'undefined' ? self : this, function (Core, Soap) {
   'use strict';
 
-  var SNAPSHOT_VERSION = '79.0.0-qa4';
+  var SNAPSHOT_VERSION = '79.0.0-qa5';
   var SNAPSHOT_SCHEMA_VERSION = 2;
 
   function esc(v) {
@@ -4370,7 +4372,7 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
 })(typeof self !== 'undefined' ? self : this, function (Core, Soap, X, Snap, LOGO) {
   'use strict';
 
-  var DASH_VERSION = '79.0.0-qa4';
+  var DASH_VERSION = '79.0.0-qa5';
   var esc = X.esc, SI = Snap._internals;
   var ORDER = ['exceptional', 'strong', 'expected', 'attention', 'urgent'];
   var LABEL = { exceptional: 'Exceptional', strong: 'Strong Standard', expected: 'Expected Standard', attention: 'Needs Attention', urgent: 'Urgent Improvement' };
@@ -5650,7 +5652,7 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
   else root.IdsrViewer = factory(root.IdsrCore, root.IdsrGuard, root.IdsrReconcile, root.IdsrSnapshot, root.IdsrDash, root.IdsrClassify, root.IdsrAllThrough, root.IdsrSpecAllThrough, root.IdsrPrintOverview);
 })(typeof self !== 'undefined' ? self : this, function (Core, Guard, Rec, Snap, Dash, Cls, AT, SpecAT, PrintOv) {
   'use strict';
-  var VIEWER_VERSION = '79.0.0-qa4';
+  var VIEWER_VERSION = '79.0.0-qa5';
   // IDENTICAL to the lists in V71 idsr-soap.html / idsr-dashboard.html / portal.html (a test compares them to the V71 source).
   var FULL_ACCESS_ROLES = ['Headteacher', 'multi_school_leader', 'Executive Headteacher', 'CEO', 'School Improvement Director'];
   var PACKAGE_FEATURES = {
