@@ -295,6 +295,7 @@
   </div>
 </div>
 
+<script src="absence-cover.js"></script>
 <script>
   function escapeHtml(value) {
     return String(value == null ? '' : value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
@@ -313,7 +314,7 @@
     cols.forEach(c => html += `<th>${escapeHtml(c)}</th>`);
     html += '</tr></thead><tbody>';
     rows.forEach(r => {
-      html += `<tr><td class="rowlabel">${escapeHtml(r)}</td>`;
+      html += `<tr><td class="rowlabel">${escapeHtml(AbsenceCover.labelFor(r))}</td>`;
       cols.forEach((c, idx) => {
         const v = valueFn ? valueFn(r, c, idx) : null;
         const cls = cellClassFn ? (cellClassFn(r, c, v) || '') : '';
@@ -363,7 +364,7 @@
     }
     html += '</tr></thead><tbody>';
     rows.forEach(r => {
-      html += `<tr><td class="rowlabel">${escapeHtml(r)}</td>`;
+      html += `<tr><td class="rowlabel">${escapeHtml(AbsenceCover.labelFor(r))}</td>`;
       cols.forEach((c, idx) => {
         const v = valueFn ? valueFn(r, c, idx) : null;
         const cls = cellClassFn ? (cellClassFn(r, c, v) || '') : '';
@@ -1449,16 +1450,33 @@
     }
     const recruitPanel = panel('Recruitment &amp; Retention', `${subpanel('Recruitment &amp; Retention', miniTable(finYears, recruitRows, (r,c) => r === 'CPD Spend per Teacher' ? finCurrency('Recruitment & Retention', r, c) : finVal('Recruitment & Retention', r, c), false, (r,c,v) => recruitClass(r, v)), undefined, undefined, ` <button type="button" class="ctx-key-btn" onclick="event.stopPropagation(); openCtxKey('recruitment');">Key</button>`)}`, 1);
 
-    const absenceRows = ['Teacher Absence %','Cover Lessons / Day','Support Staff Absence %'];
+    const absenceRows = AbsenceCover.ROWS;
+    const absenceDates = AbsenceCover.datesFromReportingPeriods(reportingPeriods, PERIODS, PERIOD_TO_REPORTING_NAME);
+    const absenceVM = AbsenceCover.viewModel(financeData, PERIODS, absenceDates);
     const absenceRowRange = {};
     absenceRows.forEach(r => {
-      const vals = PERIODS.map(c => parseFloat(finVal('Staff Absence & Cover', r, c))).filter(v => !isNaN(v));
+      const vals = PERIODS.map(c => parseFloat(absenceVM.get(r, c))).filter(v => !isNaN(v));
       absenceRowRange[r] = vals.length ? { min: Math.min(...vals), max: Math.max(...vals) } : null;
     });
-    function absenceContextClass(row, value) {
-      return rowRelativePurpleClass(absenceRowRange[row], value, false);
+    function absenceContextClass(row, value, col) {
+      if (col === 'YTD' && row !== AbsenceCover.COVER) return '';   // YTD days are totals, not comparable with half-term figures
+      const rg = absenceRowRange[row];
+      if (rg && (value < rg.min || value > rg.max)) return '';
+      return rowRelativePurpleClass(rg, value, false);
     }
-    const absencePanel = panel('Staff Absence &amp; Cover', `${subpanel('Staff Absence &amp; Cover', miniTable([...PERIODS,'YTD'], absenceRows, (r,c) => finVal('Staff Absence & Cover', r, c), false, (r,c,v) => absenceContextClass(r,v)), undefined, undefined, ` <button type="button" class="ctx-key-btn" onclick="event.stopPropagation(); openCtxKey('staffAbsence');">Key</button>`)}`, 1);
+    function absenceCellValue(r, c) {
+      const v = absenceVM.get(r, c);
+      return v === '' ? null : v;
+    }
+    function absenceFootnote() {
+      const notes = [];
+      const missDates = absenceVM.issues.filter(i => /cover not calculated - reporting/.test(i)).map(i => i.split(':')[0]);
+      if (missDates.length) notes.push('Cover not calculated (reporting period dates missing or invalid): ' + missDates.join(', ') + '.');
+      if (absenceVM.issues.some(i => /^YTD cover not calculated/.test(i))) notes.push('YTD cover not calculated: some periods with absence entered have no valid dates.');
+      absenceVM.issues.filter(i => !/cover not calculated/.test(i)).forEach(i => notes.push(i));
+      return notes.length ? `<div style="font-size:7px;line-height:1.3;margin-top:3px;opacity:0.85;">${notes.map(escapeHtml).join('<br>')}</div>` : '';
+    }
+    const absencePanel = panel('Staff Absence &amp; Cover', `${subpanel('Staff Absence &amp; Cover', miniTable([...PERIODS,'YTD'], absenceRows, absenceCellValue, false, (r,c,v) => absenceContextClass(r, parseFloat(v), c), 'narrow-labels') + absenceFootnote(), undefined, undefined, ` <button type="button" class="ctx-key-btn" onclick="event.stopPropagation(); openCtxKey('staffAbsence');">Key</button>`)}`, 1);
 
     const resourceRows = ['Staffing Resources','SEND Resources','Estates','Technology','Curriculum Resources'];
     const resourcePanel = panel('Resource Effectiveness', `${subpanel('Resource Effectiveness', miniTable(['Rating'], resourceRows, (r,c) => finVal('Resource Effectiveness', r, 'Rating'), false, (r,c,v) => ratingClass(v)))}`, 0.8);

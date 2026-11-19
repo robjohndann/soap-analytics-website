@@ -371,6 +371,7 @@
 </div>
 
 <script src="completion-core.js"></script>
+<script src="absence-cover.js"></script>
 <script>
   const SUPABASE_URL = 'https://caopycszjzrmwhxxvtpx.supabase.co';
   const SUPABASE_KEY = 'sb_publishable_2CTGR0PKyRPpSk59lcr3sA_hvvUDX97';
@@ -4819,19 +4820,17 @@
   ];
 
   function recalcAmendFinanceYTD(schoolId) {
+    const d = SCHOOL_AMEND_DATA[schoolId];
     const container = document.getElementById('amendBody-' + schoolId);
-    container.querySelectorAll('tr[data-category="Staff Absence & Cover"]').forEach(tr => {
-      const ytdInput = tr.querySelector('input[data-period="YTD"]');
-      if (!ytdInput) return;
-      let sum = 0, count = 0;
-      CONTEXT_PERIODS.forEach(p => {
-        const input = tr.querySelector(`input[data-period="${p}"]`);
-        const v = input ? parseFloat(input.value) : NaN;
-        if (!isNaN(v)) { sum += v; count++; }
-      });
-      ytdInput.value = count ? (Math.round((sum / count) * 10) / 10).toFixed(1) : '';
+    if (!d || !container) return;
+    AbsenceCover.refresh(container, {
+      periods: CONTEXT_PERIODS,
+      dates: AbsenceCover.datesFromReportingPeriods(d.periods || [], CONTEXT_PERIODS, PERIOD_TO_REPORTING_NAME),
+      issuesEl: container.querySelector('.absence-issues')
     });
   }
+
+  function initAmendAbsence(schoolId) { recalcAmendFinanceYTD(schoolId); }
 
   function buildAmendFinance(schoolId) {
     const data = SCHOOL_AMEND_DATA[schoolId].financeRows;
@@ -4844,11 +4843,17 @@
     CONTEXT_PERIODS.forEach(p => html += `<th>${p}</th>`);
     html += '<th>YTD</th></tr></thead><tbody>';
     AMEND_ABSENCE_ROWS.forEach(r => {
-      html += `<tr data-category="Staff Absence & Cover" data-metric="${r}"><td class="label-cell">${r}</td>`;
-      CONTEXT_PERIODS.forEach(p => html += `<td><input type="text" data-period="${p}" value="${val('Staff Absence & Cover', r, p)}" oninput="recalcAmendFinanceYTD('${schoolId}')"></td>`);
+      const isCover = r === AbsenceCover.COVER;
+      html += `<tr data-category="Staff Absence & Cover" data-metric="${r}"><td class="label-cell">${AbsenceCover.labelFor(r)}</td>`;
+      CONTEXT_PERIODS.forEach(p => html += isCover
+        ? `<td><input type="text" data-period="${p}" readonly class="calculated-cell" value="${val('Staff Absence & Cover', r, p)}"></td>`
+        : `<td><input type="text" data-period="${p}" value="${val('Staff Absence & Cover', r, p)}" oninput="recalcAmendFinanceYTD('${schoolId}')"></td>`);
       html += `<td><input type="text" data-period="YTD" readonly class="calculated-cell" value="${val('Staff Absence & Cover', r, 'YTD')}"></td></tr>`;
     });
-    html += '</tbody></table></div></div>';
+    html += '</tbody></table>';
+    html += `<div class="absence-notice absence-issues" style="font-size:12px;margin-top:8px;color:#8A4B00;display:none;"></div>`;
+    html += '<div class="absence-notice" style="font-size:12px;margin-top:8px;">Cover Lessons / Day is calculated automatically: total teacher absence days &divide; weekdays (Mon&ndash;Fri) in the Reporting Periods dates &times; 5. Enter days lost across all staff.</div>';
+    html += '</div></div>';
 
     html += '<div class="card"><div class="card-head">Resource Effectiveness</div><div class="card-body"><table class="grid-table"><thead><tr><th>Area</th><th>Guidance Question</th><th>Rating</th></tr></thead><tbody>';
     AMEND_RESOURCE_ROWS.forEach(r => {
@@ -4893,6 +4898,7 @@
     if (section === 'ofsted') { loadAmendHistoricalOfsted(schoolId); return; }
     container.innerHTML = builders[section](schoolId);
     if (section === 'context') recalcAmendContext(schoolId);
+    if (section === 'finance') initAmendAbsence(schoolId);
   }
 
   function collectAmendRows(schoolId) {

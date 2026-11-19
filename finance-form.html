@@ -40,6 +40,8 @@
   table.grid-table select.rating-select { width: 100%; min-width: 190px; }
   table.grid-table input[type="date"] { min-width: 150px; }
   table.grid-table input:focus, table.grid-table select:focus { outline: none; border-color: #0D7377; box-shadow: 0 0 0 3px rgba(13,115,119,0.12); }
+  .absence-notice { font-size: 12px; margin-top: 8px; color: #44505C; }
+  .absence-issues { color: #8A4B00; }
   table.grid-table input.calculated-cell { background: #E8F4F4; color: #1A7A6E; font-weight: 700; cursor: default; }
 
   .rating-field { display: flex; align-items: center; gap: 14px; }
@@ -123,12 +125,14 @@
   </div>
 </div>
 
+<script src="absence-cover.js"></script>
 <script>
   const SUPABASE_URL = 'https://caopycszjzrmwhxxvtpx.supabase.co';
   const SUPABASE_KEY = 'sb_publishable_2CTGR0PKyRPpSk59lcr3sA_hvvUDX97';
   const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
   const PERIODS = ['AUT1 26', 'AUT2 26', 'SPR1 27', 'SPR2 27', 'SUM1 27', 'SUM2 27'];
+  const PERIOD_TO_REPORTING_NAME = { 'AUT1 26': 'Autumn 1', 'AUT2 26': 'Autumn 2', 'SPR1 27': 'Spring 1', 'SPR2 27': 'Spring 2', 'SUM1 27': 'Summer 1', 'SUM2 27': 'Summer 2' };
   const FIN_YEARS = ['2024/25', '2025/26', '2026/27'];
   const FIN_ROWS = [
     { name: 'Staffing Costs % of Income' },
@@ -232,14 +236,20 @@
     PERIODS.forEach(p => html += `<th>${p}</th>`);
     html += '<th>YTD</th></tr></thead><tbody>';
     ABSENCE_ROWS.forEach(r => {
-      html += `<tr data-category="Staff Absence & Cover" data-metric="${r}"><td class="label-cell">${r}</td>`;
+      const isCover = r === AbsenceCover.COVER;
+      html += `<tr data-category="Staff Absence & Cover" data-metric="${r}"><td class="label-cell">${AbsenceCover.labelFor(r)}</td>`;
       PERIODS.forEach(p => {
-        html += `<td><input type="text" data-period="${p}"></td>`;
+        html += isCover
+          ? `<td><input type="text" data-period="${p}" readonly class="calculated-cell" title="Calculated automatically: teacher absence days / weekdays in the period x 5"></td>`
+          : `<td><input type="text" data-period="${p}"></td>`;
       });
-      html += `<td><input type="text" data-period="YTD" readonly class="calculated-cell" title="Calculated automatically as the average of the periods entered so far"></td>`;
+      html += `<td><input type="text" data-period="YTD" readonly class="calculated-cell" title="Calculated automatically from the half-term figures"></td>`;
       html += '</tr>';
     });
-    html += '</tbody></table></div></div>';
+    html += '</tbody></table>';
+    html += '<div id="absenceIssues" class="absence-notice absence-issues" style="display:none;"></div>';
+    html += '<div class="absence-notice absence-help">Cover Lessons / Day is calculated automatically: total teacher absence days &divide; weekdays (Mon&ndash;Fri) in the reporting period &times; 5 lessons. Enter the school\'s Reporting Periods dates for each half term so it can be calculated. Enter days lost across all staff, not the number of teachers absent.</div>';
+    html += '</div></div>';
 
     // Resource Effectiveness
     html += '<div class="card"><div class="card-head">Resource Effectiveness</div><div class="card-body">';
@@ -272,23 +282,22 @@
     setTimeout(() => toast.classList.remove('show'), 3400);
   }
 
+  let absenceDates = {};
+  let absenceDatesError = false;
+
   function recalculateYTD() {
-    document.querySelectorAll('#finForm tr[data-category="Staff Absence & Cover"]').forEach(tr => {
-      const ytdInput = tr.querySelector('input[data-period="YTD"]');
-      if (!ytdInput) return;
-      let sum = 0, count = 0;
-      PERIODS.forEach(p => {
-        const input = tr.querySelector(`input[data-period="${p}"]`);
-        const v = input ? parseFloat(input.value) : NaN;
-        if (!isNaN(v)) { sum += v; count++; }
-      });
-      ytdInput.value = count ? (Math.round((sum / count) * 10) / 10).toFixed(1) : '';
+    AbsenceCover.refresh(document.getElementById('finForm'), {
+      periods: PERIODS, dates: absenceDates,
+      datesError: absenceDatesError, issuesEl: document.getElementById('absenceIssues')
     });
   }
 
   async function prefillForm(schoolId) {
     const { data: existingRows } = await sb
       .from('finance_data').select('category, metric, period, value').eq('school_id', schoolId);
+    const periodsRes = await sb.from('reporting_periods').select('period_name, start_date, end_date').eq('school_id', schoolId);
+    absenceDatesError = !!periodsRes.error;
+    absenceDates = AbsenceCover.datesFromReportingPeriods(periodsRes.data || [], PERIODS, PERIOD_TO_REPORTING_NAME);
     (existingRows || []).forEach(r => {
       let el;
       if (r.category === 'Overall Rating') {
