@@ -231,7 +231,7 @@
     html += buildYearTable('Recruitment &amp; Retention', 'Recruitment & Retention', FIN_YEARS, RECRUIT_ROWS);
 
     // Staff Absence & Cover
-    html += '<div class="card"><div class="card-head">Staff Absence &amp; Cover</div><div class="card-body">';
+    html += '<div class="card"><div class="card-head">Staff Absence &amp; Cover' + AbsenceCover.lessonsSelectHtml('') + '</div><div class="card-body">';
     html += '<table class="grid-table"><thead><tr><th>Metric</th>';
     PERIODS.forEach(p => html += `<th>${p}</th>`);
     html += '<th>YTD</th></tr></thead><tbody>';
@@ -248,7 +248,7 @@
     });
     html += '</tbody></table>';
     html += '<div id="absenceIssues" class="absence-notice absence-issues" style="display:none;"></div>';
-    html += '<div class="absence-notice absence-help">Cover Lessons / Day is calculated automatically: total teacher absence days &divide; weekdays (Mon&ndash;Fri) in the reporting period &times; 5 lessons. Enter the school\'s Reporting Periods dates for each half term so it can be calculated. Enter days lost across all staff, not the number of teachers absent.</div>';
+    html += '<div class="absence-notice absence-help">Cover Lessons / Day is calculated automatically: total teacher absence days &divide; weekdays (Mon&ndash;Fri) in the reporting period &times; lessons per day. Enter the school\'s Reporting Periods dates for each half term so it can be calculated. Lessons per day (top right) is saved for the school and defaults to 5. Enter days lost across all staff, not the number of teachers absent.</div>';
     html += '</div></div>';
 
     // Resource Effectiveness
@@ -284,17 +284,25 @@
 
   let absenceDates = {};
   let absenceDatesError = false;
+  let absenceSettingError = false;
 
   function recalculateYTD() {
     AbsenceCover.refresh(document.getElementById('finForm'), {
       periods: PERIODS, dates: absenceDates,
-      datesError: absenceDatesError, issuesEl: document.getElementById('absenceIssues')
+      datesError: absenceDatesError, settingError: absenceSettingError, issuesEl: document.getElementById('absenceIssues')
     });
   }
 
   async function prefillForm(schoolId) {
-    const { data: existingRows } = await sb
+    const { data: existingRows, error: financeLoadError } = await sb
       .from('finance_data').select('category, metric, period, value').eq('school_id', schoolId);
+    if (financeLoadError) {
+      // A failed load is NOT the same as "no setting saved": do not assume 5, and do not allow a save
+      // (save is delete-then-insert and would wipe the school's finance data).
+      absenceSettingError = true;
+      document.getElementById('saveBtn').disabled = true;
+      showToast('\u26A0 Could not load saved Finance & Resources data - saving is disabled. Refresh to retry.', true);
+    }
     const periodsRes = await sb.from('reporting_periods').select('period_name, start_date, end_date').eq('school_id', schoolId);
     absenceDatesError = !!periodsRes.error;
     absenceDates = AbsenceCover.datesFromReportingPeriods(periodsRes.data || [], PERIODS, PERIOD_TO_REPORTING_NAME);
@@ -303,7 +311,7 @@
       if (r.category === 'Overall Rating') {
         el = document.querySelector('.rating-field select');
       } else {
-        const row = Array.from(document.querySelectorAll('#finForm tr')).find(
+        const row = Array.from(document.querySelectorAll('#finForm tr, #finForm .lessons-setting')).find(
           tr => tr.dataset.category === r.category && tr.dataset.metric === r.metric
         );
         if (!row) return;
@@ -392,6 +400,7 @@
     buildForm();
     await prefillForm(currentSchoolId);
     document.getElementById('finForm').addEventListener('input', recalculateYTD);
+    document.getElementById('finForm').addEventListener('change', recalculateYTD);
 
     statusMsg.style.display = 'none';
     document.getElementById('finForm').style.display = '';

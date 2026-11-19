@@ -1452,7 +1452,7 @@
 
     const absenceRows = AbsenceCover.ROWS;
     const absenceDates = AbsenceCover.datesFromReportingPeriods(reportingPeriods, PERIODS, PERIOD_TO_REPORTING_NAME);
-    const absenceVM = AbsenceCover.viewModel(financeData, PERIODS, absenceDates);
+    const absenceVM = AbsenceCover.viewModel(financeData, PERIODS, absenceDates, { loadFailed: !!financeRes.error });
     const absenceRowRange = {};
     absenceRows.forEach(r => {
       const vals = PERIODS.map(c => parseFloat(absenceVM.get(r, c))).filter(v => !isNaN(v));
@@ -1476,7 +1476,7 @@
       absenceVM.issues.filter(i => !/cover not calculated/.test(i)).forEach(i => notes.push(i));
       return notes.length ? `<div style="font-size:7px;line-height:1.3;margin-top:3px;opacity:0.85;">${notes.map(escapeHtml).join('<br>')}</div>` : '';
     }
-    const absencePanel = panel('Staff Absence &amp; Cover', `${subpanel('Staff Absence &amp; Cover', miniTable([...PERIODS,'YTD'], absenceRows, absenceCellValue, false, (r,c,v) => absenceContextClass(r, parseFloat(v), c), 'narrow-labels') + absenceFootnote(), undefined, undefined, ` <button type="button" class="ctx-key-btn" onclick="event.stopPropagation(); openCtxKey('staffAbsence');">Key</button>`)}`, 1);
+    const absencePanel = panel('Staff Absence &amp; Cover', `${subpanel('Staff Absence &amp; Cover', miniTable([...PERIODS,'YTD'], absenceRows, absenceCellValue, false, (r,c,v) => absenceContextClass(r, parseFloat(v), c), 'narrow-labels') + absenceFootnote(), undefined, undefined, ` <button type="button" class="ctx-key-btn" onclick="event.stopPropagation(); openCtxKey('staffAbsence');">Key</button><span style="font-weight:400;font-size:7px;text-transform:none;letter-spacing:0;margin-left:6px;">${absenceVM.lessons.lessons ? absenceVM.lessons.lessons + ' lessons per day' : 'lessons per day unavailable'}</span>`)}`, 1);
 
     const resourceRows = ['Staffing Resources','SEND Resources','Estates','Technology','Curriculum Resources'];
     const resourcePanel = panel('Resource Effectiveness', `${subpanel('Resource Effectiveness', miniTable(['Rating'], resourceRows, (r,c) => finVal('Resource Effectiveness', r, 'Rating'), false, (r,c,v) => ratingClass(v)))}`, 0.8);

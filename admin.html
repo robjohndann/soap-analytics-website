@@ -1549,7 +1549,8 @@
         achievementRows: bySchool(achievementRes.data, s.id),
         pdwRows: bySchool(pdwRes.data, s.id),
         leadershipRows: bySchool(leadershipRes.data, s.id),
-        financeRows: bySchool(financeRes.data, s.id)
+        financeRows: bySchool(financeRes.data, s.id),
+        financeLoadFailed: !!financeRes.error
       };
     });
 
@@ -4826,11 +4827,20 @@
     AbsenceCover.refresh(container, {
       periods: CONTEXT_PERIODS,
       dates: AbsenceCover.datesFromReportingPeriods(d.periods || [], CONTEXT_PERIODS, PERIOD_TO_REPORTING_NAME),
+      settingError: !!d.financeLoadFailed,
       issuesEl: container.querySelector('.absence-issues')
     });
   }
 
-  function initAmendAbsence(schoolId) { recalcAmendFinanceYTD(schoolId); }
+  function initAmendAbsence(schoolId) {
+    const d = SCHOOL_AMEND_DATA[schoolId];
+    if (d && d.financeLoadFailed) {
+      // Load failure is not an absent setting: no default is assumed and saving is blocked (save is delete-then-insert).
+      const btn = document.querySelector('#amendBody-' + schoolId + ' .save-amend-btn');
+      if (btn) { btn.disabled = true; btn.title = 'Finance & Resources data could not be loaded - refresh before saving'; }
+    }
+    recalcAmendFinanceYTD(schoolId);
+  }
 
   function buildAmendFinance(schoolId) {
     const data = SCHOOL_AMEND_DATA[schoolId].financeRows;
@@ -4839,7 +4849,7 @@
     let html = buildAmendYearTable('Financial Health', 'Financial Health', AMEND_FIN_YEARS, AMEND_FIN_ROWS, val, 'wide');
     html += buildAmendYearTable('Recruitment & Retention', 'Recruitment & Retention', AMEND_FIN_YEARS, AMEND_RECRUIT_ROWS, val, 'wide');
 
-    html += '<div class="card"><div class="card-head">Staff Absence &amp; Cover</div><div class="card-body"><table class="grid-table"><thead><tr><th>Metric</th>';
+    html += '<div class="card"><div class="card-head">Staff Absence &amp; Cover' + AbsenceCover.lessonsSelectHtml(val('Staff Absence & Cover', 'Lessons per Day', 'Setting'), `onchange="recalcAmendFinanceYTD('${schoolId}')"`) + '</div><div class="card-body"><table class="grid-table"><thead><tr><th>Metric</th>';
     CONTEXT_PERIODS.forEach(p => html += `<th>${p}</th>`);
     html += '<th>YTD</th></tr></thead><tbody>';
     AMEND_ABSENCE_ROWS.forEach(r => {
@@ -4852,7 +4862,7 @@
     });
     html += '</tbody></table>';
     html += `<div class="absence-notice absence-issues" style="font-size:12px;margin-top:8px;color:#8A4B00;display:none;"></div>`;
-    html += '<div class="absence-notice" style="font-size:12px;margin-top:8px;">Cover Lessons / Day is calculated automatically: total teacher absence days &divide; weekdays (Mon&ndash;Fri) in the Reporting Periods dates &times; 5. Enter days lost across all staff.</div>';
+    html += '<div class="absence-notice" style="font-size:12px;margin-top:8px;">Cover Lessons / Day is calculated automatically: total teacher absence days &divide; weekdays (Mon&ndash;Fri) in the Reporting Periods dates &times; lessons per day (selector above; default 5, saved per school). Enter days lost across all staff.</div>';
     html += '</div></div>';
 
     html += '<div class="card"><div class="card-head">Resource Effectiveness</div><div class="card-body"><table class="grid-table"><thead><tr><th>Area</th><th>Guidance Question</th><th>Rating</th></tr></thead><tbody>';
