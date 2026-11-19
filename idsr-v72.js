@@ -19,7 +19,7 @@
 })(typeof self !== 'undefined' ? self : this, function () {
   'use strict';
 
-  var CORE_VERSION = '79.0.0-qa5';
+  var CORE_VERSION = '81.0.0';
   var CLASSIFICATION_VERSION = 'soap-heuristic-v71-thresholds';   // thresholds deliberately UNCHANGED from V71
   var SCHEMA_VERSION = 1;
   var MAX_SOURCE_BYTES = 26214400;                                // 25 MiB hard cap (matches draft DB check)
@@ -3311,7 +3311,7 @@
 })(typeof self !== 'undefined' ? self : this, function (Core, Soap) {
   'use strict';
 
-  var SNAPSHOT_VERSION = '79.0.0-qa5';
+  var SNAPSHOT_VERSION = '81.0.0';
   var SNAPSHOT_SCHEMA_VERSION = 2;
 
   function esc(v) {
@@ -4372,7 +4372,7 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
 })(typeof self !== 'undefined' ? self : this, function (Core, Soap, X, Snap, LOGO) {
   'use strict';
 
-  var DASH_VERSION = '79.0.0-qa5';
+  var DASH_VERSION = '81.0.0';
   var esc = X.esc, SI = Snap._internals;
   var ORDER = ['exceptional', 'strong', 'expected', 'attention', 'urgent'];
   var LABEL = { exceptional: 'Exceptional', strong: 'Strong Standard', expected: 'Expected Standard', attention: 'Needs Attention', urgent: 'Urgent Improvement' };
@@ -5652,7 +5652,7 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
   else root.IdsrViewer = factory(root.IdsrCore, root.IdsrGuard, root.IdsrReconcile, root.IdsrSnapshot, root.IdsrDash, root.IdsrClassify, root.IdsrAllThrough, root.IdsrSpecAllThrough, root.IdsrPrintOverview);
 })(typeof self !== 'undefined' ? self : this, function (Core, Guard, Rec, Snap, Dash, Cls, AT, SpecAT, PrintOv) {
   'use strict';
-  var VIEWER_VERSION = '79.0.0-qa5';
+  var VIEWER_VERSION = '81.0.0';
   // IDENTICAL to the lists in V71 idsr-soap.html / idsr-dashboard.html / portal.html (a test compares them to the V71 source).
   var FULL_ACCESS_ROLES = ['Headteacher', 'multi_school_leader', 'Executive Headteacher', 'CEO', 'School Improvement Director'];
   var PACKAGE_FEATURES = {
