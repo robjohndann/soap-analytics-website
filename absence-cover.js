@@ -30,9 +30,9 @@
   var SUPPORT = 'Support Staff Absence %';
   var ROWS = [TEACHER, COVER, SUPPORT];
   var LABELS = {};
-  LABELS[TEACHER] = 'Teacher Absence (number of days)';
+  LABELS[TEACHER] = 'Teacher Absence (Days)';
   LABELS[COVER] = 'Cover Lessons / Day';
-  LABELS[SUPPORT] = 'Support Staff Absence (number of days)';
+  LABELS[SUPPORT] = 'Support Staff Absence (Days)';
   var LESSONS_PER_DAY = 5;                     // default where no setting has been saved
   var SETTING_METRIC = 'Lessons per Day';      // finance_data row: category CATEGORY, period 'Setting'
   var SETTING_PERIOD = 'Setting';
