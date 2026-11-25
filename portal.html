@@ -4,7 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>SOAP Analytics — School Portal</title>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.119.0/dist/umd/supabase.js"></script>
+<script src="mfa-gate.js"></script>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
@@ -688,6 +689,45 @@
       return;
     }
 
+    // V82 MFA: the server decides (my_mfa_session / my_school_mfa_status via SoapMfaGate). NOTHING school-related is
+    // fetched before this check passes. This is UI routing only: RLS and the guarded functions remain the boundary.
+    const params = new URLSearchParams(window.location.search);
+    const requestedSchoolId = params.get('school_id');
+    const mfaEv = await SoapMfaGate.evaluate(sb, { schoolId: requestedSchoolId });
+    if (mfaEv.state === 'no_session') {
+      statusArea.innerHTML = '<div class="status-card"><h1>Not logged in</h1><p>Please <a href="login.html">log in</a> to access the portal.</p></div>';
+      return;
+    }
+    // Mixed schools: a non-administrator with several schools, no school chosen yet, where at least one school
+    // is already open to this sign-in and at least one still needs two-step verification. Show the chooser from the
+    // server's own per-school status (RLS hides the unverified school's rows) instead of forcing verification up front.
+    const mixedChooser = (mfaEv.state === 'needs_mfa' || mfaEv.state === 'blocked') && !mfaEv.isAdmin && !requestedSchoolId &&
+      mfaEv.schools.length > 1 && mfaEv.schools.some(r => r.session_satisfies_policy === true);
+    if (!mfaEv.ok && !mixedChooser) {
+      if (mfaEv.state === 'needs_mfa') {
+        statusArea.innerHTML = '<div class="status-card"><h1>Two-step verification required</h1><p>Taking you to verify before your school data is shown…</p></div>';
+        await SoapMfaGate.require(sb, { schoolId: requestedSchoolId });   // redirects to mfa.html (never inside a frame)
+      } else if (mfaEv.state === 'blocked') {
+        statusArea.innerHTML = '<div class="status-card"><h1>Access paused</h1><p>Two-step verification is complete, but your account does not yet meet this school’s security requirement. Please contact SOAP Analytics support.</p></div>';
+        SoapMfaGate.renderBlock('blocked', { sb: sb });
+      } else {
+        statusArea.innerHTML = '<div class="status-card"><h1>We could not check your sign-in security</h1><p>For your protection, nothing has been loaded. Please refresh, or <a href="#" onclick="logout(event);">sign out</a> and sign in again.</p></div>';
+        SoapMfaGate.renderBlock('error', { sb: sb });
+      }
+      return;
+    }
+    if (mixedChooser) {
+      statusArea.innerHTML = `
+        <div class="status-card">
+          <h1>Choose a school</h1>
+          <p>Your account has access to more than one school. Select the school you want to work with.</p>
+          <div style="margin-top:18px;display:grid;gap:10px;">
+            ${mfaEv.schools.map(r => `<a href="portal.html?school_id=${encodeURIComponent(r.school_id)}" style="display:block;padding:14px 16px;border-radius:8px;background:#0D2B4E;color:#fff;text-decoration:none;font-weight:700;">${escapeHtml(r.school_name || 'School')}${r.session_satisfies_policy === true ? '' : '<span style="display:block;font-size:12px;font-weight:400;opacity:.85;margin-top:4px;">' + (mfaEv.aal === 'aal2' ? 'Not available for this sign-in — contact SOAP Analytics support' : 'Two-step verification required — you will be asked for a code') + '</span>'}</a>`).join('')}
+          </div>
+        </div>`;
+      return;
+    }
+
     const email = session.user.email;
 
     const { data: adminRow } = await sb.from('admins').select('auth_user_id').eq('auth_user_id', session.user.id).maybeSingle();
@@ -711,9 +751,6 @@
       }
       return;
     }
-
-    const params = new URLSearchParams(window.location.search);
-    const requestedSchoolId = params.get('school_id');
 
     if (linkRows.length > 1 && !requestedSchoolId) {
       const schoolIds = linkRows.map(r => r.school_id);
@@ -739,7 +776,8 @@
       return;
     }
 
-    if (linkRows.length > 1) {
+    // V82: at AAL1 the server hides a school that still needs verification, so also count the server's per-school status.
+    if (linkRows.length > 1 || (!mfaEv.isAdmin && mfaEv.schools.length > 1)) {
       document.getElementById('switchSchoolLink').style.display = '';
     }
 

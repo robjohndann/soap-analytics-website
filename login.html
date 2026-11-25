@@ -4,7 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>SOAP Analytics — School Login</title>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.119.0/dist/umd/supabase.js"></script>
+<script src="mfa-gate.js"></script>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
@@ -124,14 +125,36 @@
 
   // Admins land straight on the Admin Dashboard, skipping the portal —
   // everyone else goes to the portal as normal
+  // V82 MFA: if the server says this sign-in still needs two-step verification, go to mfa.html first (it returns the
+  // person to the same destination). Anything else (satisfied, blocked, or status unknown) goes to the destination page,
+  // which runs its own gate and fails closed — so login.html never loops and never decides access itself.
   async function redirectAfterLogin(userId) {
     const { data: adminRow } = await sb.from('admins').select('auth_user_id').eq('auth_user_id', userId).maybeSingle();
-    window.location.href = adminRow ? 'admin.html' : 'portal.html';
+    const dest = adminRow ? 'admin.html' : 'portal.html';
+    let ev = null;
+    try { ev = await SoapMfaGate.evaluate(sb, {}); } catch (e) { ev = null; }
+    if (ev && ev.state === 'needs_mfa') {
+      showMsg('Two-step verification is required. Taking you to verify…', false);
+      window.location.href = 'mfa.html?return=' + encodeURIComponent(dest);
+      return;
+    }
+    window.location.href = dest;
   }
 
   (async function checkAlreadyLoggedIn() {
+    // V82 M6: a notice when a page sent the person here because their session had ended (revoked, reset, signed out elsewhere).
+    try { if (new URLSearchParams(window.location.search).get('reason') === 'session_ended') showMsg('Your session has ended. Please log in again.', false); } catch (e) { /* no notice */ }
     const { data: { session } } = await sb.auth.getSession();
     if (session) {
+      // V82 M6: a local session is forwarded only if the server still recognises it. An ended (revoked) one is cleared by the gate
+      // (state 'no_session', ended) and the form stays; an unknown answer (network error) keeps the earlier behaviour, and the
+      // destination page runs its own gate and fails closed.
+      let ev = null;
+      try { ev = await SoapMfaGate.evaluate(sb, {}); } catch (e) { ev = null; }
+      if (ev && ev.state === 'no_session') {
+        showMsg('Your session has ended. Please log in again.', false);
+        return;
+      }
       redirectAfterLogin(session.user.id);
     }
   })();

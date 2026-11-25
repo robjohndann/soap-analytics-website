@@ -4,7 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>SOAP Analytics — Attendance & Behaviour</title>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<!-- V82 MFA: supabase-js pinned to 2.119.0 (no floating @2); shared gate decides MFA from the server. -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.119.0/dist/umd/supabase.js"></script>
+<script src="mfa-gate.js"></script>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
@@ -289,6 +291,21 @@
       return;
     }
 
+    // V82 MFA gate: the server decides (my_mfa_session / my_school_mfa_status via SoapMfaGate). NOTHING school-related is
+    // fetched before this passes. UI routing only: RLS and the guarded functions remain the security boundary.
+    if (typeof SoapMfaGate === 'undefined') {
+      statusMsg.textContent = 'The security check could not be loaded, so nothing has been opened. Please refresh the page or return to the portal.';
+      return;
+    }
+    const mfaGate = await SoapMfaGate.require(sb, { schoolId: new URLSearchParams(window.location.search).get('school_id') });
+    if (!mfaGate.ok) {
+      if (mfaGate.state === 'no_session') statusMsg.innerHTML = 'Please <a href="login.html">log in</a> to access this form.';
+      else if (mfaGate.navigated) statusMsg.textContent = 'Two-step verification required \u2014 taking you to verify before your school data is shown\u2026';
+      else if (SoapMfaGate.inFrame()) statusMsg.textContent = 'This form cannot open until two-step verification is complete. Please open it from the portal.';
+      else statusMsg.textContent = 'This form could not be opened because your sign-in security could not be confirmed. Nothing has been loaded.';
+      return;
+    }
+
     const { data: linkRows, error: linkError } = await sb
       .from('school_users').select('school_id, role').eq('auth_user_id', session.user.id);
 
@@ -379,11 +396,67 @@
     document.getElementById('submitBar').style.display = '';
   }
 
+  // ---- V82 MFA: save-time helpers (clear messages + an early stop only; RLS/guards remain authoritative) ----
+  function mfaNotice(kind) {
+    const text = {
+      needs_mfa: 'Two-step verification is now required for this school. Nothing was saved and your entries are still on this page. Verify in the new tab, return here and press Save again.',
+      mfa_required: 'Two-step verification is now required for this school. Nothing was saved and your entries are still on this page. Verify in the new tab, return here and press Save again.',
+      fresh_mfa_required: 'A fresh authenticator code is needed. Nothing was saved and your entries are still on this page. Confirm it in the new tab, return here and press Save again.',
+      no_session: 'Your session has ended. Nothing was saved. Log in again in the new tab, then return here and press Save again; your entries are still on this page.',
+      blocked: 'Your account does not yet meet this school\u2019s security requirement, so nothing was saved. Please contact SOAP Analytics support.',
+      authenticator_not_established: 'Your authenticator was set up during this sign-in. Nothing was saved. Please sign out and sign in again, then enter your code.',
+      error: 'We could not confirm your sign-in security, so nothing was saved. Your entries are still on this page. Please try again.',
+      mfa_check_failed: 'We could not confirm your sign-in security, so nothing was saved. Your entries are still on this page. Please try again.'
+    }[kind] || 'We could not confirm your sign-in security, so nothing was saved. Your entries are still on this page. Please try again.';
+    showToast('\u26a0 ' + text.split('. ')[0] + '.', true);
+    let box = document.getElementById('mfaSaveNotice');
+    if (!box) {
+      box = document.createElement('div'); box.id = 'mfaSaveNotice'; box.setAttribute('role', 'alert');
+      box.style.cssText = 'position:fixed;left:5%;right:5%;bottom:84px;z-index:50;background:#fff;color:#1B2A4A;border:2px solid #B3261E;border-radius:10px;padding:14px 16px;box-shadow:0 6px 24px rgba(0,0,0,.25);font-size:14px;line-height:1.5;';
+      document.body.appendChild(box);
+    }
+    box.textContent = '';
+    const p = document.createElement('p'); p.style.margin = '0 0 10px'; p.textContent = text; box.appendChild(p);
+    if (!(SoapMfaGate.inFrame && SoapMfaGate.inFrame())) {
+      const ret = window.location.pathname.replace(/^\/+/, '') + window.location.search;
+      let href = null;
+      if (kind === 'needs_mfa' || kind === 'mfa_required') href = SoapMfaGate._mfaUrl('gate', ret, currentSchoolId);
+      else if (kind === 'fresh_mfa_required') href = SoapMfaGate._mfaUrl('stepup', ret);
+      else if (kind === 'no_session') href = 'login.html';
+      if (href) { const a = document.createElement('a'); a.href = href; a.target = '_blank'; a.rel = 'noopener'; a.textContent = 'Open verification in a new tab'; a.style.cssText = 'font-weight:700;margin-right:16px;'; box.appendChild(a); }
+    }
+    const x = document.createElement('button'); x.type = 'button'; x.textContent = 'Dismiss';
+    x.style.cssText = 'font-size:13px;padding:5px 12px;border-radius:6px;border:1px solid #1B2A4A;background:#fff;color:#1B2A4A;cursor:pointer;';
+    x.addEventListener('click', () => box.remove()); box.appendChild(x);
+  }
+  async function mfaPreSaveOk() {
+    if (typeof SoapMfaGate === 'undefined') { mfaNotice('error'); return false; }
+    const r = await SoapMfaGate.evaluate(sb, { schoolId: currentSchoolId });
+    if (r.ok) { const b = document.getElementById('mfaSaveNotice'); if (b) b.remove(); return true; }
+    mfaNotice(r.state);   // needs_mfa | blocked | error | no_session
+    return false;
+  }
+  async function mfaSaveFailed(err) {
+    // Called from the existing failure branches. MFA-related refusals get a clear message; anything else keeps the
+    // original toast. A bare RLS refusal is re-checked against the server before it is called an MFA problem.
+    if (typeof SoapMfaGate !== 'undefined') {
+      const m = SoapMfaGate.mapError(err);
+      if (m.kind !== 'other') { mfaNotice(m.kind); return; }
+      if (err && (err.code === '42501' || /row-level security/i.test(String(err.message || '')))) {
+        const r = await SoapMfaGate.evaluate(sb, { schoolId: currentSchoolId });
+        if (!r.ok) { mfaNotice(r.state); return; }
+      }
+    }
+    showToast('\u26a0 Save failed \u2014 see browser console', true);
+  }
+
   async function saveForm() {
     if (!currentSchoolId) return;
     const btn = document.getElementById('saveBtn');
     btn.disabled = true;
+    const mfaBtnLabel = btn.textContent;
     btn.textContent = 'Saving…';
+    if (!(await mfaPreSaveOk())) { btn.disabled = false; btn.textContent = mfaBtnLabel; return; }   // V82 MFA: re-check before the delete-then-insert
 
     const rows = [];
     document.querySelectorAll('#attendanceForm [data-category]').forEach(el => {
@@ -397,7 +470,7 @@
 
     const { error: delError } = await sb.from('attendance_data').delete().eq('school_id', currentSchoolId);
     if (delError) {
-      showToast('⚠ Save failed — see browser console', true);
+      await mfaSaveFailed(delError);   // V82 MFA: clear message for MFA refusals, original toast otherwise
       console.error(delError);
       btn.disabled = false;
       btn.textContent = 'Save Attendance & Behaviour';
@@ -407,7 +480,7 @@
     if (rows.length) {
       const { error } = await sb.from('attendance_data').insert(rows);
       if (error) {
-        showToast('⚠ Save failed — see browser console', true);
+        await mfaSaveFailed(error);   // V82 MFA: clear message for MFA refusals, original toast otherwise
         console.error(error);
         btn.disabled = false;
         btn.textContent = 'Save Attendance & Behaviour';

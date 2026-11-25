@@ -4,7 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>SOAP Analytics — Admin</title>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<!-- V82 MFA: supabase-js pinned to 2.119.0 (no floating @2); shared gate decides MFA from the server. -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.119.0/dist/umd/supabase.js"></script>
+<script src="mfa-gate.js"></script>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
@@ -41,6 +43,17 @@
   .acc-resend-btn { background: #0D7377; color: #fff; border: none; border-radius: 6px; padding: 5px 12px; font-size: 12px; font-weight: 700; cursor: pointer; white-space: nowrap; font-family: Arial, Helvetica, sans-serif; }
   .acc-resend-btn:hover:not(:disabled) { background: #0a5c5f; }
   .acc-resend-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+  /* V82 Migration 6: administrator-assisted MFA reset */
+  .acc-mfa-btn { background: #fff; color: #7A1F1F; border: 1px solid #7A1F1F; border-radius: 6px; padding: 4px 10px; font-size: 12px; font-weight: 700; cursor: pointer; white-space: nowrap; font-family: Arial, Helvetica, sans-serif; margin-top: 4px; display: block; }
+  .acc-mfa-btn:hover:not(:disabled) { background: #7A1F1F; color: #fff; }
+  .acc-mfa-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+  .mfar-f { margin: 0 0 12px; } .mfar-f label { display: block; font-size: 12px; font-weight: 700; color: #1B2A4A; margin-bottom: 4px; }
+  .mfar-f input[type=text], .mfar-f select, .mfar-f textarea { width: 100%; box-sizing: border-box; padding: 8px; border: 1px solid #9FB0C4; border-radius: 6px; font-size: 13px; font-family: Arial, Helvetica, sans-serif; }
+  .mfar-who { background: #F3F6FA; border-radius: 8px; padding: 10px 12px; font-size: 13px; margin: 0 0 12px; color: #1B2A4A; }
+  .mfar-msg { font-size: 13px; font-weight: 700; min-height: 18px; margin: 8px 0; white-space: pre-line; }
+  .mfar-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 10px; }
+  .mfar-actions button { padding: 8px 16px; border-radius: 6px; font-weight: 700; font-size: 13px; cursor: pointer; border: 1px solid #1B2A4A; background: #fff; color: #1B2A4A; }
+  .mfar-actions button.danger { background: #7A1F1F; border-color: #7A1F1F; color: #fff; } .mfar-actions button:disabled { opacity: 0.5; cursor: not-allowed; }
 
   /* V69 visual-only tidy: Admin > Users & Access. Scoped to this table. */
   .acc-summary {align-items:center;gap:8px 10px;margin:0 0 14px;font-size:13px;line-height:1.5;}
@@ -278,10 +291,43 @@
   </div>
 </div>
 
+<div class="key-modal-overlay" id="mfaResetModal" onclick="if(event.target===this) mfaResetClose();" role="dialog" aria-modal="true" aria-labelledby="mfaResetTitle">
+  <div class="key-modal-content" style="max-width:520px;">
+    <div class="key-modal-head" style="background:#7A1F1F;">
+      <h3 id="mfaResetTitle">Reset two-step verification</h3>
+      <button type="button" class="key-modal-close" onclick="mfaResetClose();" aria-label="Close">×</button>
+    </div>
+    <div class="key-modal-body" id="mfaResetBody"></div>
+  </div>
+</div>
+
 <div class="amend-toast" id="amendToast">✓ Saved</div>
 
 <div id="adminAccessNotice" class="status-msg" style="margin:25px auto;max-width:750px;">Checking your access…</div>
 <div class="wrap" id="adminProtectedArea" style="display:none;">
+  <!-- V82 MFA: administrator two-step verification setting. Acts immediately through set_admin_mfa; shown only after the gate passes. -->
+  <div class="card" id="adminMfaCard" style="display:none;">
+    <div class="card-head">Administrator two-step verification</div>
+    <div class="card-body">
+      <p id="amfaState" style="font-size:14px;font-weight:700;margin:0 0 6px;"></p>
+      <p id="amfaSession" style="font-size:12px;color:#5A6B80;margin:0 0 10px;"></p>
+      <p style="font-size:12px;color:#5A6B80;margin:0 0 12px;">While ON, this account needs a verified authenticator to open school data. Switching it OFF is limited in time, needs a fresh authenticator code and a reason, and is recorded in the audit log. It relaxes routine reading only; inviting users and other sensitive actions still need a fresh code.</p>
+      <button type="button" id="amfaOffBtn" onclick="amfaOpenPanel()" style="background:#3DCFB8;color:#0D2B4E;border:none;border-radius:6px;padding:9px 16px;font-size:13px;font-weight:700;cursor:pointer;margin-right:8px;">Switch off temporarily&hellip;</button>
+      <button type="button" id="amfaOnBtn" onclick="amfaApplyOn()" style="display:none;background:#0D2B4E;color:#fff;border:none;border-radius:6px;padding:9px 16px;font-size:13px;font-weight:700;cursor:pointer;">Turn back on now</button>
+      <div id="amfaPanel" style="display:none;margin-top:14px;padding:12px;border:1px solid #DCE3EA;border-radius:8px;">
+        <p style="font-size:13px;margin:0 0 10px;">Switch off two-step verification for this administrator account for a limited time. A fresh authenticator code is required.</p>
+        <label for="amfaDuration" style="display:block;font-size:12px;font-weight:700;margin-bottom:4px;">For how long?</label>
+        <select id="amfaDuration" style="margin-bottom:10px;padding:6px;">
+          <option value="60">1 hour</option><option value="240">4 hours</option><option value="480">8 hours</option><option value="1440">24 hours</option>
+        </select>
+        <label for="amfaReason" style="display:block;font-size:12px;font-weight:700;margin-bottom:4px;">Reason (10&ndash;1000 characters, recorded in the audit log)</label>
+        <textarea id="amfaReason" rows="3" maxlength="1000" style="width:100%;box-sizing:border-box;margin-bottom:10px;"></textarea>
+        <button type="button" id="amfaApply" onclick="amfaApplyOff()" style="background:#0D2B4E;color:#fff;border:none;border-radius:6px;padding:9px 16px;font-size:13px;font-weight:700;cursor:pointer;margin-right:8px;">Switch off</button>
+        <button type="button" onclick="amfaClosePanel()" style="background:#fff;color:#0D2B4E;border:1px solid #0D2B4E;border-radius:6px;padding:8px 14px;font-size:13px;font-weight:700;cursor:pointer;">Cancel</button>
+      </div>
+      <div id="amfaMsg" role="status" style="font-size:12px;font-weight:700;margin-top:10px;min-height:16px;"></div>
+    </div>
+  </div>
   <div class="page-title">Schools</div>
   <div class="page-sub">Every subscribing school, organised as its own section — SOAP, IDSR, Package and Users & Access all live inside each school's card below.</div>
   <input type="text" id="schoolSearchBox" placeholder="Search schools by name…" style="width:100%;max-width:420px;padding:10px 14px;border:1px solid #DCE3EA;border-radius:8px;font-size:14px;margin-bottom:18px;" oninput="filterSchoolCards(this.value)">
@@ -376,6 +422,279 @@
   const SUPABASE_URL = 'https://caopycszjzrmwhxxvtpx.supabase.co';
   const SUPABASE_KEY = 'sb_publishable_2CTGR0PKyRPpSk59lcr3sA_hvvUDX97';
   const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+  // =====================================================================
+  // V82 MFA (administrator page). UI routing and clear messages only: row-level security, the guarded functions, the Edge
+  // Functions and set_admin_mfa remain the security boundary. The shared gate (mfa-gate.js) decides from the server.
+  // The wrappers below NEVER change a result's data or success/failure; for an MFA refusal they only replace the error
+  // TEXT with a clear message (original kept in error.originalMessage; stable token in error.outcome) and show a notice.
+  // =====================================================================
+  const MFA_TEXT = {
+    mfa_required: 'Two-step verification is required before this can be done. Verify your authenticator code, then try again. Nothing was changed.',
+    fresh_mfa_required: 'A fresh authenticator code is needed for this action (entered within the last 5 minutes). Confirm a new code, then try again. Nothing was changed.',
+    authenticator_not_established: 'Your authenticator was set up during this sign-in, so it cannot be used for this action yet. Sign out, sign in again and enter your code, then try again. Nothing was changed.',
+    mfa_check_failed: 'We could not confirm your two-step verification status, so the action was not carried out. Please try again.',
+    no_session: 'Your session has ended. Log in again, then retry. Nothing was changed.',
+    blocked: 'This account does not meet the two-step verification requirement and it cannot be completed automatically. Please contact SOAP Analytics support. Nothing was changed.'
+  };
+  function mfaKind(src) {
+    if (typeof SoapMfaGate === 'undefined' || !src) return null;
+    const m = SoapMfaGate.mapError(src);
+    return m.kind !== 'other' ? m.kind : null;
+  }
+  function mfaFriendly(kind) { return MFA_TEXT[kind] || MFA_TEXT.mfa_check_failed; }
+  function mfaStateKind(state) { return state === 'needs_mfa' ? 'mfa_required' : state === 'no_session' ? 'no_session' : state === 'blocked' ? 'blocked' : state === 'needs_stepup' ? 'fresh_mfa_required' : 'mfa_check_failed'; }
+  function mfaIsRls(e) { return !!e && (e.code === '42501' || e.statusCode === '403' || e.statusCode === 403 || /row-level security/i.test(String(e.message || ''))); }
+  let mfaEvalPromise = null, mfaEvalAt = 0;
+  function mfaEvalOnce() {   // one server check per 4 seconds, shared by every refusal that needs classifying
+    const now = Date.now();
+    if (mfaEvalPromise && now - mfaEvalAt < 4000) return mfaEvalPromise;
+    mfaEvalAt = now;
+    mfaEvalPromise = Promise.resolve().then(() => SoapMfaGate.evaluate(sb, {})).catch(() => ({ ok: false, state: 'error' }));
+    return mfaEvalPromise;
+  }
+  // Mutates a failed result's error in place (text only). Returns the MFA kind, or null if it was not an MFA refusal.
+  async function mfaAnnotate(err) {
+    if (!err || typeof SoapMfaGate === 'undefined' || err.mfaKind) return err && err.mfaKind || null;
+    let kind = mfaKind(err);
+    if (!kind && mfaIsRls(err)) {            // a bare refusal is only called an MFA problem if the server says the session no longer qualifies
+      const r = await mfaEvalOnce();
+      if (!r.ok) kind = mfaStateKind(r.state);
+    }
+    if (!kind) return null;
+    try { err.originalMessage = err.message; err.message = mfaFriendly(kind); err.outcome = kind; err.mfaKind = kind; } catch (e) { /* frozen error object: keep original */ }
+    mfaBanner(kind);
+    return kind;
+  }
+  function mfaWrapThenable(b) {
+    if (!b || typeof b.then !== 'function') return b;
+    return new Proxy(b, {
+      get(t, p) {
+        if (p === 'then') return (res, rej) => t.then(async r => { if (r && r.error) { try { await mfaAnnotate(r.error); } catch (e) { /* never block the result */ } } return res ? res(r) : r; }, rej);
+        const v = t[p];
+        if (typeof v === 'function') return (...a) => mfaWrapThenable(v.apply(t, a));
+        return v;
+      }
+    });
+  }
+  (function mfaWrapClient() {
+    const origRpc = sb.rpc.bind(sb);
+    sb.rpc = (...a) => mfaWrapThenable(origRpc(...a));
+    const origFrom = sb.from.bind(sb);
+    sb.from = function (t) {          // only WRITE builders are wrapped (reads never produce a refusal that needs explaining)
+      const b = origFrom(t);
+      ['insert', 'update', 'delete', 'upsert'].forEach(m => { if (typeof b[m] === 'function') { const f = b[m].bind(b); b[m] = (...a) => mfaWrapThenable(f(...a)); } });
+      return b;
+    };
+    const proto = Object.getPrototypeOf(sb);
+    const dFn = Object.getOwnPropertyDescriptor(sb, 'functions') || Object.getOwnPropertyDescriptor(proto, 'functions');
+    if (dFn) Object.defineProperty(sb, 'functions', { configurable: true, get() {
+      const fc = dFn.get ? dFn.get.call(sb) : dFn.value;
+      if (!fc || fc.__mfaWrapped || typeof fc.invoke !== 'function') return fc;
+      const orig = fc.invoke.bind(fc);
+      fc.invoke = async function (name) {
+        const res = await orig.apply(null, arguments);
+        const err = res && res.error;
+        if (err && err.context && typeof err.context.clone === 'function') {
+          let body = null; try { body = await err.context.clone().json(); } catch (e) { /* not JSON */ }
+          const kind = body && mfaKind([body.outcome, body.error, body.code, body.message].filter(x => typeof x === 'string').join(' '));
+          if (kind) {
+            const friendly = mfaFriendly(kind), status = err.context.status;
+            const nb = Object.assign({}, body, { message: friendly });
+            if (name !== 'admin-send-completion-reminders') nb.error = friendly;   // the reminders function uses "error" as a machine code
+            if (!nb.outcome) nb.outcome = kind;
+            try { err.originalMessage = err.message; err.message = friendly; err.outcome = kind; err.mfaKind = kind; } catch (e) { /* keep */ }
+            err.context = { status: status, ok: false, json: async () => nb, text: async () => JSON.stringify(nb), clone() { return this; } };
+            mfaBanner(kind);
+          }
+        }
+        return res;
+      };
+      fc.__mfaWrapped = true;
+      return fc;
+    } });
+    const dSt = Object.getOwnPropertyDescriptor(sb, 'storage') || Object.getOwnPropertyDescriptor(proto, 'storage');
+    if (dSt) Object.defineProperty(sb, 'storage', { configurable: true, get() {
+      const sc = dSt.get ? dSt.get.call(sb) : dSt.value;
+      if (!sc || sc.__mfaWrapped || typeof sc.from !== 'function') return sc;
+      const origStFrom = sc.from.bind(sc);
+      sc.from = function (bucket) {
+        const o = origStFrom(bucket);
+        if (o && typeof o.upload === 'function') {
+          const up = o.upload.bind(o);
+          o.upload = async function () { const r = await up.apply(null, arguments); if (r && r.error) { try { await mfaAnnotate(r.error); } catch (e) { /* never block the result */ } } return r; };
+        }
+        return o;
+      };
+      sc.__mfaWrapped = true;
+      return sc;
+    } });
+  })();
+
+  // Fixed notice for refusals that happen away from the Administrator MFA card (never inside a frame).
+  function mfaBanner(kind) {
+    if (typeof SoapMfaGate === 'undefined') return;
+    if (SoapMfaGate.inFrame && SoapMfaGate.inFrame()) return;
+    const text = mfaFriendly(kind);
+    let box = document.getElementById('mfaAdminNotice');
+    if (!box) {
+      box = document.createElement('div'); box.id = 'mfaAdminNotice'; box.setAttribute('role', 'alert');
+      box.style.cssText = 'position:fixed;left:5%;right:5%;bottom:20px;z-index:2000;background:#fff;color:#1B2A4A;border:2px solid #B3261E;border-radius:10px;padding:14px 16px;box-shadow:0 6px 24px rgba(0,0,0,.25);font-size:14px;line-height:1.5;';
+      document.body.appendChild(box);
+    }
+    box.textContent = '';
+    const p = document.createElement('p'); p.style.margin = '0 0 10px'; p.textContent = text; box.appendChild(p);
+    const link = (label, href) => { const a = document.createElement('a'); a.href = href; a.target = '_blank'; a.rel = 'noopener'; a.textContent = label; a.style.cssText = 'font-weight:700;margin-right:16px;'; box.appendChild(a); };
+    if (kind === 'mfa_required') link('Open verification in a new tab', SoapMfaGate._mfaUrl('gate', 'admin.html'));
+    else if (kind === 'fresh_mfa_required') link('Open verification in a new tab', SoapMfaGate._mfaUrl('stepup', 'admin.html'));
+    else if (kind === 'no_session') link('Log in again', 'login.html');
+    const mk = (label, fn) => { const x = document.createElement('button'); x.type = 'button'; x.textContent = label; x.style.cssText = 'font-size:13px;padding:5px 12px;border-radius:6px;border:1px solid #1B2A4A;background:#fff;color:#1B2A4A;cursor:pointer;margin-right:8px;'; x.addEventListener('click', fn); box.appendChild(x); };
+    if (kind === 'authenticator_not_established') mk('Sign out and sign in again', () => SoapMfaGate.signOutAndLeave(sb));
+    mk('Dismiss', () => box.remove());
+  }
+
+  // Publication failures (hidden-iframe drivers): a blocked or refused frame is explained as an MFA problem, never as
+  // "check you're logged in as admin". Frames post {type:'soap-mfa-blocked'} to this window when their own gate refuses.
+  let mfaLastFrameBlock = null;
+  window.addEventListener('message', function (e) {
+    if (e.origin !== window.location.origin || !e.data || e.data.type !== 'soap-mfa-blocked') return;
+    mfaLastFrameBlock = { state: String(e.data.state || ''), at: Date.now() };
+  });
+  async function mfaPublishFailText(schoolId, err) {
+    const k = mfaKind(err);
+    if (k) return mfaFriendly(k).replace(/ Nothing was changed\.$/, ' Nothing was published.');
+    const msg = String((err && err.message) || err || 'Unknown error');
+    if (typeof SoapMfaGate !== 'undefined' && /did not offer a Publish control|Timed out waiting/i.test(msg)) {
+      let r; try { r = await SoapMfaGate.evaluate(sb, { schoolId: schoolId }); } catch (e) { r = { ok: false, state: 'error' }; }
+      if (!r.ok) { const kind = mfaStateKind(r.state); mfaBanner(kind); return mfaFriendly(kind).replace(/ Nothing was changed\.$/, ' Nothing was published.'); }
+      if (mfaLastFrameBlock && Date.now() - mfaLastFrameBlock.at < 30000) {
+        return 'The publishing page could not confirm your sign-in security (' + mfaLastFrameBlock.state + '), so nothing was published. Please try again.';
+      }
+    }
+    return msg;
+  }
+
+  // ---- V82 MFA: administrator two-step verification setting (set_admin_mfa(p_off boolean, p_duration_minutes integer, p_reason text)) ----
+  // Status comes from my_mfa_session() (read through the shared gate). OFF is time-limited by the server (1 to 1440 minutes), needs a
+  // fresh authenticator code, an authenticator enrolled before this sign-in, and a reason; ON is allowed at any administrator session.
+  let AMFA = null, amfaTimer = null;
+  const AMFA_DURATIONS = [60, 240, 480, 1440];
+  const amfaEl = id => document.getElementById(id);
+  function amfaMsg(text, kind) {
+    const el = amfaEl('amfaMsg'); if (!el) return;
+    el.style.color = kind === 'error' ? '#B3261E' : kind === 'ok' ? '#1A7A6E' : '#5A6B80';
+    el.textContent = text || '';
+  }
+  function amfaTime(iso) { const d = new Date(iso); return isNaN(d) ? '' : d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + (d.toDateString() === new Date().toDateString() ? '' : ' on ' + d.toLocaleDateString()); }
+  function amfaLeft(iso) { const m = Math.max(0, Math.round((new Date(iso) - Date.now()) / 60000)); return m >= 90 ? 'about ' + Math.round(m / 60) + ' hours left' : m + (m === 1 ? ' minute left' : ' minutes left'); }
+  function amfaSetState(row) {
+    if (!row) return;
+    AMFA = row;
+    amfaRender();
+    if (!amfaTimer) amfaTimer = setInterval(amfaTick, 20000);
+  }
+  function amfaRender() {
+    const card = amfaEl('adminMfaCard'); if (!card || !AMFA) return;
+    card.style.display = '';
+    const off = AMFA.admin_mfa_off === true && AMFA.admin_mfa_off_until;
+    const st = amfaEl('amfaState');
+    st.style.color = off ? '#7A5C00' : '#0D7377';
+    st.textContent = off
+      ? 'Two-step verification for your administrator account is OFF until ' + amfaTime(AMFA.admin_mfa_off_until) + ' (' + amfaLeft(AMFA.admin_mfa_off_until) + '). It returns to ON automatically.'
+      : 'Two-step verification for your administrator account is ON.';
+    amfaEl('amfaSession').textContent = AMFA.aal === 'aal2'
+      ? 'This sign-in has been verified with an authenticator' + (AMFA.fresh_aal2 ? ' (fresh code: within the last 5 minutes).' : '.')
+      : 'This sign-in has not been verified with an authenticator.';
+    amfaEl('amfaOnBtn').style.display = off ? '' : 'none';
+    amfaEl('amfaOffBtn').textContent = off ? 'Switch off again for a new period…' : 'Switch off temporarily…';
+    card.style.borderColor = off ? '#E8B64C' : '#DCE3EA';
+  }
+  async function amfaRefresh() {
+    const r = await sb.rpc('my_mfa_session');
+    const row = !r.error && Array.isArray(r.data) ? r.data[0] : (!r.error && r.data && !Array.isArray(r.data) ? r.data : null);
+    if (row && typeof row.admin_mfa_off === 'boolean') { amfaSetState(row); return true; }
+    return false;
+  }
+  async function amfaTick() {
+    if (!AMFA) return;
+    if (AMFA.admin_mfa_off === true && AMFA.admin_mfa_off_until && new Date(AMFA.admin_mfa_off_until) <= new Date()) {
+      const wasAal = AMFA.aal;
+      if (await amfaRefresh() && wasAal !== 'aal2' && AMFA.aal !== 'aal2') {
+        amfaMsg('The temporary setting has ended: two-step verification is ON again. Verify to continue.', 'info');
+        mfaBanner('mfa_required');
+      }
+    } else amfaRender();   // refreshes the "minutes left" text
+  }
+  function amfaOpenPanel() {
+    amfaEl('amfaPanel').style.display = '';
+    amfaEl('amfaReason').value = '';
+    amfaEl('amfaDuration').value = String(AMFA_DURATIONS[0]);
+    amfaMsg('', 'info');
+  }
+  function amfaClosePanel() { const p = amfaEl('amfaPanel'); if (p) p.style.display = 'none'; }
+  async function amfaApplyOff() {
+    const mins = parseInt(amfaEl('amfaDuration').value, 10);
+    const reason = amfaEl('amfaReason').value.trim();
+    const btn = amfaEl('amfaApply');
+    if (AMFA_DURATIONS.indexOf(mins) === -1) { amfaMsg('Please choose how long to switch it off for.', 'error'); return; }
+    if (reason.length < 10) { amfaMsg('Please enter a reason of at least 10 characters.', 'error'); return; }
+    if (reason.length > 1000) { amfaMsg('The reason must be 1000 characters or fewer.', 'error'); return; }
+    if (typeof SoapMfaGate === 'undefined') { amfaMsg('The security check could not be loaded. Please refresh the page.', 'error'); return; }
+    btn.disabled = true; amfaMsg('Checking your sign-in…', 'info');
+    try {
+      const f = await SoapMfaGate.requireFresh(sb, { navigate: false });
+      if (!f.ok) {
+        if (f.state === 'needs_stepup') { amfaMsg('A fresh authenticator code is needed first. Nothing was changed.', 'error'); mfaBanner('fresh_mfa_required'); }
+        else if (f.state === 'no_session') { amfaMsg('Your session has ended. Please log in again.', 'error'); mfaBanner('no_session'); }
+        else amfaMsg('We could not confirm your sign-in security, so nothing was changed. Please try again.', 'error');
+        return;
+      }
+      amfaMsg('Applying…', 'info');
+      const { data, error } = await sb.rpc('set_admin_mfa', { p_off: true, p_duration_minutes: mins, p_reason: reason });
+      if (error) {
+        const kind = mfaKind(error), tok = String(error.originalMessage || error.message || '');
+        if (kind === 'fresh_mfa_required') amfaMsg('A fresh authenticator code is needed. Nothing was changed.', 'error');
+        else if (kind === 'authenticator_not_established') amfaMsg('Nothing was changed. Your authenticator was set up during this sign-in: sign out and sign in again with your code, then try again.', 'error');
+        else if (kind === 'mfa_required') amfaMsg('Nothing was changed. Two-step verification is required: verify, then try again.', 'error');
+        else if (kind === 'mfa_check_failed') amfaMsg('We could not confirm your two-step verification status. Nothing was changed. Please try again.', 'error');
+        else if (/reason_required/.test(tok)) amfaMsg('Please enter a reason of at least 10 characters. Nothing was changed.', 'error');
+        else if (/reason_too_long/.test(tok)) amfaMsg('The reason must be 1000 characters or fewer. Nothing was changed.', 'error');
+        else if (/invalid_duration/.test(tok)) amfaMsg('Please choose a duration between 1 minute and 24 hours. Nothing was changed.', 'error');
+        else if (/not_permitted/.test(tok)) amfaMsg('You are not permitted to change this setting. Nothing was changed.', 'error');
+        else { console.error(error); amfaMsg('The setting could not be changed. Nothing was changed. Please try again, or contact SOAP Analytics support.', 'error'); }
+        return;
+      }
+      const ok = await amfaRefresh();
+      if (!ok && data && typeof data.admin_mfa_off === 'boolean') { AMFA = Object.assign({}, AMFA, { admin_mfa_off: data.admin_mfa_off, admin_mfa_off_until: data.off_until }); amfaRender(); }
+      amfaClosePanel();
+      amfaMsg(ok || data ? 'Two-step verification is switched OFF until ' + amfaTime((data && data.off_until) || (AMFA && AMFA.admin_mfa_off_until)) + '. This is recorded in the audit log. It returns to ON automatically.' : 'The setting could not be confirmed, so please check the status above before trying again.', ok || data ? 'ok' : 'error');
+    } catch (err) {
+      console.error(err);
+      amfaMsg('The setting could not be confirmed, so please check the status above before trying again.', 'error');
+    } finally { btn.disabled = false; }
+  }
+  async function amfaApplyOn() {
+    const btn = amfaEl('amfaOnBtn');
+    btn.disabled = true; amfaMsg('Applying…', 'info');
+    try {
+      const { data, error } = await sb.rpc('set_admin_mfa', { p_off: false });
+      if (error) {
+        const kind = mfaKind(error), tok = String(error.originalMessage || error.message || '');
+        if (kind) amfaMsg('Nothing was changed. ' + (kind === 'mfa_check_failed' ? 'We could not confirm your two-step verification status. Please try again.' : 'Two-step verification must be completed first: verify, then try again.'), 'error');
+        else if (/not_permitted/.test(tok)) amfaMsg('You are not permitted to change this setting. Nothing was changed.', 'error');
+        else { console.error(error); amfaMsg('The setting could not be changed. Nothing was changed. Please try again.', 'error'); }
+        return;
+      }
+      const ok = await amfaRefresh();
+      amfaClosePanel();
+      if (ok && AMFA.aal !== 'aal2') { amfaMsg('Two-step verification is ON again. This sign-in has not been verified with an authenticator, so verify to keep working.', 'info'); mfaBanner('mfa_required'); }
+      else amfaMsg(ok ? 'Two-step verification is ON.' : 'The setting could not be confirmed, so please check the status above.', ok ? 'ok' : 'error');
+    } catch (err) {
+      console.error(err);
+      amfaMsg('The setting could not be confirmed, so please check the status above.', 'error');
+    } finally { btn.disabled = false; }
+  }
+
 
   // V76: the completion calculations (V74 rules: cumulative, next-period start_date <= today,
   // future periods and duplicate cells excluded) moved UNCHANGED into completion-core.js so
@@ -1022,6 +1341,35 @@
       return;
     }
 
+    // V82 MFA gate: the server decides (SoapMfaGate). NOTHING protected (including the admins lookup below) is fetched before it passes.
+    // First run: redirects to verification when a code can fix it. Later runs (post-save refreshes) never redirect or blank the page:
+    // they stop quietly and show a notice, so no further protected data is loaded and in-progress work is not lost.
+    if (typeof SoapMfaGate === 'undefined') {
+      ADMIN_VERIFIED = false;
+      protectedArea.style.display = 'none';
+      accessNotice.style.display = 'block';
+      accessNotice.textContent = 'The security check could not be loaded, so nothing has been opened. Please refresh the page or return to the portal.';
+      return;
+    }
+    const mfaGate = await SoapMfaGate.require(sb, { navigate: !ADMIN_VERIFIED });
+    if (!mfaGate.ok) {
+      if (mfaGate.state === 'no_session') {
+        ADMIN_VERIFIED = false;
+        protectedArea.style.display = 'none';
+        accessNotice.style.display = 'block';
+        accessNotice.innerHTML = 'Please <a href="login.html">log in</a> to access this page.';
+      } else if (mfaGate.navigated) {
+        accessNotice.textContent = 'Two-step verification required \u2014 taking you to verify before any data is shown\u2026';
+      } else if (ADMIN_VERIFIED) {
+        mfaBanner(mfaStateKind(mfaGate.state));
+      } else {
+        protectedArea.style.display = 'none';
+        accessNotice.style.display = 'block';
+        accessNotice.textContent = 'This page could not be opened because your sign-in security could not be confirmed. Nothing has been loaded.';
+      }
+      return;
+    }
+
     const { data: adminRow } = await sb
       .from('admins').select('auth_user_id').eq('auth_user_id', session.user.id).maybeSingle();
 
@@ -1036,6 +1384,7 @@
     ADMIN_VERIFIED = true;
     accessNotice.style.display = 'none';
     protectedArea.style.display = '';
+    amfaSetState(mfaGate.session);   // V82 MFA: administrator setting card (status read by the gate from my_mfa_session)
 
     const [schoolsRes, contactsRes, ofstedRes, periodsRes, assessRes, trackerRes, contextRes, safeguardingRes, inclusionRes, curriculumRes, achievementRes, attendanceRes, pdwRes, leadershipRes, financeRes, supportRes, idsrUploadsRes, schoolUsersRes, sectionAccessRes, threadsRes, idsrSubsRes, idsrPubsAdminRes, viewerEntRes] = await Promise.all([
       sb.from('schools').select('*').order('created_at', { ascending: false }),
@@ -1820,12 +2169,17 @@
       }
       doc.getElementById('publishPeriodSelect').value = period;
       await win.publishSoap();
+      // V82 MFA: publishSoap reports a failed publish only in the frame's own note (it does not throw), which this driver used to
+      // report as success. Read that note and fail clearly instead.
+      const fnote = doc.getElementById('publishNote');
+      const ftext = fnote ? String(fnote.textContent || '') : '';
+      if (/^Publish failed/i.test(ftext)) throw new Error(ftext.replace(/^Publish failed\s*[\u2014-]\s*/i, '') || 'see the browser console');
 
       note.style.color = '#0D7377';
       note.textContent = `Published "${period}" for ${schoolName} — now visible in their Headteacher's View My SOAP list.`;
     } catch (err) {
       note.style.color = '#B3261E';
-      note.textContent = 'Publish failed: ' + err.message;
+      note.textContent = 'Publish failed: ' + await mfaPublishFailText(schoolId, err);   // V82 MFA: clear MFA wording, incl. blocked hidden frames
       console.error(err);
     } finally {
       frame.src = 'about:blank';
@@ -1887,7 +2241,7 @@
       note2.textContent = `Published for ${schoolName} — now visible in their Headteacher's IDSR sections.`;
     } catch (err) {
       note.style.color = '#B3261E';
-      note.textContent = 'Publish failed: ' + err.message;
+      note.textContent = 'Publish failed: ' + await mfaPublishFailText(schoolId, err);   // V82 MFA: clear MFA wording, incl. blocked hidden frames
       console.error(err);
       btn.disabled = false;
       btn.textContent = 'Publish to school';
@@ -2371,6 +2725,17 @@
       return;
     }
 
+    // V82 MFA: inviting always needs a fresh authenticator code (server-enforced, even while administrator MFA is OFF).
+    // This pre-check only avoids a pointless failed call; the Edge Function remains the authority.
+    btn.disabled = true;
+    const mfaF = (typeof SoapMfaGate === 'undefined') ? { ok: false, state: 'error' } : await SoapMfaGate.requireFresh(sb, { navigate: false });
+    if (!mfaF.ok) {
+      btn.disabled = false;
+      msg.style.color = '#B3261E';
+      msg.textContent = 'Invitation not sent: ' + mfaFriendly(mfaF.state === 'needs_stepup' ? 'fresh_mfa_required' : mfaF.state === 'no_session' ? 'no_session' : 'mfa_check_failed').replace(/ Nothing was changed\.$/, ' No invitation was sent.');
+      if (mfaF.state === 'needs_stepup') mfaBanner('fresh_mfa_required');
+      return;
+    }
     btn.disabled = true;
     btn.textContent = 'Sending…';
     msg.style.color = '#5A6B80';
@@ -2525,6 +2890,11 @@
         action = '<span style="font-size:11px;color:#5A6B80;">Manage in Viewer Tracker</span>';
       }
       const statusCell = ready ? accessBadge(r) : '<span class="acc-badge acc-unknown">' + (st.status === 'loading' ? 'Checking…' : 'Unknown') + '</span>';
+      // V82 Migration 6: Reset MFA (a convenience only; the server decides). Shown for activated members with a known e-mail.
+      if (ready && r.fromRpc && r.is_activated === true && !!r.email && r.role) {
+        action += `<button type="button" class="acc-mfa-btn" data-school-id="${escapeHtml(schoolId)}" data-user-id="${escapeHtml(r.auth_user_id)}" data-email="${escapeHtml(r.email)}" onclick="mfaResetOpen(this)" aria-label="Reset two-step verification for ${escapeHtml(r.email)}">Reset MFA</button>` +
+          (eligible ? '' : `<div id="access-msg-${escapeHtml(schoolId)}-${escapeHtml(r.auth_user_id)}" style="font-size:11px;font-weight:700;margin-top:4px;min-height:14px;"></div>`);
+      }
       return `
         <tr>
           <td data-label="Name"><span class="acc-person-name">${r.full_name ? escapeHtml(r.full_name) : '<span style="color:#8FA0B3;">—</span>'}</span><span class="acc-person-id">ID: ${escapeHtml(r.auth_user_id)}</span></td>
@@ -2659,6 +3029,133 @@
     } finally {
       delete RESEND_INFLIGHT[key];
     }
+  }
+
+  // ----------------------------------------------------------------------
+  // V82 Migration 6 — administrator-assisted MFA reset (Users & Access).
+  // The button is a convenience only: the Edge Function admin-reset-user-mfa decides everything (administrator, fresh authenticator
+  // code, typed e-mail, eligibility). The browser sends the target id, the typed e-mail, reason, method, note and a request id.
+  // One request id per opened dialog: a repeated press after an uncertain result is a safe replay, never a second reset.
+  let MFAR = null;
+  const MFAR_METHODS = [['callback_number_on_file', 'I called the user back on a number already on file'], ['headteacher_confirmed', "The school's Headteacher confirmed the user's identity"], ['direct_contact_headteacher', 'I spoke directly to the Headteacher'], ['other', 'Other (explain in the note)']];
+  const MFAR_REFUSAL = {
+    mfa_fresh_required: 'A fresh authenticator code is needed first. Nothing was changed.',
+    authenticator_not_established: 'Your authenticator was set up in this sign-in. Sign out and sign in again with your code, then try again. Nothing was changed.',
+    mfa_required: 'Two-step verification is required: verify, then try again. Nothing was changed.',
+    mfa_check_failed: 'We could not confirm your two-step verification status. Nothing was changed. Please try again.',
+    forbidden: 'You are not permitted to do this. Nothing was changed.',
+    confirmation_mismatch: 'The e-mail address you typed does not match this account. Nothing was changed.',
+    not_found: 'That account was not found. Nothing was changed.',
+    not_eligible: 'This account cannot be reset here (platform administrators, yourself, and accounts with no school membership are not eligible). Nothing was changed.',
+    unsupported_account: 'This account uses a sign-in method that this reset does not support. Nothing was changed.',
+    unsupported_factor: 'This account has a second factor that this reset does not support. Nothing was changed.',
+    unsupported_auth_data: 'This account has authentication data that this reset does not support. Nothing was changed.',
+    nothing_to_reset: 'This account has no authenticator to reset. Nothing was changed.',
+    recently_reset: 'This account was reset in the last 10 minutes. Wait for the user to finish setting up, or try again later. Nothing was changed.',
+    request_id_conflict: 'This request was already used for a different reset. Close this window and start again. Nothing was changed.',
+    invalid_request: 'The details were not accepted. Check each field and try again. Nothing was changed.',
+    reset_failed: 'The reset could not be completed and nothing was changed. Try again; if it keeps failing, contact SOAP Analytics support.'
+  };
+  async function mfaResetDetail(error) {
+    let status = null, outcome = '', text = '';
+    try {
+      const ctx = error && error.context;
+      if (ctx) {
+        status = typeof ctx.status === 'number' ? ctx.status : null;
+        if (typeof ctx.json === 'function') { const b = await ctx.json(); if (b) { outcome = typeof b.outcome === 'string' ? b.outcome : ''; text = typeof b.error === 'string' ? b.error : ''; } }
+      }
+    } catch (_) { /* generic handling below */ }
+    return { status, outcome, text, network: !!(error && error.name === 'FunctionsFetchError') };
+  }
+  function mfaResetEl(id) { return document.getElementById(id); }
+  function mfaResetMsg(text, kind) { const m = mfaResetEl('mfarMsg'); if (!m) return; m.style.color = kind === 'error' ? '#B3261E' : kind === 'ok' ? '#1A7A6E' : kind === 'warn' ? '#8A5A00' : '#5A6B80'; m.textContent = text; }
+  function mfaResetClose() { const o = mfaResetEl('mfaResetModal'); if (o) o.classList.remove('open'); MFAR = null; }
+  function mfaResetValid() {
+    if (!MFAR) return false;
+    const r = mfaResetEl('mfarReason').value.trim(), n = mfaResetEl('mfarNote').value.trim(), m = mfaResetEl('mfarMethod').value;
+    const typed = mfaResetEl('mfarEmail').value.trim().toLowerCase();
+    return r.length >= 10 && r.length <= 1000 && n.length <= 200 && MFAR_METHODS.some(x => x[0] === m) && typed === MFAR.email.toLowerCase() && mfaResetEl('mfarTick').checked;
+  }
+  function mfaResetSync() {
+    if (!MFAR) return;
+    const c = mfaResetEl('mfarCount'); if (c) c.textContent = mfaResetEl('mfarReason').value.trim().length + ' / 1000 (minimum 10)';
+    const b = mfaResetEl('mfarGo'); if (b) b.disabled = MFAR.busy || MFAR.done || !mfaResetValid();
+  }
+  async function mfaResetOpen(btn) {
+    const schoolId = btn.dataset.schoolId, userId = btn.dataset.userId, email = btn.dataset.email || '';
+    if (!userId || !email || MFAR) return;
+    if (typeof SoapMfaGate === 'undefined') { setAccessMsg(schoolId, userId, 'The security check could not be loaded. Please refresh the page.', 'error'); return; }
+    btn.disabled = true;
+    try {
+      const f = await SoapMfaGate.requireFresh(sb, { navigate: false });
+      if (!f.ok) {
+        const kind = f.state === 'needs_stepup' ? 'fresh_mfa_required' : f.state === 'no_session' ? 'no_session' : 'mfa_check_failed';
+        setAccessMsg(schoolId, userId, kind === 'fresh_mfa_required' ? 'A fresh authenticator code is needed first. Nothing was changed.' : kind === 'no_session' ? 'Your session has ended. Please log in again.' : 'We could not confirm your sign-in security. Nothing was changed.', 'error');
+        if (kind !== 'mfa_check_failed') mfaBanner(kind);
+        return;
+      }
+    } finally { btn.disabled = false; }
+    const hooks = USERS_ACCESS_HOOKS || {}; const sch = (hooks.schools || []).find(x => x.id === schoolId);
+    const row = accessBuildRows(schoolId, ACCESS_STATE[schoolId]).find(r => r.auth_user_id === userId) || {};
+    MFAR = { schoolId, userId, email, name: row.full_name || '', role: row.role, schoolName: sch ? sch.name : '', requestId: (self.crypto && crypto.randomUUID) ? crypto.randomUUID() : null, busy: false, done: false };
+    if (!MFAR.requestId) { MFAR = null; setAccessMsg(schoolId, userId, 'This browser cannot create a safe request id. Please use a current browser.', 'error'); return; }
+    mfaResetEl('mfaResetBody').innerHTML = `
+      <div class="mfar-who"><b>${escapeHtml(email)}</b>${MFAR.name ? ' (' + escapeHtml(MFAR.name) + ')' : ''}<br>${escapeHtml(MFAR.schoolName || 'School')} · ${escapeHtml(row.role ? roleLabel(row.role) : 'member')}</div>
+      <p style="font-size:12px;color:#5A6B80;margin:0 0 12px;">This removes the user's authenticator and ends their current sign-ins. Their old password will stop working and they will be e-mailed a link to set a new one, then set up two-step verification again. Only do this after you have checked who is asking.</p>
+      <div id="mfarForm">
+        <div class="mfar-f"><label for="mfarMethod">How did you verify their identity?</label><select id="mfarMethod">${MFAR_METHODS.map(m => `<option value="${m[0]}">${escapeHtml(m[1])}</option>`).join('')}</select></div>
+        <div class="mfar-f"><label for="mfarReason">Reason for the reset</label><textarea id="mfarReason" rows="3" maxlength="1000" placeholder="For example: lost phone; user confirmed by call-back"></textarea><div id="mfarCount" style="font-size:11px;color:#5A6B80;"></div></div>
+        <div class="mfar-f"><label for="mfarNote">Note (optional, up to 200 characters; do not include personal data)</label><input type="text" id="mfarNote" maxlength="200"></div>
+        <div class="mfar-f"><label for="mfarEmail">Type the user's e-mail address to confirm</label><input type="text" id="mfarEmail" autocomplete="off" spellcheck="false"></div>
+        <div class="mfar-f"><label style="font-weight:400;"><input type="checkbox" id="mfarTick"> I have verified this person's identity by the method selected.</label></div>
+      </div>
+      <div class="mfar-msg" id="mfarMsg" role="status"></div>
+      <div class="mfar-actions"><button type="button" onclick="mfaResetClose()" id="mfarCancel">Cancel</button><button type="button" class="danger" id="mfarGo" onclick="mfaResetSubmit()" disabled>Reset two-step verification</button></div>`;
+    ['mfarReason', 'mfarNote', 'mfarEmail', 'mfarMethod', 'mfarTick'].forEach(id => { const e = mfaResetEl(id); e.addEventListener('input', mfaResetSync); e.addEventListener('change', mfaResetSync); });
+    mfaResetEl('mfaResetModal').classList.add('open'); mfaResetSync();
+    setTimeout(() => { const m = mfaResetEl('mfarMethod'); if (m) m.focus(); }, 0);
+  }
+  async function mfaResetSubmit() {
+    const S = MFAR; if (!S || S.busy || S.done || !mfaResetValid()) return;
+    S.busy = true; mfaResetSync(); mfaResetMsg('Checking your sign-in…', 'info');
+    try {
+      const f = await SoapMfaGate.requireFresh(sb, { navigate: false });   // the dialog may have been open for a while
+      if (!f.ok) {
+        mfaResetMsg(f.state === 'needs_stepup' ? MFAR_REFUSAL.mfa_fresh_required : f.state === 'no_session' ? 'Your session has ended. Please log in again. Nothing was changed.' : MFAR_REFUSAL.mfa_check_failed, 'error');
+        if (f.state === 'needs_stepup') mfaBanner('fresh_mfa_required'); else if (f.state === 'no_session') mfaBanner('no_session');
+        return;
+      }
+      mfaResetMsg('Resetting…', 'info');
+      const note = mfaResetEl('mfarNote').value.trim();
+      const { data, error } = await sb.functions.invoke('admin-reset-user-mfa', { body: {
+        request_id: S.requestId, target_user_id: S.userId, confirm_email: mfaResetEl('mfarEmail').value.trim(),
+        reason: mfaResetEl('mfarReason').value.trim(), method: mfaResetEl('mfarMethod').value, note: note || null } });
+      if (error) {
+        const d = await mfaResetDetail(error);
+        if (d.network || (d.status === null && !d.outcome)) { mfaResetMsg('The result could not be confirmed (network problem). Press the button again to check: repeating this request is safe and cannot reset the account twice.', 'warn'); return; }
+        const k = d.outcome || (d.status === 401 ? 'no_session' : d.status === 403 ? 'forbidden' : '');
+        if (k === 'no_session') { mfaResetMsg('Your session has ended. Please log in again. Nothing was changed.', 'error'); mfaBanner('no_session'); return; }
+        if (k === 'mfa_fresh_required' || k === 'authenticator_not_established' || k === 'mfa_required') mfaBanner(k);
+        if (d.status !== null && d.status >= 500 && k !== 'reset_failed' && k !== 'mfa_check_failed') { mfaResetMsg('The server returned an error, so the result is uncertain. Press the button again to check: repeating this request is safe and cannot reset the account twice.', 'warn'); return; }
+        mfaResetMsg(MFAR_REFUSAL[k] || 'The reset was refused. Nothing was changed.', 'error');
+        return;
+      }
+      if (!data || data.ok !== true) { mfaResetMsg('The reset could not be confirmed. Press the button again to check: repeating this request is safe and cannot reset the account twice.', 'warn'); return; }
+      S.done = true;
+      const rm = data.removed || {}, lines = [];
+      lines.push('Two-step verification was reset for ' + S.email + (data.replayed ? ' (this request had already completed).' : '.'));
+      lines.push('Removed: ' + (rm.factors || 0) + ' authenticator(s) and ' + (rm.sessions || 0) + ' sign-in session(s). Their old password no longer works.');
+      lines.push(data.recovery_email ? 'A password-setting e-mail has been requested for them (delivery is not confirmed here).' : 'WARNING: the password-setting e-mail could not be requested. Ask the user to choose "Forgot password" on the login page.');
+      lines.push(data.notified ? 'A notification e-mail was sent to them.' : (data.notification === 'failed' ? 'WARNING: the notification e-mail could not be sent. Contact the user another way.' : 'No notification e-mail was sent from here. Contact the user another way so they expect the password e-mail.'));
+      lines.push('This is recorded in the audit log. After they set a new password they must set up two-step verification again before using protected school data.');
+      mfaResetMsg(lines.join('\n'), data.recovery_email && data.notified ? 'ok' : 'warn');
+      const form = mfaResetEl('mfarForm'); if (form) form.style.display = 'none';
+      mfaResetEl('mfarCancel').textContent = 'Close';
+      setAccessMsg(S.schoolId, S.userId, 'Two-step verification reset at ' + new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + '.', 'ok');
+    } catch (err) {
+      console.error(err);
+      mfaResetMsg('The result could not be confirmed. Press the button again to check: repeating this request is safe and cannot reset the account twice.', 'warn');
+    } finally { S.busy = false; mfaResetSync(); }
   }
 
   // ----------------------------------------------------------------------
