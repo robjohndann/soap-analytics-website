@@ -2484,10 +2484,10 @@
       row('Reading progress (score)', g + ' - Reading progress'), row('Writing progress (score)', g + ' - Writing progress'), row('Maths progress (score)', g + ' - Maths progress')];
   }
   /** Single A3 page, three columns. notes = "not published" lines (from the source's own statement). */
-  var PLACE = [
-    [1, 'KS2 Headline — All Pupils'], [1, 'KS2 Disadvantaged Pupils'], [1, 'Year 4 MTC and Year 1 Phonics'],
-    [2, 'KS2 Progress'], [2, 'KS2 Prior Attainment — Low'], [2, 'KS2 Prior Attainment — Middle'],
-    [3, 'KS2 Prior Attainment — High'], [3, 'Attendance & Suspension Trends'], [3, 'Not published in this IDSR'], [3, 'Rating Scale']
+  var PLACE = [   // balanced by row count: about 21 table rows in each column, so row heights match across the page (V83 refinement)
+    [1, 'KS2 Headline — All Pupils'], [1, 'KS2 Disadvantaged Pupils'], [1, 'KS2 Progress'],
+    [2, 'KS2 Prior Attainment — Low'], [2, 'KS2 Prior Attainment — Middle'], [2, 'KS2 Prior Attainment — High'], [2, 'Year 4 MTC and Year 1 Phonics'],
+    [3, 'Attendance & Suspension Trends'], [3, 'Not published in this IDSR'], [3, 'Rating Scale']
   ];
   function cards(model, notes) {
     var base = SpecAT.cards(notes), by = {};
@@ -3163,6 +3163,11 @@
     return h + '</table></section>';
   }
 
+  /** V83 primary footer: keep deprivation, stability and the staffing findings the source flags; drop routine \"nothing to highlight\" sentences and \"not stated in source\" entries (the Dashboard keeps them). */
+  function simpleFooter(LS) {
+    function keep(i) { return !/not stated in source$/i.test(i.text) && !/^There is nothing to highlight/i.test(i.text) && !(i.field && /^(teacherAbsence|vacancies|turnover|supportRatio|teacherSickness)$/.test(i.field) && !i.flag); }
+    return { p1: { top: LS.p1.top, bottom: LS.p1.bottom.map(function (l) { return l.filter(keep); }).filter(function (l) { return l.length; }) }, p2: LS.p2 };
+  }
   function stripHtml(lines) {
     return lines.filter(function (l) { return l.length; }).map(function (l) {
       return '<div class="sl">' + l.map(function (i) { return '<span class="si' + (i.flag ? ' flag' : '') + '" data-field="' + esc(i.field) + '"' + (i.title ? ' title="' + esc(i.title) + '"' : '') + '>' + esc(i.text) + '</span>'; }).join('') + '</div>';
@@ -3247,7 +3252,7 @@
     var zoom = '<div id="zoom" class="zoom nop" hidden><div class="zbox" role="dialog" aria-modal="true" aria-labelledby="ztitle"><div class="zhead"><h2 class="ztitle" id="ztitle"></h2><span id="zlink"></span><button type="button" class="zclose">Close ✕</button></div><div class="zbody" id="zbody" tabindex="0" role="region" aria-label="Enlarged card data"></div></div></div>';
     var toolbar = '<header class="toolbar nop"><span>' + esc(title) + ' <span id="fitwarn" class="warn" role="alert" hidden>⚠ Some content does not fit on one A3 page — check the context strips.</span></span><span class="tb">' + (ctx.dashboardAvailable === false ? '' : '<a class="btn xl" id="otherLink" href="' + esc(H.dashLink(ctx.dashboardHref, 'overview')) + '" data-open="dashboard" data-card="overview">Open Dashboard →</a>') + '<button class="btn" id="printBtn" type="button">Print / Save PDF (A3 landscape)</button></span></header>';
     if (AT && AT.single) {   // V83: primary report = ONE A3 page
-      var srcLine1 = ctx.sourceIdentityLine ? '<div class="srcid" >' + esc(ctx.sourceIdentityLine) + '</div>' : '', LS1 = AT.layoutStrips(R.strips, R.strips2 || { top: [], bottom: [] }), t0 = 'SOAP Analytics IDSR \u2014 ' + (ctx.schoolName || 'school');
+      var srcLine1 = ctx.sourceIdentityLine ? '<div class="srcid" >' + esc(ctx.sourceIdentityLine) + '</div>' : '', LS1 = AT.layoutStrips(R.strips, R.strips2 || { top: [], bottom: [] }), LS1 = AT.single ? simpleFooter(LS1) : LS1, t0 = 'SOAP Analytics IDSR \u2014 ' + (ctx.schoolName || 'school');
       return toolbar + '<main class="sheet at" id="sheet" data-comparator="national"><div class="frame"><h1 class="ttl" style="font-size:' + AT.fitTitle(t0) + 'pt">' + esc(t0) + '</h1>' + srcLine1 + logo('lg1', LOGO.white, 'SOAP Analytics') +
         '<div class="band"><div class="strip top" aria-label="School context">' + stripHtml(LS1.p1.top) + '</div><div class="mint"><div class="cols">' + html + '</div></div><div class="strip bot" aria-label="Deprivation, stability and workforce">' + stripHtml(LS1.p1.bottom) + '</div></div>' +
         logo('lg2', LOGO.teal, 'SOAP Analytics') + '</div></main>' + sourceNotesHtml(prov) + '<div id="support-meta" class="nop" hidden data-support="' + esc(support) + '">' + esc(support) + '</div>' + zoom;
@@ -4393,12 +4398,17 @@ const dir=(v,n,lower)=>{const a=num(v),b=num(n);if(a===b)return 'in line with';c
 const list=a=>a.length<2?a.join(''):a.slice(0,-1).join(', ')+' and '+a[a.length-1];
 const plural=(n,s,p)=>n===1?s:p;
 const isSig=o=>/\((sig\+|sig-)\)/i.test(o||'');
-function phaseBlock(p,f,Y){
+function phaseBlock(p,f,Y,opts){
   const N=f.eligible,hi=(f.counts.exceptional||0)+(f.counts.strong||0),low=(f.counts.attention||0)+(f.counts.urgent||0);
   const pn=p[2],ent=f.entriesBased||[],pupilLow=low-ent.length,S=[]; // S: sentences {pri,t}; pri 1-2 protected, 3 droppable
   const w=(x,y)=>(y&&y!==Y)?', '+y:'';
   // 1. SOAP rating counts
   let s1;
+  if(opts&&opts.plain){ // V83 primary: findings, not counts of measures processed (the rating counts are shown by the phase cards)
+    const pc=f.concernsElig.slice(0,2).map(c=>name(c.measure,c.group)+' ('+c.val+' against '+c.nat+w(0,yr(c.col))+')');
+    s1=pc.length?'Main concerns: '+list(pc):low?'Measures rated below national are in groups of fewer than 20 pupils, so none is ranked':'No measure is rated below national';
+    S.push({pri:1,t:s1});
+  } else {
   if(low===N&&N>0)s1='SOAP rates '+(N===1?'its one measure':'all '+N+' measures')+' below national';
   else if(hi===0)s1='SOAP rates no measure Exceptional or Strong'+(low?' and '+low+' below national':'');
   else s1='SOAP rates '+hi+' of '+N+' measures Exceptional or Strong'+(low===0?', none below national':' and '+low+' below national');
@@ -4408,6 +4418,7 @@ function phaseBlock(p,f,Y){
     s1+=': '+pupilLow+' pupil-based'+(cs.length?', including '+list(cs):'')+', and '+ent.length+' entries-based, reported separately';
   } else if(cs.length){ s1+=(low===N?', notably ':': ')+list(cs); }
   S.push({pri:1,t:s1});
+  }
   // 3. IDSR's own judgement on the cited below-national items (quoted from source; "significantly" only when the source marker says so)
   const off=(f.officialBelow||[]);
   if(off.length){const sg=off.filter(o=>isSig(o.official)).length;
@@ -4429,11 +4440,11 @@ function phaseBlock(p,f,Y){
   if(sfo.length)S.push({pri:2,t:'The IDSR also flags '+(sfo.length===1?'one further result':sfo.length+' further results')+' that SOAP cannot rank (see Additional concerns)'});
   return {S,hi,low,N};
 }
-function compose(facts){
+function compose(facts,opts){
   const blocks=[];
   PH.forEach(p=>{const f=facts[p[0]];if(!f||!f.eligible)return;
     const ys=(f.latestCols||[]).map(yr).filter(isAcademic).sort();const Y=ys[ys.length-1]||'';
-    blocks.push({p,Y,...phaseBlock(p,f,Y)})});
+    const pp=opts&&opts.labels&&opts.labels[p[0]]?[p[0],opts.labels[p[0]],p[2]]:p;blocks.push({p:pp,Y,...phaseBlock(pp,f,Y,opts)})});
   const render=()=>blocks.map(b=>({tag:b.p[1],phase:b.p[0],year:b.Y||'Latest year',sentences:b.S.map(x=>({t:x.t,k:x.k||''})),text:(b.Y||'Latest year')+': '+b.S.map(x=>x.t).join('. ')+'.'}));
   const words=r=>r.map(x=>x.tag+' '+x.text).join(' ').split(/\s+/).length;
   let out=render(),dropped=[];
@@ -4575,8 +4586,10 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
   }
   var PHASES_ALL = [['whole', 'Whole school'], ['primary', 'Primary (Reception to Year 6)'], ['secondary', 'Secondary (Years 7 to 11)'], ['post16', 'Post-16 (sixth form)']];
   var PHASES = PHASES_ALL;   // V83: set per build (a primary report has two phases: whole school and primary)
-  function setPhases(PRIM) { PHASES = PRIM ? PHASES_ALL.filter(function (p) { return p[0] === 'whole' || p[0] === 'primary'; }) : PHASES_ALL; }
-  var PHASE_SHORT = { whole: 'Whole school', primary: 'Primary', secondary: 'Secondary', post16: 'Post-16' };
+  function setPhases(PRIM) { PHASE_SHORT = PRIM ? PHASE_SHORT_PRIM : PHASE_SHORT_ALL; PHASES = PRIM ? PHASES_ALL.filter(function (p) { return p[0] === 'whole' || p[0] === 'primary'; }) : PHASES_ALL; }
+  var PHASE_SHORT_ALL = { whole: 'Whole school', primary: 'Primary', secondary: 'Secondary', post16: 'Post-16' };
+  var PHASE_SHORT_PRIM = { whole: 'Attendance & Behaviour', primary: 'Academic Performance', secondary: 'Secondary', post16: 'Post-16' };   // V83: a primary-only Overview names its two groups by what they measure
+  var PHASE_SHORT = PHASE_SHORT_ALL;
   var PAGE_PHASE = { ks2: 'primary', ks2dis: 'primary', mtcphonics: 'primary', ks2progress: 'primary', 'ks2prior-low': 'primary', 'ks2prior-middle': 'primary', 'ks2prior-high': 'primary', attendance: 'whole', alevel: 'post16' };
   function phaseOfItem(it) {
     if (it.page === 'destinations') return /^After 16/.test((it.row && it.row.fam) || '') ? 'post16' : 'secondary';
@@ -4617,6 +4630,8 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
     var lines = atLib().AT.noteLines(ctx.notPublished); if (!lines.length) return '';
     return '<div class="notice n-info"><b>Not published in this IDSR.</b> ' + lines.map(esc).join(' ') + ' SOAP shows these as not published, never as zero.</div>';
   }
+  var PRIM_CSS = '.ph-tile5 .ph-cats{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin-top:6px}.ph-cat{display:flex;flex-direction:column;align-items:center;text-align:center;gap:2px}.ph-sw{display:block;width:100%;height:8px;border-radius:3px}.ph-cl{font-size:10.5px;line-height:1.15;color:#44546A}.ph-cn{font-size:17px;line-height:1.1;color:#0D2B4E}' +
+    '.ov-primary .ov-row{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:start;column-gap:10px;row-gap:1px}.ov-primary .ov-row .ov-l{grid-column:1;grid-row:1}.ov-primary .ov-row .badge{grid-column:2;grid-row:1;margin:0}.ov-primary .ov-row .ov-v{grid-column:1/-1;grid-row:2}.ov-primary .ov-row *,.ov-primary .exec-item *{white-space:normal!important;overflow:visible!important;text-overflow:clip!important}';   // V83: primary Overview only (rating cards, wrapped metric names); never emitted for secondary or all-through
   var AT_CSS = '.srcbanner{background:var(--navy);color:#fff;font-weight:700;padding:10px 14px;border-radius:6px;margin:10px 0 14px}.srcside{font-size:11px;line-height:1.35;color:#fff;opacity:.92;margin:6px 0 2px}.phtag{display:inline-block;background:var(--pale);color:var(--navy);border:1px solid #c5d1de;border-radius:3px;font-size:11px;font-weight:700;padding:0 5px;margin-right:4px;white-space:nowrap}.phase-head{margin-top:22px}.narrative-phase{margin-top:8px}@media print{.srcbanner{-webkit-print-color-adjust:exact;print-color-adjust:exact}}' +
     '.narr-p{margin:6px 0;line-height:1.45}.narr-basis{margin:8px 0 0;font-size:12px;color:var(--text-muted)}.mat{border-bottom:1px dotted var(--navy);cursor:help}.mat:focus-visible{outline:3px solid #FFC83D;outline-offset:2px}' +
     '.ph-tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:14px 0}.ph-tile{display:block;background:#fff;border-radius:10px;padding:8px 12px;box-shadow:0 1px 3px rgba(13,43,78,.08);text-decoration:none;color:inherit;cursor:pointer}.ph-tile:focus-visible{outline:3px solid #FFC83D;outline-offset:2px}.ph-name{font-weight:700;color:var(--navy)}.ph-n{font-size:12px;color:var(--text-muted);margin:2px 0 8px}.ph-bar{display:flex;height:8px;border-radius:4px;overflow:hidden;background:#E4E9EE}.ph-leg{font-size:11.5px;margin-top:6px}' +
@@ -4805,10 +4820,10 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
   }
   function analytics(tables, pred) {
     var items = rowsAll(tables).filter(function (it) { return !(it.tb.key === 'termly' || it.tb.key === 'daily' || it.tb.key === 'r3' || it.tb.key === 'r2') && it.tb.key !== 'gap' && (!pred || pred(it)); });
-    var gaps = [], pool = [], deltas = [], seenGap = {}, seenPool = {}, seenDelta = {}, excluded = { duplicate: 0, noPupilCount: 0, smallCohort: 0, preComparable: 0, singleYear: 0 };
+    var gaps = [], pool = [], deltas = [], seenGap = {}, seenPool = {}, seenDelta = {}, seenAny = {}, excluded = { duplicate: 0, noPupilCount: 0, smallCohort: 0, preComparable: 0, singleYear: 0 };
     items.forEach(function (it) {
       var r = it.row, isCnt = r.kind === 'count', th = isCnt ? 1 : Core.THRESH[r.kind], li = latestIdx(r); if (li < 0) return;   // V75: permanent-exclusion COUNTS are ranked in units of one pupil, so a red/blue count is never invisible in the panels
-      var key = rankKey(it), c = r.cells[li];
+      var key = rankKey(it), c = r.cells[li]; seenAny[key] = 1;
       if (c.nat && c.nat.num != null && !c.nat.est && th) {
         var rt = rateOf(c, it.tb.nt, r.lowerBetter);
         if (rt.band) {
@@ -4844,7 +4859,8 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
     var before = function (arr, bands) { return arr.filter(function (g) { return bands.indexOf(g.band) >= 0; }); }, ids = function (arr, dir) { return arr.slice().sort(function (a, b) { return dir * (a.gap - b.gap); }).slice(0, 3).map(function (g) { return rankKey(g.it); }).join('|'); };
     var cohortChanged = ids(before(gaps, ['exceptional', 'strong']), -1) !== ids(before(pool, ['exceptional', 'strong']), -1) || ids(before(gaps, ['attention', 'urgent']), 1) !== ids(before(pool, ['attention', 'urgent']), 1) || unranked.length > 0;
     var up = deltas.filter(function (d) { return d.norm > 0; }).sort(function (a, b) { return b.norm - a.norm; }), down = deltas.filter(function (d) { return d.norm < 0; }).sort(function (a, b) { return a.norm - b.norm; });
-    return { strengths: good.slice(0, 3), attention: bad.slice(0, 3), improved: up.slice(0, 3), regressed: down.slice(0, 3), eligible: gaps.length, comparable: deltas.length, excluded: excluded, all: { gaps: gaps, deltas: deltas, pool: pool }, unranked: unranked, notRankedAbove: notRanked.filter(function (g) { return g.band === 'exceptional' || g.band === 'strong'; }).length, notRankedBelow: unranked.length, cohortChanged: cohortChanged };
+    var unclassified = Object.keys(seenAny).filter(function (k) { return !seenGap[k]; }).length;   // V83: results shown but not rated by SOAP (no national figure, no banding rule, or verdict-only)
+    return { unclassified: unclassified, strengths: good.slice(0, 3), attention: bad.slice(0, 3), improved: up.slice(0, 3), regressed: down.slice(0, 3), eligible: gaps.length, comparable: deltas.length, excluded: excluded, all: { gaps: gaps, deltas: deltas, pool: pool }, unranked: unranked, notRankedAbove: notRanked.filter(function (g) { return g.band === 'exceptional' || g.band === 'strong'; }).length, notRankedBelow: unranked.length, cohortChanged: cohortChanged };
   }
 
   // ───────────── V75 Rev 3: additional concerns flagged by the source IDSR ─────────────
@@ -4996,7 +5012,7 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
     var good = gaps.filter(function (g) { return g.band === 'exceptional' || g.band === 'strong'; }).sort(function (a, b) { return b.gap - a.gap; });
     var bad = gaps.filter(function (g) { return g.band === 'attention' || g.band === 'urgent'; }).sort(function (a, b) { return a.gap - b.gap; });
     var low = bad.length, entries = bad.filter(function (g) { return g.c.nKind === 'entries'; });
-    var f = { latestCols: gaps.map(function (g) { return g.c.col; }).filter(function (c, i, a2) { return a2.indexOf(c) === i; }), eligible: A.eligible, counts: bc, comparable: A.comparable,
+    var f = { unclassified: A.unclassified || 0, latestCols: gaps.map(function (g) { return g.c.col; }).filter(function (c, i, a2) { return a2.indexOf(c) === i; }), eligible: A.eligible, counts: bc, comparable: A.comparable,
       strengthsElig: good.filter(okPupils).slice(0, 3).map(gapFact), strengthsAll: good.length, strengthsExcl: good.filter(function (g) { return !okPupils(g); }).map(gapFact),
       concernsElig: bad.filter(okPupils).slice(0, 3).map(gapFact), concernsExcl: bad.filter(function (g) { return !okPupils(g); }).map(gapFact),
       improved: A.improved.map(declineFact), regressed: A.all.deltas.filter(function (d) { return d.norm < 0; }).sort(function (a, b) { return a.norm - b.norm; }).map(declineFact),
@@ -5059,11 +5075,17 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
     return '<div class="ov-row go concern ' + c.kind + '" tabindex="0" role="link" data-go="' + esc(c.go) + '"' + (c.chart ? ' data-chart="' + esc(c.chart) + '"' : '') + ' title="' + esc(full) + '"><span class="ov-l">' + (c.phase ? '<span class="phtag">' + esc(PHASE_SHORT[c.phase]) + '</span> ' : '') + esc(c.measure) + '</span><span class="ov-v">' + esc(c.group + ' · ' + c.year + (c.kind === 'earlier' ? ' · earlier year' : '')) + '</span><span class="badge off">' + esc(c.judgement || '') + '</span></div>';
   }
 
+  /** V83 primary: the five rating categories counted separately, plus results SOAP does not rate (kept apart from rated measures). */
+  function phaseTilePrim(p, f) {
+    var c = f.counts, order = ['exceptional', 'strong', 'expected', 'attention', 'urgent'], n = f.eligible || 0;
+    return '<a class="ph-tile ph-tile5 go" tabindex="0" role="link" data-go="' + PHASE_FIRST[p[0]] + '"><div class="ph-name">' + esc(PHASE_SHORT[p[0]]) + '</div><div class="ph-n">' + n + ' rated measure' + (n === 1 ? '' : 's') + (f.unclassified ? ' · ' + f.unclassified + ' not rated by SOAP' : '') + '</div>' +
+      '<div class="ph-cats">' + order.map(function (b) { return '<div class="ph-cat"><span class="ph-sw" style="background:' + COLOR[b] + '"></span><span class="ph-cl">' + esc(LABEL[b]) + '</span><b class="ph-cn">' + (c[b] || 0) + '</b></div>'; }).join('') + '</div></a>';
+  }
   function overviewPageAT(model, ex, tables, ctx, AN) {
     var N = narrLib(), L = atLib(), per = AN.per, CN = AN.CN, facts = {}, hasTermly = tables.some(function (t) { return t.key === 'termly'; });
     PHASES.forEach(function (p) { facts[p[0]] = atFacts(AN, p[0]); });
-    var nr = N.compose(facts), tip = N.materialTip(Core.THRESH);
-    var h = '<div class="page-title-wrap"><h1 class="page-title" tabindex="-1">IDSR Interactive Summary</h1><div class="page-sub">Derived automatically from the DfE Inspection Data Summary Report' + (ctx.periodLabel ? ' (' + esc(ctx.periodLabel) + ')' : '') + ' — ' + (ctx.reportType === 'primary' ? 'primary school: whole school and primary (Reception to Year 6)' : 'all-through school: whole school, primary, secondary and post-16') + '. Click any row for full detail.</div></div>';
+    var PRIMR = ctx.reportType === 'primary', nr = N.compose(facts, PRIMR ? { plain: true, labels: { whole: PHASE_SHORT.whole, primary: PHASE_SHORT.primary } } : null), tip = N.materialTip(Core.THRESH);
+    var h = '<div class="page-title-wrap"><h1 class="page-title" tabindex="-1">IDSR Interactive Summary</h1><div class="page-sub">Derived automatically from the DfE Inspection Data Summary Report' + (ctx.periodLabel ? ' (' + esc(ctx.periodLabel) + ')' : '') + ' — ' + (ctx.reportType === 'primary' ? 'primary school: attendance &amp; behaviour and academic performance (Reception to Year 6)' : 'all-through school: whole school, primary, secondary and post-16') + '. Click any row for full detail.</div></div>';
     h += '<div class="srcbanner" role="note">' + esc(ctx.sourceIdentityLine || '') + '</div>';
     // 1. ONE integrated, deterministic narrative (Revision 2). Ratings are SOAP's; "The IDSR" statements quote the report's own judgements.
     h += '<div class="heatmap-title" id="sub-narrative">Performance Narrative</div><div class="narrative-panel" id="narrative" data-words="' + nr.words + '"><span class="vh" id="mat-tip">' + esc(tip) + '</span>' +
@@ -5073,7 +5095,7 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
         }).join('. ') + '.</p>';
       }).join('') + '<p class="narr-basis">' + esc(N.BASIS) + '</p></div>';
     // 2. Four phase tiles
-    h += '<div class="ph-tiles" aria-label="Evidence by phase">' + PHASES.filter(function (p) { return facts[p[0]].eligible; }).map(function (p) { return phaseTile(p, facts[p[0]], N); }).join('') + '</div>';
+    h += '<div class="ph-tiles" aria-label="Evidence by phase">' + PHASES.filter(function (p) { return facts[p[0]].eligible; }).map(function (p) { return PRIMR ? phaseTilePrim(p, facts[p[0]]) : phaseTile(p, facts[p[0]], N); }).join('') + '</div>';
     // 3. Strengths and concerns (pupil-based, 20 or more pupils), up to three per phase; single-line rows (full label on hover/focus)
     var sHtml = '', cHtml = '', excl = [];
     PHASES.forEach(function (p) {
@@ -5087,7 +5109,7 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
     var ent = facts.post16 ? facts.post16.entriesBased : [];
     var entHtml = ent.length ? '<div class="exec-panel entries-panel" id="sub-entries"><h3 aria-level="2">&#9888; Post-16 — entries-based concerns</h3><div class="exec-count">Per entry, not per pupil; never ranked with pupil measures.</div>' +
       ent.map(function (g) { return ovRow(g.measure, allGroup(g.group) ? '' : g.group, g.val + ' vs ' + g.nat + ' · ' + g.col.replace(/ \(.*\)$/, '') + ' · ' + g.n + ' entries' + (g.official ? ' · IDSR: ' + g.official : ''), g.go, g.chart, 'post16', '<span class="badge ' + g.band + '">' + LABEL[g.band] + '</span>'); }).join('') + '</div>' : '';
-    h += '<div class="exec-grid ov-grid"><div class="exec-panel"><h3 aria-level="2">&#10003; Significant strengths</h3><div class="exec-count">Up to 3 per phase; pupil-based, 20+ pupils.</div>' + (sHtml || '<div class="exec-item muted">No areas currently rated above national.</div>') + '</div>' +
+    h += '<div class="exec-grid ov-grid' + (ctx.reportType === 'primary' ? ' ov-primary' : '') + '"><div class="exec-panel"><h3 aria-level="2">&#10003; Significant strengths</h3><div class="exec-count">Up to 3 per phase; pupil-based, 20+ pupils.</div>' + (sHtml || '<div class="exec-item muted">No areas currently rated above national.</div>') + '</div>' +
       '<div class="ov-col"><div class="exec-panel"><h3 aria-level="2">&#9888; Significant concerns</h3><div class="exec-count">Up to 3 per phase; pupil-based, 20+ pupils.</div>' + (cHtml || '<div class="exec-item muted">' + (anyLow ? 'No pupil-based concern with at least 20 pupils.' : 'No measure with a national comparison is rated below national.') + '</div>') + '</div>' + entHtml + '</div></div>';
     if (excl.length) h += '<p class="xnote ov-excl">Not shown as headlines because the group is under 20 pupils (all remain on the phase pages with their ratings): ' + esc(excl.join(' · ')) + '.</p>';
     // 5. Biggest changes: one largest improvement and one largest regression per phase (full comparable years, 20+ pupils)
@@ -5270,7 +5292,7 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
     var support = 'SOAP Analytics IDSR Dashboard · dashboard ' + DASH_VERSION + ' · core ' + Core.CORE_VERSION + (AT ? (PRIM ? ' · report type primary' : ' · report type all-through') : '') + (ex ? ' · extractors ' + ex.version : ' · extractors not run') + (ctx.sourceSha256 ? ' · source sha256 ' + ctx.sourceSha256.slice(0, 16) : '') + (ctx.modelSha256 ? ' · model sha256 ' + ctx.modelSha256.slice(0, 16) : '');
     var prov = '<div class="foot">' + (AT && ctx.sourceIdentityLine ? esc(ctx.sourceIdentityLine) + ' · ' : '') + esc('SOAP Analytics IDSR Dashboard' + (ctx.releaseDate ? ' · government release ' + ctx.releaseDate : '')) + '</div><div id="support-meta" class="nop" hidden data-support="' + esc(support) + '">' + esc(support) + '</div>';
     var body = '<body><a class="skip" href="#main">Skip to content</a>' + side + '<main class="main" id="main">' + PG.map(function (p) { return pageHtml[p[0]]; }).join('') + prov + '</main><script>' + DASH_SCRIPT + '</script></body></html>';
-    return SI.head('IDSR Dashboard', AT ? CSS + AT_CSS : CSS, DASH_SCRIPT) + body;
+    return SI.head('IDSR Dashboard', AT ? CSS + AT_CSS + (PRIM ? PRIM_CSS : '') : CSS, DASH_SCRIPT) + body;
   }
   function disadvOfficial(sec) {
     if (!sec || sec.status === 'absent' || sec.status === 'failed' || !sec.data) return '';
@@ -5707,8 +5729,8 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
   else root.IdsrPrintOverview = factory(root.IdsrLogos);
 })(typeof self !== 'undefined' ? self : this, function (Logos) {
   'use strict';
-  var VERSION = '77.5.2-print2', ZOOM = 0.9, ZOOM_SECONDARY = 0.85, LOGO_PX = 92;
-  var HDR_OPEN = '<div class="sidebar-header">', GRID_AT = '<div class="exec-grid ov-grid"';
+  var VERSION = '83.0.0-print3', ZOOM = 0.9, ZOOM_SECONDARY = 0.85, ZOOM_PRIMARY = 0.85, LOGO_PX = 92;
+  var HDR_OPEN = '<div class="sidebar-header">', GRID_AT = '<div class="exec-grid ov-grid';
 
   var COMPACT = '#page-overview .page-title{margin:0 0 2px}#page-overview .page-sub{margin-bottom:8px}#page-overview .heatmap-title{margin:2px 0 6px}#page-overview .narrative-panel{gap:6px}#page-overview .narrative-item{padding:8px 14px}' +
     '#page-overview .narrative-panel+.exec-grid{margin-top:10px}#page-overview .exec-grid{gap:12px!important;margin-bottom:0!important;grid-template-columns:1fr 1fr!important}#page-overview .exec-panel{padding:10px 16px 12px}' +
@@ -5719,6 +5741,10 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
     '#page-overview .po-pg2{break-before:page}#page-overview .exec-grid.ov-grid{break-inside:avoid}#page-overview .ph-tiles{grid-template-columns:repeat(4,1fr)!important}' +
     '#page-overview .ov-row{display:grid!important;grid-template-columns:minmax(0,1fr) auto;align-items:center;column-gap:10px;row-gap:0}#page-overview .ov-row .ov-l{grid-column:1;grid-row:1}' +
     '#page-overview .ov-row .badge{grid-column:2;grid-row:1;margin:0}#page-overview .ov-row .ov-v{grid-column:1/-1;grid-row:2}';
+  // V83 primary: ONE A4 PORTRAIT page. Same content as the all-through overview (narrative, phase cards, strengths, concerns, biggest changes) with no truncation: long measure names wrap.
+  var CUT_PRIMARY = '#page-overview .chg-table~*,#page-overview .ov-links,#page-overview .heatmap-title:has(+.ov-links){display:none!important}#page-overview .data-table tr{break-inside:avoid}#page-overview .exec-grid.ov-grid{break-inside:avoid}#page-overview .ph-tiles{grid-template-columns:repeat(2,1fr)!important;gap:8px!important;margin:6px 0!important}' +
+    '#page-overview .ov-row{display:grid!important;grid-template-columns:minmax(0,1fr) auto;align-items:start;column-gap:8px;row-gap:0}#page-overview .ov-row .ov-l{grid-column:1;grid-row:1}#page-overview .ov-row .badge{grid-column:2;grid-row:1;margin:0}#page-overview .ov-row .ov-v{grid-column:1/-1;grid-row:2}' +
+    '#page-overview .ov-l,#page-overview .ov-v,#page-overview .ov-row *{white-space:normal!important;overflow:visible!important;text-overflow:clip!important;max-width:none!important}#page-overview .narr-p{line-height:1.3!important;margin:3px 0!important}#page-overview .chg-table td,#page-overview .chg-table th{padding:4px 6px!important}#page-overview .ph-cl{font-size:12px!important}#page-overview .ph-cn{font-size:18px!important}#page-overview .phtag,#page-overview .ov-row .ph-chip{font-size:10px!important}';
   var TIGHT_SECONDARY = 'html body aside.sidebar .sidebar-header{padding:4px 14px!important;margin-bottom:8px!important}.sidebar-header .logo-card img{width:76px!important}';
   var HISTORICAL = '.sidebar-header .period::after{display:block;content:"Historical report — not current";margin:3px 0 0 auto;width:max-content;font-size:11px;font-weight:700;color:var(--navy);background:var(--pale);border:1px solid var(--pale);border-radius:9px;padding:1px 9px}';
   var BRAND = 'html body aside.sidebar.nop{display:block!important;position:static!important;width:auto!important;height:auto!important;overflow:visible!important;background:#fff!important;color:var(--navy)!important}' +
@@ -5731,14 +5757,15 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
     '#page-overview .exec-panel{border-top:3px solid var(--teal);border-radius:0 0 10px 10px}.foot{display:none!important}';
   function box(pt, pad) { return 'font:' + pt + 'pt Arial,Helvetica,sans-serif;color:#fff;background:#0D2B4E;vertical-align:middle;border-top:0.9mm solid #1A7A6E;padding:' + pad + ';'; }
 
-  function styleBlock(allThrough, historical) {
-    return '<style id="po-print-overview">.po-pg2{display:none}@page{size:A4 ' + (allThrough ? 'landscape' : 'portrait') + ';margin:' + (allThrough ? '8mm' : '6mm') + ' 8mm 10mm 8mm;' +
+  function styleBlock(allThrough, historical, primary) {
+    if (primary) allThrough = false;   // the primary overview shares the all-through markup but prints as A4 portrait
+    return '<style id="po-print-overview">.po-pg2{display:none}@page{size:A4 ' + (allThrough ? 'landscape' : 'portrait') + ';margin:' + (allThrough ? '8mm' : primary ? '7mm' : '6mm') + ' 8mm 10mm 8mm;' +
       '@bottom-left{content:"SOAP Analytics IDSR Dashboard · Overview summary · soapanalytics.co.uk";' + box(allThrough ? 7.8 : 8.25, '0 0 0 5mm') + 'width:86%}' +
       '@bottom-right{content:"Page " counter(page) " of " counter(pages);' + box(allThrough ? 7.8 : 8.25, '0 5mm 0 0') + 'text-align:right;width:14%}}' +
-      '@media print{html{zoom:' + (allThrough ? ZOOM : ZOOM_SECONDARY) + '}.nop:not(.sidebar),.back-link,.xtabs,.context-tabs{display:none!important}body{display:block!important;background:#fff!important}' +
+      '@media print{html{zoom:' + (allThrough ? ZOOM : primary ? ZOOM_PRIMARY : ZOOM_SECONDARY) + '}.nop:not(.sidebar),.back-link,.xtabs,.context-tabs{display:none!important}body{display:block!important;background:#fff!important}' +
       '.main{padding:0!important;max-width:none!important;margin:0!important}.po-pg2{display:block}' +
       '.page:not(#page-overview),.page:not(#page-overview)[hidden]{display:none!important}#page-overview,#page-overview[hidden]{display:block!important}' +
-      (allThrough ? CUT_ALL_THROUGH : CUT_SECONDARY) + COMPACT + BRAND + (allThrough ? '' : TIGHT_SECONDARY) + (historical ? HISTORICAL : '') +
+      (allThrough ? CUT_ALL_THROUGH : primary ? CUT_PRIMARY : CUT_SECONDARY) + COMPACT + BRAND + (allThrough || primary ? '' : TIGHT_SECONDARY) + (historical ? HISTORICAL : '') +
       '*{-webkit-print-color-adjust:exact;print-color-adjust:exact}}</style>';
   }
 
@@ -5748,21 +5775,21 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
     if (typeof html !== 'string') return null;
     var iPage = html.indexOf('id="page-overview"'), iHdr = html.indexOf(HDR_OPEN), iGrid = html.indexOf('<div class="exec-grid'), iHead = html.indexOf('</head>');
     if (iPage < 0 || iHdr < 0 || iGrid < 0 || iHead < 0 || html.indexOf('class="narrative-panel"') < 0) return null;
-    var allThrough = html.indexOf(GRID_AT) >= 0;
+    var allThrough = html.indexOf(GRID_AT) >= 0, primary = allThrough && html.indexOf('ov-primary') >= 0;
     if (allThrough && html.indexOf('chg-table') < 0) return null;       // all-through layout not as expected: do not guess
     var out = html;
     if (Logos && Logos.teal) {                                           // the teal SOAP badge, in the header's existing logo slot
       var re = /(<div class="sidebar-header"><div class="logo-card"><img src=")[^"]+/;
       if (re.test(out)) out = out.replace(re, function (m, a) { return a + Logos.teal; });
     }
-    if (allThrough) {                                                    // repeat the branded header at the top of page 2 (hidden on screen, shown in print)
+    if (allThrough && !primary) {                                        // repeat the branded header at the top of page 2 (hidden on screen, shown in print)
       var i = out.indexOf(HDR_OPEN), j = out.indexOf('<nav', i), k = out.indexOf(GRID_AT);
       if (j < 0 || k < 0 || !/<\/div>$/.test(out.slice(i, j))) return null;
       out = out.slice(0, k) + '<div class="po-pg2">' + out.slice(i, j) + '</div>' + out.slice(k);
     }
     var h = out.indexOf('</head>');
-    out = out.slice(0, h) + styleBlock(allThrough, !!opts.historical) + out.slice(h);
-    return { html: out, allThrough: allThrough, historical: !!opts.historical, version: VERSION };
+    out = out.slice(0, h) + styleBlock(allThrough, !!opts.historical, primary) + out.slice(h);
+    return { html: out, allThrough: allThrough, primary: primary, historical: !!opts.historical, version: VERSION };
   }
 
   return { build: build, VERSION: VERSION, ZOOM: ZOOM, ZOOM_SECONDARY: ZOOM_SECONDARY };
@@ -5815,8 +5842,13 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
     var undisplayed = r.undisplayed.filter(function (k) { return !/^GCSE grades .+ - (A level|Applied general) VA$/.test(k); });   // shown by the 16–18 sections, not by the measure tables
     var D = model.destinations || {}, C = model.context || {};
     var structures = [['key stage 4 destinations', !!(D.ks4 && D.ks4.allPupils)], ['permanent exclusions', !!model.permExclusions], ['school characteristics', !!C.characteristics], ['report card findings', !!C.reportCard]].filter(function (x) { return !x[1]; }).map(function (x) { return x[0]; });
-    if (atCtx && atCtx.reportType === 'primary') structures = structures.filter(function (x) { return x !== 'key stage 4 destinations'; });   // V83: a primary school has no key stage 4 destinations
-    var mc = { absent: absent, undisplayed: undisplayed, shown: r.shown.length, absentStructures: structures };
+    var notApplicable = 0;
+    if (atCtx && atCtx.reportType === 'primary') {   // V83: phase-aware diagnostics. Secondary, GCSE and A level measures are not applicable to a primary report, so they are not counted as missing (they are still counted separately, never hidden).
+      structures = structures.filter(function (x) { return x !== 'key stage 4 destinations'; });
+      var keep = absent.filter(function (k) { var ph = Cls.phaseOf(k); return ph !== 'secondary' && ph !== 'post16' && !/ (A8|P8|grade [45] plus|A level|Applied general)\b|^Best 3 /.test(k.replace(/^.* - /, ' ')); });
+      notApplicable = absent.length - keep.length; absent = keep;
+    }   // V83: a primary school has no key stage 4 destinations
+    var mc = { absent: absent, undisplayed: undisplayed, shown: r.shown.length, absentStructures: structures, notApplicable: notApplicable };
     if (atCtx && (atCtx.reportType === 'all-through' || atCtx.reportType === 'primary')) {   // V77-03: every primary measure must be displayed or explicitly accounted for as absent from the source
       var shown = {}; r.shown.forEach(function (k) { shown[k] = 1; });
       // V83: for a primary report the list is every measure in the source that the catalogue attributes to the primary phase (so KS2 progress and prior-attainer groups cannot be silently dropped)
@@ -5865,6 +5897,13 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
   };
 
   /** Plain-language limitation statements for a report (empty array = nothing to say). Stored with each publication so history shows the same notice. */
+  var SECONDARY_ONLY_SECTIONS = ['ks4Entries', 'post16QualTypes', 'post16Retention', 'post16Entries', 'post16Summary', 'ks4Summary', 'destinationsDetail'];
+  /** V83: a primary report is not expected to contain the key stage 4 or post-16 additional sections. Returns a copy; partial and failed sections are never filtered. */
+  function phaseCov(cov, type) {
+    if (!cov || type !== 'primary' || cov.phaseAware) return cov;
+    var na = cov.absent.filter(function (k) { return SECONDARY_ONLY_SECTIONS.indexOf(k) >= 0; });
+    return { ok: cov.ok, partial: cov.partial, empty: cov.empty, absent: cov.absent.filter(function (k) { return na.indexOf(k) < 0; }), failed: cov.failed, notApplicable: na, phaseAware: true };
+  }
   function limitationBits(rc, cov, mc) {
     var bits = [];
     if (mc && mc.absent.length) bits.push(mc.absent.length + ' measure' + (mc.absent.length === 1 ? '' : 's') + ' normally shown here ' + (mc.absent.length === 1 ? 'is' : 'are') + ' not in this report and appear as \u201cnot available\u201d');
@@ -5915,6 +5954,7 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
    */
   function buildCandidate(model, src, rc, cov, mc, school, sourceSha) {
     var as = assess(model, rc, school, true, src), rcx = reportContext(model, src), AT_ON = rcx.ctx.reportType === 'all-through' || rcx.ctx.reportType === 'primary';
+    cov = phaseCov(cov, rcx.ctx.reportType);
     if (AT_ON && mc && mc.primary) { if (mc.primary.unattributed.length) as.blockPublish = as.blockPublish || 'all_through_unattributed_measure'; if (mc.primary.notDisplayed.length) as.blockPublish = as.blockPublish || 'all_through_primary_not_displayed'; }
     var mat = materialOmissions(rc, cov); as.materialOmissions = mat; if (mat.length) as.blockPublish = as.blockPublish || 'data_not_displayed';   // V77-07 A4: no acknowledgement can override this
     var ctx = { schoolName: (school && school.name) || '', periodLabel: monthYear(model.meta.releaseDate) ? 'IDSR ' + monthYear(model.meta.releaseDate) : '', releaseDate: model.meta.releaseDate || null, sourceSha256: sourceSha, modelSha256: Core.modelHash(model), dashboardAvailable: true };
@@ -6030,6 +6070,7 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
       var rc = info.rc, cov = info.coverage, mc = info.mc, lines = [];
       lines.push('Validation: ' + rc.status.toUpperCase() + ' · tables in file: ' + rc.inventory.totalTables + ' · performance tables tied to source: ' + rc.tieOut.performanceTablesInSource + ' · cells tied: ' + rc.tieOut.cellsTied + '/' + rc.tieOut.cellsChecked);
       lines.push('Unrecognised tables (not displayed): ' + rc.inventory.unrecognisedCount);
+      if (cov && cov.notApplicable && cov.notApplicable.length) lines.push('Not applicable to a primary report (not counted as missing): ' + cov.notApplicable.length + ' secondary/post-16 additional sections' + (mc && mc.notApplicable ? ' · ' + mc.notApplicable + ' secondary, GCSE or A level measures' : ''));
       if (cov) lines.push('Additional sections — fully read: ' + cov.ok.length + ' · partly read: ' + cov.partial.length + ' · empty: ' + cov.empty.length + ' · absent: ' + cov.absent.length + ' · failed: ' + cov.failed.length);
       if (mc) lines.push('Measures expected by the displays but absent from this report: ' + mc.absent.length + ' · measures in the report that no display uses: ' + mc.undisplayed.length + (mc.absentStructures.length ? ' · structures missing: ' + mc.absentStructures.join(', ') : ''));
       if (info.assess && info.assess.classification) { var ce = info.assess.classification.evidence || {}; lines.push('Report type (detected from the content): ' + info.assess.classification.type + ' · key stage 2 results: ' + (ce.ks2 ? ce.ks2.withData + ' of ' + ce.ks2.measures + ' measures' : 'n/a') + ' · key stage 4 results: ' + (ce.ks4 && ce.ks4.withData ? 'present' : 'absent') + (ce.yearGroups ? ' · roll Reception–Y6 ' + ce.yearGroups.primaryRoll + ', Y7–Y11 ' + ce.yearGroups.secondaryRoll : '') + ' · declared phase: ' + (ce.declaredPhase || 'not used') + (info.assess.classification.message ? ' · ' + info.assess.classification.message : '')); }
@@ -6042,8 +6083,13 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
       lines.forEach(function (l) { ul.appendChild(el('li', { text: l })); });
       var more = [].concat(rc.hard.map(function (h) { return 'HARD: ' + h.code + ' ' + (h.detail || ''); }), rc.warnings.slice(0, 40).map(function (w) { return 'warn: ' + w.code + ' ' + (w.detail || ''); }),
         cov ? cov.partial.concat(cov.failed).map(function (k) { return 'section ' + k + ' not fully read'; }) : [], mc ? mc.absent.slice(0, 60).map(function (k) { return 'absent: ' + k; }) : [], mc ? mc.undisplayed.slice(0, 60).map(function (k) { return 'not displayed: ' + k; }) : []);
-      more.forEach(function (l) { ul.appendChild(el('li', { text: l, class: 'dl' })); });
-      d.appendChild(sum); d.appendChild(ul); d.style.display = 'block';
+      var primaryRpt = info.assess && info.assess.classification && info.assess.classification.type === 'primary';
+      if (primaryRpt && more.length > 6) {   // V83: keep the panel compact above the report preview; the long technical list sits in a closed, scrollable sub-panel
+        var det = el('details'), ds = el('summary', { text: 'Technical detail (' + more.length + ' items)' }), dl = el('ul');
+        dl.style.maxHeight = '12em'; dl.style.overflow = 'auto'; more.forEach(function (l) { dl.appendChild(el('li', { text: l, class: 'dl' })); });
+        det.appendChild(ds); det.appendChild(dl); ul.appendChild(det);
+      } else more.forEach(function (l) { ul.appendChild(el('li', { text: l, class: 'dl' })); });
+      d.appendChild(sum); d.appendChild(ul); d.style.display = 'block'; if (primaryRpt && !(info.assess.blockPublish || info.assess.blockView)) d.open = false;
     }
     function limitationText(bits) { return bits && bits.length ? 'Limitations: ' + bits.join('; ') + '. Nothing missing has been estimated or filled in. ' + (S.isAdmin ? 'Administrators: see the import diagnostics (preview of the submission) for detail.' : 'Please tell SOAP Analytics if something looks wrong.') : ''; }
     /** V77-07 A4: administrators keep the full technical text; schools see only the plain coverage note, and only when applicable (applied at render time, so existing publications are covered too). */
@@ -6091,6 +6137,7 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
       var src = Core.stripSource(dec.text); var gs = Guard.validateStripped(src, VIEW_LIMITS); if (!gs.ok) return Promise.resolve(fail('guard', gs));
       var model; try { model = Core.parse(new win.DOMParser().parseFromString(src, 'text/html')); } catch (e) { return Promise.resolve(fail('parse', { code: 'parser_exception', message: String(e && e.message || e) })); }
       var rc = Rec.reconcile(src, model), as = assess(model, rc, S.school, S.isAdmin, src), cov = model.extra && win.IdsrExtra ? win.IdsrExtra.coverage(model.extra) : null;
+      cov = phaseCov(cov, as.classification && as.classification.type);
       return sourceSha(bytes).then(function (sha) {
         sha = sha || Core.sha256Hex(src);
         S.diag = { blockPublish: as.blockPublish, blockView: as.blockView, classification: as.classification };
