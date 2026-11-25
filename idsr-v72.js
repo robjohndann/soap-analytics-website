@@ -3165,8 +3165,28 @@
 
   /** V83 primary footer: keep deprivation, stability and the staffing findings the source flags; drop routine \"nothing to highlight\" sentences and \"not stated in source\" entries (the Dashboard keeps them). */
   function simpleFooter(LS) {
+    var MON = { January: 'Jan', February: 'Feb', March: 'Mar', April: 'Apr', May: 'May', June: 'Jun', July: 'Jul', August: 'Aug', September: 'Sep', October: 'Oct', November: 'Nov', December: 'Dec' };
+    function cap(w) { return w.charAt(0).toUpperCase() + w.slice(1); }
     function keep(i) { return !/not stated in source$/i.test(i.text) && !/^There is nothing to highlight/i.test(i.text) && !(i.field && /^(teacherAbsence|vacancies|turnover|supportRatio|teacherSickness)$/.test(i.field) && !i.flag); }
-    return { p1: { top: LS.p1.top, bottom: LS.p1.bottom.map(function (l) { return l.filter(keep); }).filter(function (l) { return l.length; }) }, p2: LS.p2 };
+    // Concise wording of the source's own staffing statements: same facts, figures and years. Anything not recognised is kept verbatim (never dropped, never reworded).
+    function concise(i) {
+      var t = String(i.text).trim(), m;
+      if ((m = /^At the time of the (\w+) (\d{4}) census, there (?:were|was) (\d+) full-time vacant teacher posts? in the school\.?$/i.exec(t))) return 'Teacher vacancies: ' + m[3] + ' (' + (MON[cap(m[1])] || m[1]) + ' ' + m[2] + ')';
+      if ((m = /^Staff turnover was in the (highest|lowest) (\d+)% in:? (.+?)\.?$/i.exec(t))) return 'Staff turnover: ' + cap(m[1]) + ' ' + m[2] + '% (' + m[3] + ')';
+      if ((m = /^(\d+) days? on average were lost to teacher sickness absence in (\d{4}\/\d{2})\.?(?: This was in the (highest|lowest) (\d+)% nationally\.?)?$/i.exec(t))) return 'Teacher sickness: ' + m[1] + ' day' + (m[1] === '1' ? '' : 's') + (m[3] ? ' — ' + m[3].toLowerCase() + ' ' + m[4] + '% (' + m[2] + ')' : ' (' + m[2] + ')');
+      if ((m = /^The proportion of education support staff relative to teaching staff was in the (lowest|highest) (\d+)% in (\d{4})\.?$/i.exec(t))) return 'Support staff ratio: ' + cap(m[1]) + ' ' + m[2] + '% (' + m[3] + ')';
+      if ((m = /^The percentage of teachers with at least one period of sickness absence was significantly (above|below) national in: (.+?)\.?$/i.exec(t))) return 'Teachers with sickness absence: significantly ' + m[1].toLowerCase() + ' national (' + m[2] + ')';
+      return null;
+    }
+    var all = []; LS.p1.bottom.forEach(function (l) { l.forEach(function (i) { all.push(i); }); });
+    all = all.filter(keep);
+    var STAFF = /^(teacherAbsence|vacancies|turnover|supportRatio|teacherSickness|staffingUnparsed)$/, r1 = [], r2 = [], r3 = [];
+    all.forEach(function (i) {
+      if (/^(locDep|pbDep|sfDep|stability)$/.test(i.field)) r1.push(i);
+      else if (STAFF.test(i.field || '')) { var c = concise(i); r2.push(c ? { field: i.field, text: c, title: i.text, flag: i.flag } : i); }
+      else r3.push(i);
+    });
+    return { p1: { top: LS.p1.top, bottom: [r1, r2, r3].filter(function (l) { return l.length; }) }, p2: LS.p2 };
   }
   function stripHtml(lines) {
     return lines.filter(function (l) { return l.length; }).map(function (l) {
@@ -3241,7 +3261,20 @@
     H.ctx = ctx;
     var sheets = [[[], [], []], [[], [], []]];
     R.cards.forEach(function (c) { if (c.kind === 'scale' && !showScale) return; sheets[(c.sheet || 1) - 1][c.column - 1].push(c); });
-    function colsOf(cols) { return cols.map(function (cs, i) { return '<div class="col col' + (i + 1) + '">' + cs.map(function (c) { return cardHtml(c, H); }).join('') + '</div>'; }).join(''); }
+    // V83 primary (one A3 page): every data row in a column gets ONE height, set from the column's own row count so the three columns fill the page without any table being stretched. The mm figures are the measured heights of the fixed parts (card title, column header, sub-header, legend); a small margin is kept so a wrapped footer line can never push content off the page.
+    var COL_MM = 231, MARGIN_MM = 2.6, CARD_HEAD_MM = 5.3, THEAD_MM = 6.2, SCALE_NOTE_MM = 13, GAP_MM = 1.8;
+    function rhFor(cs) {
+      var rows = 0, fixed = GAP_MM * Math.max(0, cs.length - 1);
+      cs.forEach(function (c) {
+        if (c.kind === 'scale') { fixed += CARD_HEAD_MM + SCALE_NOTE_MM; rows += 5; return; }
+        if (c.kind === 'note') { fixed += CARD_HEAD_MM + 14; return; }
+        fixed += CARD_HEAD_MM + THEAD_MM + (c.notes && c.notes.length ? 7 : 0);
+        c.rows.forEach(function (r) { if (r.subhead) fixed += THEAD_MM; if (!r.collapsed) rows++; else rows++; });
+      });
+      var rh = rows ? (COL_MM - MARGIN_MM - fixed) / rows : 7.4;
+      return Math.max(6.2, Math.min(10, Math.floor(rh / 0.978 * 100) / 100));   // 0.978: Chrome renders a table row about 2% below its stated height
+    }
+    function colsOf(cols) { return cols.map(function (cs, i) { return '<div class="col col' + (i + 1) + '"' + (AT && AT.single ? ' style="--rh:' + rhFor(cs) + 'mm"' : '') + '>' + cs.map(function (c) { return cardHtml(c, H); }).join('') + '</div>'; }).join(''); }
     var html = colsOf(sheets[0]);
     var title = 'SOAP Analytics IDSR' + (ctx.schoolName ? ' — ' + ctx.schoolName : '');
     var logo = function (cls, uri, alt) { return uri ? '<img class="logo ' + cls + '" src="' + esc(uri) + '" alt="' + esc(alt) + '">' : ''; };
@@ -3253,7 +3286,7 @@
     var toolbar = '<header class="toolbar nop"><span>' + esc(title) + ' <span id="fitwarn" class="warn" role="alert" hidden>⚠ Some content does not fit on one A3 page — check the context strips.</span></span><span class="tb">' + (ctx.dashboardAvailable === false ? '' : '<a class="btn xl" id="otherLink" href="' + esc(H.dashLink(ctx.dashboardHref, 'overview')) + '" data-open="dashboard" data-card="overview">Open Dashboard →</a>') + '<button class="btn" id="printBtn" type="button">Print / Save PDF (A3 landscape)</button></span></header>';
     if (AT && AT.single) {   // V83: primary report = ONE A3 page
       var srcLine1 = ctx.sourceIdentityLine ? '<div class="srcid" >' + esc(ctx.sourceIdentityLine) + '</div>' : '', LS1 = AT.layoutStrips(R.strips, R.strips2 || { top: [], bottom: [] }), LS1 = AT.single ? simpleFooter(LS1) : LS1, t0 = 'SOAP Analytics IDSR \u2014 ' + (ctx.schoolName || 'school');
-      return toolbar + '<main class="sheet at" id="sheet" data-comparator="national"><div class="frame"><h1 class="ttl" style="font-size:' + AT.fitTitle(t0) + 'pt">' + esc(t0) + '</h1>' + srcLine1 + logo('lg1', LOGO.white, 'SOAP Analytics') +
+      return toolbar + '<main class="sheet at one" id="sheet" data-comparator="national"><div class="frame"><h1 class="ttl" style="font-size:' + AT.fitTitle(t0) + 'pt">' + esc(t0) + '</h1>' + srcLine1 + logo('lg1', LOGO.white, 'SOAP Analytics') +
         '<div class="band"><div class="strip top" aria-label="School context">' + stripHtml(LS1.p1.top) + '</div><div class="mint"><div class="cols">' + html + '</div></div><div class="strip bot" aria-label="Deprivation, stability and workforce">' + stripHtml(LS1.p1.bottom) + '</div></div>' +
         logo('lg2', LOGO.teal, 'SOAP Analytics') + '</div></main>' + sourceNotesHtml(prov) + '<div id="support-meta" class="nop" hidden data-support="' + esc(support) + '">' + esc(support) + '</div>' + zoom;
     }
@@ -3382,10 +3415,16 @@
 })(typeof self !== 'undefined' ? self : this, function (SpecP, AT) {
   'use strict';
   var PRIMARY_VERSION = '83.0.0';
+  // Primary one-page A3 only (never emitted for secondary or all-through): ONE row height for every data row in all three columns, ONE header height, content vertically centred, tables never stretched to fill their card.
+  var ROW_MM = 7.4, HEAD_MM = 6.2;
+  var PRIM_CSS = '.sheet.at.one .card{flex:0 0 auto!important}.sheet.at.one .card>table{flex:none!important}.sheet.at.one .col{justify-content:space-between}' +
+    '.sheet.at.one .card>table:not(.scale) tbody tr:not(.subh):not(.keyrow){height:var(--rh,' + ROW_MM + 'mm)}.sheet.at.one .card>table:not(.scale) thead tr,.sheet.at.one .card tr.subh{height:' + HEAD_MM + 'mm}' +
+    '.sheet.at.one .card td,.sheet.at.one .card th{padding-top:0!important;padding-bottom:0!important;vertical-align:middle;font-size:7.5pt;line-height:1.2}' +
+    '.sheet.at.one .scale td.sw{height:auto}.sheet.at.one .scale tr:not(.keyrow){height:var(--rh,7.4mm)}.sheet.at.one .scale td,.sheet.at.one .scale th{padding-top:0!important;padding-bottom:0!important}.sheet.at.one .card th[scope=row]{white-space:normal}.sheet.at.one .strip.bot .sl .si+.si:not([data-field=locDep]):not([data-field=pbDep]):not([data-field=stability])::before{content:"|";margin-right:3mm;opacity:.75}';
   function soapOptions(model, ctx) {
     var o = AT.soapOptions(model, ctx); o.single = true; o.cards = SpecP.cards(model, AT.noteLines(ctx && ctx.notPublished)); o.destNoData1618 = false; return o;
   }
-  return { PRIMARY_VERSION: PRIMARY_VERSION, soapOptions: soapOptions, SOAP_CSS: AT.SOAP_CSS, soapScript: AT.soapScript, sourceIdentityLine: AT.sourceIdentityLine, sourceName: AT.sourceName, noteLines: AT.noteLines };
+  return { PRIMARY_VERSION: PRIMARY_VERSION, soapOptions: soapOptions, SOAP_CSS: AT.SOAP_CSS + PRIM_CSS, soapScript: AT.soapScript, sourceIdentityLine: AT.sourceIdentityLine, sourceName: AT.sourceName, noteLines: AT.noteLines };
 });
 /* ===== idsr-snapshot.js ===== */
 /*!
@@ -5034,7 +5073,7 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
     var rd = Math.round((num2(d.to) - num2(d.from)) * 100) / 100, unit = /%$/.test(String(d.to)) ? 'pp' : '', ys = d.fromYr.replace(/ \(.*\)$/, '') + ' to ' + d.toYr.replace(/ \(.*\)$/, '');
     var tail = d.lower ? (up ? '; lower is better, so a fall of ' + Math.abs(rd) + unit + ' is an improvement' : '; lower is better, so a rise of ' + Math.abs(rd) + unit + ' is a decline') : '';
     if (!up && d.nat) tail += ' · ' + N.dir(d.to, d.nat, d.lower).replace(/^(above|better than)$/, 'still $1').replace(/^(below|worse than)$/, 'now $1').replace(/^in line with$/, 'now in line with') + ' national (' + d.nat + ')';
-    return ovRow(d.measure.replace(/\s*\(%\)\s*$/, ''), allGroup(d.group) ? '' : d.group, d.from + ' → ' + d.to + ' (' + ys + ')' + tail, d.go, d.chart, ph, '<span class="badge ' + (up ? 'strong' : 'urgent') + '">' + (up ? 'Improved' : 'Declined') + '</span>');
+    return ovRow(d.measure.replace(/\s*\(%\)\s*$/, ''), allGroup(d.group) ? '' : d.group, d.from + ' → ' + d.to + ' (' + ys + ') · ' + (rd > 0 ? '+' : rd < 0 ? '−' : '') + Math.abs(rd) + unit + tail, d.go, d.chart, ph, '<span class="badge ' + (up ? 'strong' : 'urgent') + '">' + (up ? 'Improved' : 'Declined') + '</span>');
   }
   function num2(v) { return parseFloat(String(v).replace(/[^0-9.\-−]/g, '').replace('−', '-')); }
   function phaseTile(p, f, N) {
@@ -5095,7 +5134,7 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
         }).join('. ') + '.</p>';
       }).join('') + '<p class="narr-basis">' + esc(N.BASIS) + '</p></div>';
     // 2. Four phase tiles
-    h += '<div class="ph-tiles" aria-label="Evidence by phase">' + PHASES.filter(function (p) { return facts[p[0]].eligible; }).map(function (p) { return PRIMR ? phaseTilePrim(p, facts[p[0]]) : phaseTile(p, facts[p[0]], N); }).join('') + '</div>';
+    h += '<div class="ph-tiles" aria-label="' + (PRIMR ? 'Evidence by category' : 'Evidence by phase') + '">' + PHASES.filter(function (p) { return facts[p[0]].eligible; }).map(function (p) { return PRIMR ? phaseTilePrim(p, facts[p[0]]) : phaseTile(p, facts[p[0]], N); }).join('') + '</div>';
     // 3. Strengths and concerns (pupil-based, 20 or more pupils), up to three per phase; single-line rows (full label on hover/focus)
     var sHtml = '', cHtml = '', excl = [];
     PHASES.forEach(function (p) {
@@ -5109,9 +5148,19 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
     var ent = facts.post16 ? facts.post16.entriesBased : [];
     var entHtml = ent.length ? '<div class="exec-panel entries-panel" id="sub-entries"><h3 aria-level="2">&#9888; Post-16 — entries-based concerns</h3><div class="exec-count">Per entry, not per pupil; never ranked with pupil measures.</div>' +
       ent.map(function (g) { return ovRow(g.measure, allGroup(g.group) ? '' : g.group, g.val + ' vs ' + g.nat + ' · ' + g.col.replace(/ \(.*\)$/, '') + ' · ' + g.n + ' entries' + (g.official ? ' · IDSR: ' + g.official : ''), g.go, g.chart, 'post16', '<span class="badge ' + g.band + '">' + LABEL[g.band] + '</span>'); }).join('') + '</div>' : '';
+    var AO = PRIMR ? analytics(tables) : null;
+    if (PRIMR) {
+      // V83 primary: the four-card structure used by the secondary Overview. Ranked across ALL the school's measures (both categories together), by the validated secondary rules: pupil measures with 20+ pupils (both years for changes), 2021/22 excluded, lower-is-better handled, progress and MTC never ranked. Fewer than three eligible measures are shown as fewer than three.
+      var card = function (title, icon, subt, rows, none) { return '<div class="exec-panel"><h3 aria-level="2">' + icon + ' ' + title + '</h3><div class="exec-count">' + subt + '</div>' + (rows.length ? rows.join('') : '<div class="exec-item muted">' + none + '</div>') + '</div>'; };
+      h += '<div class="exec-grid ov-grid ov-primary">' +
+        card('Top 3 Areas of Strength', '&#10003;', 'Rated above national; ranked by gap to national in multiples of each measure’s banding threshold (pupil measures, 20+ pupils)', AO.strengths.map(function (g) { return gapRow(gapFact(g), phaseOfItem(g.it)); }), 'No area with 20 or more pupils is currently rated above national.') +
+        card('Areas for Improvement', '&#9888;', 'Up to 3 measures rated below national (Needs Attention or Urgent Improvement); ranked by gap to national (pupil measures, 20+ pupils)', AO.attention.map(function (g) { return gapRow(gapFact(g), phaseOfItem(g.it)); }), anyLow ? 'No pupil measure with 20 or more pupils is rated below national.' : 'No measure with a national comparison is rated below national.') +
+        card('Top 3 Most Improved', '&#8599;', 'Biggest rise in the school’s own results between comparable years (2022/23 onwards; both years need at least 20 pupils)', AO.improved.map(function (d) { return changeRow(declineFact(d), true, phaseOfItem(d.it), N); }), 'No improvement between comparable years with 20 or more pupils in both years.') +
+        card('Top 3 Most Regressed', '&#8600;', 'Biggest fall in the school’s own results between comparable years (2022/23 onwards; both years need at least 20 pupils)', AO.regressed.map(function (d) { return changeRow(declineFact(d), false, phaseOfItem(d.it), N); }), 'No decline between comparable years with 20 or more pupils in both years.') + '</div>';
+    } else
     h += '<div class="exec-grid ov-grid' + (ctx.reportType === 'primary' ? ' ov-primary' : '') + '"><div class="exec-panel"><h3 aria-level="2">&#10003; Significant strengths</h3><div class="exec-count">Up to 3 per phase; pupil-based, 20+ pupils.</div>' + (sHtml || '<div class="exec-item muted">No areas currently rated above national.</div>') + '</div>' +
       '<div class="ov-col"><div class="exec-panel"><h3 aria-level="2">&#9888; Significant concerns</h3><div class="exec-count">Up to 3 per phase; pupil-based, 20+ pupils.</div>' + (cHtml || '<div class="exec-item muted">' + (anyLow ? 'No pupil-based concern with at least 20 pupils.' : 'No measure with a national comparison is rated below national.') + '</div>') + '</div>' + entHtml + '</div></div>';
-    if (excl.length) h += '<p class="xnote ov-excl">Not shown as headlines because the group is under 20 pupils (all remain on the phase pages with their ratings): ' + esc(excl.join(' · ')) + '.</p>';
+    if (excl.length) h += '<p class="xnote ov-excl">Not shown as headlines because the group is under 20 pupils (all remain on the ' + (PRIMR ? 'category' : 'phase') + ' pages with their ratings): ' + esc(excl.join(' · ')) + '.</p>';
     // 5. Biggest changes: one largest improvement and one largest regression per phase (full comparable years, 20+ pupils)
     var chg = '';
     function chgCell(d, up) {
@@ -5125,7 +5174,7 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
       var f = facts[p[0]]; if (!f.eligible && !f.comparable) return;
       chg += '<tr><th scope="row">' + esc(PHASE_SHORT[p[0]]) + '</th><td>' + chgCell(f.improved[0], true) + '</td><td>' + chgCell(f.regressed[0], false) + '</td></tr>';
     });
-    h += '<div class="heatmap-title">Biggest changes between comparable full years</div><table class="data-table chg-table"><thead><tr><th scope="col">Phase</th><th scope="col">Largest improvement</th><th scope="col">Largest regression</th></tr></thead><tbody>' + chg + '</tbody></table>';
+    if (!PRIMR) h += '<div class="heatmap-title">Biggest changes between comparable full years</div><table class="data-table chg-table"><thead><tr><th scope="col">Phase</th><th scope="col">Largest improvement</th><th scope="col">Largest regression</th></tr></thead><tbody>' + chg + '</tbody></table>';
     // 6. Other concerns flagged by the source IDSR (adverse official judgements SOAP cannot rank): all retained, collapsed when more than two
     h += '<details class="more-concerns ov-other" id="sub-concerns"' + (CN.length > 2 ? '' : ' open') + '><summary>Other concerns flagged by the source IDSR (' + CN.length + ')</summary><div class="exec-count">Adverse official judgements SOAP cannot rank (no national figure, verdict-only, or an earlier year): the source’s own wording, not SOAP ratings.</div>' +
       (CN.length ? CN.map(concernRowAT).join('') : '<div class="exec-item muted">No additional concerns: the source IDSR contains no adverse official judgement that SOAP cannot rank.</div>') + '</details>';
@@ -5135,8 +5184,9 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
     h += '<div class="notice n-info ov-np" id="sub-np"><b>Not published or not comparable.</b> ' + (gone.length ? 'For ' + esc(gone.join('; ')) + ' the IDSR states: “There is no data in this section for this school or it was incomplete.” ' : '') +
       'The Year 4 multiplication tables check is an average score with the official verdict only, so SOAP gives it no numerical ranking. Part-year periods and DfE’s 3-year figures are shown but never compared' + (hasTermly ? ' (the latest year has part-year periods)' : '') + '. SOAP shows these as not published, never as zero.</div>';
     // 8. Links
-    h += '<div class="heatmap-title">Phase pages and school context</div><div class="ov-links">' + PHASES.filter(function (p) { return facts[p[0]].eligible || facts[p[0]].comparable; }).map(function (p) { return '<button type="button" class="ov-link" data-go="' + PHASE_FIRST[p[0]] + '">' + esc(PHASE_SHORT[p[0]]) + ' pages &rarr;</button>'; }).join('') + '<button type="button" class="ov-link" data-go="context">School Context &rarr;</button></div>';
-    h += '<p class="xnote">Ratings are SOAP’s five-colour national rating from the official position and significance, made within each phase; no rank, score or average is created across phases. Each measure and pupil group is counted once. “Fell materially” is SOAP’s own rule (hover or focus the ⓘ note). The full phase-specific top-three lists, with the full definition, are on the first page of each phase. Change comparisons start at 2022/23; 2021/22 is not used.</p>';
+    h += '<div class="heatmap-title">' + (PRIMR ? 'Category' : 'Phase') + ' pages and school context</div><div class="ov-links">' + PHASES.filter(function (p) { return facts[p[0]].eligible || facts[p[0]].comparable; }).map(function (p) { return '<button type="button" class="ov-link" data-go="' + PHASE_FIRST[p[0]] + '">' + esc(PHASE_SHORT[p[0]]) + ' pages &rarr;</button>'; }).join('') + '<button type="button" class="ov-link" data-go="context">School Context &rarr;</button></div>';
+    var xn = '<p class="xnote">Ratings are SOAP’s five-colour national rating from the official position and significance, made within each phase; no rank, score or average is created across phases. Each measure and pupil group is counted once. “Fell materially” is SOAP’s own rule (hover or focus the ⓘ note). The full phase-specific top-three lists, with the full definition, are on the first page of each phase. Change comparisons start at 2022/23; 2021/22 is not used.</p>';
+    h += PRIMR ? xn.replace(/within each phase/,'within each category').replace(/across phases/,'across categories').replace(/The full phase-specific top-three lists, with the full definition, are on the first page of each phase\. /,'') : xn;
     return h;
   }
 
@@ -5742,7 +5792,7 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
     '#page-overview .ov-row{display:grid!important;grid-template-columns:minmax(0,1fr) auto;align-items:center;column-gap:10px;row-gap:0}#page-overview .ov-row .ov-l{grid-column:1;grid-row:1}' +
     '#page-overview .ov-row .badge{grid-column:2;grid-row:1;margin:0}#page-overview .ov-row .ov-v{grid-column:1/-1;grid-row:2}';
   // V83 primary: ONE A4 PORTRAIT page. Same content as the all-through overview (narrative, phase cards, strengths, concerns, biggest changes) with no truncation: long measure names wrap.
-  var CUT_PRIMARY = '#page-overview .chg-table~*,#page-overview .ov-links,#page-overview .heatmap-title:has(+.ov-links){display:none!important}#page-overview .data-table tr{break-inside:avoid}#page-overview .exec-grid.ov-grid{break-inside:avoid}#page-overview .ph-tiles{grid-template-columns:repeat(2,1fr)!important;gap:8px!important;margin:6px 0!important}' +
+  var CUT_PRIMARY = '#page-overview .exec-grid~*:not(.ov-excl){display:none!important}#page-overview .data-table tr{break-inside:avoid}#page-overview .exec-grid.ov-grid{break-inside:avoid}#page-overview .ph-tiles{grid-template-columns:repeat(2,1fr)!important;gap:8px!important;margin:6px 0!important}' +
     '#page-overview .ov-row{display:grid!important;grid-template-columns:minmax(0,1fr) auto;align-items:start;column-gap:8px;row-gap:0}#page-overview .ov-row .ov-l{grid-column:1;grid-row:1}#page-overview .ov-row .badge{grid-column:2;grid-row:1;margin:0}#page-overview .ov-row .ov-v{grid-column:1/-1;grid-row:2}' +
     '#page-overview .ov-l,#page-overview .ov-v,#page-overview .ov-row *{white-space:normal!important;overflow:visible!important;text-overflow:clip!important;max-width:none!important}#page-overview .narr-p{line-height:1.3!important;margin:3px 0!important}#page-overview .chg-table td,#page-overview .chg-table th{padding:4px 6px!important}#page-overview .ph-cl{font-size:12px!important}#page-overview .ph-cn{font-size:18px!important}#page-overview .phtag,#page-overview .ov-row .ph-chip{font-size:10px!important}';
   var TIGHT_SECONDARY = 'html body aside.sidebar .sidebar-header{padding:4px 14px!important;margin-bottom:8px!important}.sidebar-header .logo-card img{width:76px!important}';
@@ -5776,7 +5826,7 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
     var iPage = html.indexOf('id="page-overview"'), iHdr = html.indexOf(HDR_OPEN), iGrid = html.indexOf('<div class="exec-grid'), iHead = html.indexOf('</head>');
     if (iPage < 0 || iHdr < 0 || iGrid < 0 || iHead < 0 || html.indexOf('class="narrative-panel"') < 0) return null;
     var allThrough = html.indexOf(GRID_AT) >= 0, primary = allThrough && html.indexOf('ov-primary') >= 0;
-    if (allThrough && html.indexOf('chg-table') < 0) return null;       // all-through layout not as expected: do not guess
+    if (allThrough && !primary && html.indexOf('chg-table') < 0) return null;       // all-through layout not as expected: do not guess
     var out = html;
     if (Logos && Logos.teal) {                                           // the teal SOAP badge, in the header's existing logo slot
       var re = /(<div class="sidebar-header"><div class="logo-card"><img src=")[^"]+/;
