@@ -4,7 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>SOAP Dashboard</title>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<!-- V82 MFA: supabase-js pinned to 2.119.0 (no floating @2); shared gate decides MFA from the server. -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.119.0/dist/umd/supabase.js"></script>
+<script src="mfa-gate.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js"></script>
 <style>
   :root{
@@ -168,6 +170,22 @@
     }
     if (!schoolId) {
       statusArea.innerHTML = '<div class="empty-msg">No school specified — this page needs a ?school_id= in the URL.</div>';
+      return;
+    }
+
+    // V82 MFA gate: the server decides (my_mfa_session / my_school_mfa_status via SoapMfaGate), judged for THIS school_id.
+    // NOTHING school-related (including the admins / school_users guard lookups below) is fetched before this passes.
+    // UI routing only: RLS and the guarded functions remain the security boundary. The dashboard is read-only (no saves).
+    if (typeof SoapMfaGate === 'undefined') {
+      statusArea.innerHTML = '<div class="empty-msg">The security check could not be loaded, so nothing has been opened. Please refresh the page or return to the portal.</div>';
+      return;
+    }
+    const mfaGate = await SoapMfaGate.require(sb, { schoolId: schoolId });
+    if (!mfaGate.ok) {
+      if (mfaGate.state === 'no_session') statusArea.innerHTML = '<div class="empty-msg">Please <a href="login.html">log in</a> to view this dashboard.</div>';
+      else if (mfaGate.navigated) statusArea.innerHTML = '<div class="empty-msg">Two-step verification required \u2014 taking you to verify before your school data is shown\u2026</div>';
+      else if (SoapMfaGate.inFrame()) statusArea.innerHTML = '<div class="empty-msg">This dashboard cannot open until two-step verification is complete. Please open it from the portal.</div>';
+      else statusArea.innerHTML = '<div class="empty-msg">This dashboard could not be opened because your sign-in security could not be confirmed. Nothing has been loaded.</div>';
       return;
     }
 

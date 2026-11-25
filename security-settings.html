@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex">
+<title>SOAP Analytics — Security Settings</title>
+<!-- V82 MFA fix: dedicated Security Settings page (all packages). UI routing and clear messages only: row-level security, the guarded
+     functions and set_school_mfa_required remain the security boundary. supabase-js pinned to 2.119.0. -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.119.0/dist/umd/supabase.js"></script>
+<script src="mfa-gate.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  :root { --navy:#1B2A4A; --teal:#0D7377; --pale:#F0F4F8; --border:#DCE3EA; --text:#1B2A4A; --muted:#5A6B80; --good:#1A7A6E; --bad:#B3261E; --warn:#7A5C00; }
+  body { font-family: Arial, Helvetica, sans-serif; background: var(--pale); color: var(--text); min-height: 100vh; padding-bottom: 80px; }
+  header.page-head { background: var(--navy); color: #fff; padding: 28px 5%; }
+  .eyebrow { font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: #3DCFB8; font-weight: 700; margin-bottom: 6px; }
+  header h1 { font-size: 24px; }
+  header p { font-size: 13px; color: rgba(255,255,255,.65); margin-top: 4px; }
+  .wrap { max-width: 760px; margin: 28px auto; padding: 0 5%; }
+  .back { display: inline-block; font-size: 13px; font-weight: 700; color: var(--teal); text-decoration: none; margin-bottom: 16px; }
+  .card { background: #fff; border: 1px solid var(--border); border-radius: 10px; margin-bottom: 18px; overflow: hidden; }
+  .card-head { background: var(--navy); color: #fff; font-size: 14px; font-weight: 700; padding: 12px 18px; }
+  .card-body { padding: 18px; }
+  .status { font-size: 15px; font-weight: 700; margin-bottom: 6px; }
+  .status.on { color: var(--good); } .status.off { color: var(--warn); }
+  .small { font-size: 13px; color: var(--muted); line-height: 1.5; margin-bottom: 12px; }
+  ul.facts { list-style: none; margin: 0 0 14px; }
+  ul.facts li { font-size: 13px; padding: 6px 0; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; gap: 12px; }
+  ul.facts li:last-child { border-bottom: none; }
+  ul.facts b { font-weight: 700; }
+  .ok { color: var(--good); font-weight: 700; } .no { color: var(--warn); font-weight: 700; }
+  .btn { display: inline-block; background: #3DCFB8; color: #0D2B4E; border: none; border-radius: 6px; padding: 10px 18px; font-size: 13px; font-weight: 700; cursor: pointer; text-decoration: none; margin: 0 8px 8px 0; font-family: inherit; }
+  .btn.dark { background: #0D2B4E; color: #fff; }
+  .btn.line { background: #fff; color: #0D2B4E; border: 1px solid #0D2B4E; }
+  .btn:disabled { opacity: .6; cursor: default; }
+  .steps { margin: 0 0 14px 20px; font-size: 13px; line-height: 1.6; color: var(--text); }
+  .panel { margin-top: 12px; padding: 14px; border: 1px solid var(--border); border-radius: 8px; }
+  .panel p { font-size: 13px; margin-bottom: 10px; line-height: 1.5; }
+  label { display: block; font-size: 12px; font-weight: 700; margin-bottom: 4px; }
+  textarea { width: 100%; font-family: inherit; font-size: 13px; padding: 8px; border: 1px solid var(--border); border-radius: 6px; margin-bottom: 10px; }
+  #msg { font-size: 13px; font-weight: 700; margin-top: 12px; min-height: 18px; line-height: 1.5; }
+  .hidden { display: none !important; }
+  #notice { max-width: 760px; margin: 28px auto; padding: 18px; background: #fff; border: 1px solid var(--border); border-radius: 10px; font-size: 14px; line-height: 1.5; }
+</style>
+</head>
+<body>
+<header class="page-head">
+  <div class="eyebrow">SOAP Analytics</div>
+  <h1>Security Settings</h1>
+  <p id="schoolLine">Checking your access…</p>
+</header>
+
+<div id="notice" role="status">Checking your access…</div>
+
+<div class="wrap hidden" id="main">
+  <a class="back" id="backLink" href="portal.html">&larr; Back to portal</a>
+
+  <div class="card">
+    <div class="card-head">Two-step verification for this school</div>
+    <div class="card-body">
+      <p class="status" id="state"></p>
+      <p class="small" id="stateHelp"></p>
+      <ul class="facts">
+        <li><span>Your authenticator</span><b id="factAuth"></b></li>
+        <li><span>This sign-in</span><b id="factSession"></b></li>
+      </ul>
+
+      <div id="guide"></div>
+
+      <div id="confirm" class="panel hidden">
+        <p id="confirmText"></p>
+        <div id="reasonWrap" class="hidden">
+          <label for="reason">Reason (10&ndash;1000 characters, recorded in the audit log)</label>
+          <textarea id="reason" rows="3" maxlength="1000"></textarea>
+        </div>
+        <button type="button" class="btn dark" id="applyBtn">Confirm</button>
+        <button type="button" class="btn line" id="cancelBtn">Cancel</button>
+      </div>
+      <div id="msg" role="status"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-head">How this works</div>
+    <div class="card-body small">
+      <p style="margin-bottom:8px;">When two-step verification is ON, everyone who signs in to this school needs a code from an authenticator app. People without one are asked to set one up at their next sign-in.</p>
+      <p style="margin-bottom:8px;">Changing this setting needs a code you entered in the last 5 minutes, from an authenticator that was set up before you signed in. Every change is recorded, and turning it OFF needs a reason.</p>
+      <p>Only this school&rsquo;s Headteacher, a Multi-School Leader assigned to it, or a SOAP Analytics administrator can change it.</p>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+  var SUPABASE_URL = 'https://caopycszjzrmwhxxvtpx.supabase.co';
+  var SUPABASE_KEY = 'sb_publishable_2CTGR0PKyRPpSk59lcr3sA_hvvUDX97';
+  var sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+  var G = window.SoapMfaGate;
+  var UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  var $ = function (id) { return document.getElementById(id); };
+  var qs = new URLSearchParams(window.location.search);
+  var SCHOOL = UUID_RE.test(qs.get('school_id') || '') ? qs.get('school_id') : null;
+  var RETURN_HERE = 'security-settings.html' + (SCHOOL ? '?school_id=' + encodeURIComponent(SCHOOL) : '');
+  var ROW = null, SESS = null, VERIFIED = 0, PENDING = null;   // PENDING: true = turning ON, false = turning OFF
+
+  function setMsg(t, kind) { var m = $('msg'); m.style.color = kind === 'error' ? '#B3261E' : kind === 'ok' ? '#1A7A6E' : '#5A6B80'; m.textContent = t || ''; }
+  function notice(t, link) {
+    var n = $('notice'); n.classList.remove('hidden'); $('main').classList.add('hidden'); n.textContent = t;
+    if (link) { n.appendChild(document.createTextNode(' ')); var a = document.createElement('a'); a.href = link[1]; a.textContent = link[0]; n.appendChild(a); }
+  }
+  function btnLink(label, href, cls) { var a = document.createElement('a'); a.className = 'btn' + (cls ? ' ' + cls : ''); a.href = href; a.textContent = label; return a; }
+  function btnAct(label, fn, cls) { var b = document.createElement('button'); b.type = 'button'; b.className = 'btn' + (cls ? ' ' + cls : ''); b.textContent = label; b.addEventListener('click', fn); return b; }
+  function para(t, cls) { var p = document.createElement('p'); p.className = cls || 'small'; p.textContent = t; return p; }
+
+  function mfaUrl(mode) {
+    return 'mfa.html?mode=' + mode + '&return=' + encodeURIComponent(RETURN_HERE) + (SCHOOL ? '&school_id=' + encodeURIComponent(SCHOOL) : '');
+  }
+
+  async function countVerified() {
+    var r = await sb.auth.mfa.listFactors();
+    if (r.error) throw r.error;
+    return ((r.data && r.data.all) || []).filter(function (f) { return f.factor_type === 'totp' && f.status === 'verified'; }).length;
+  }
+
+  async function refresh() {
+    var ev = await G.evaluate(sb, { schoolId: SCHOOL });
+    if (ev.state === 'error') throw ev.error || new Error('evaluate failed');
+    if (ev.state === 'no_session') { window.location.replace('login.html'); return false; }
+    SESS = ev.session; ROW = (ev.schools || []).filter(function (r) { return r.school_id === SCHOOL; })[0] || null;
+    VERIFIED = await countVerified();
+    return true;
+  }
+
+  function render() {
+    $('notice').classList.add('hidden'); $('main').classList.remove('hidden');
+    $('schoolLine').textContent = ROW.school_name || 'Your school';
+    var on = ROW.mfa_required === true;
+    var st = $('state'); st.className = 'status ' + (on ? 'on' : 'off');
+    st.textContent = on ? 'Two-step verification is ON' : 'Two-step verification is OFF';
+    $('stateHelp').textContent = on ? 'Everyone who signs in to this school needs an authenticator code.' : 'People sign in with a password only. You can turn it on once your authenticator is ready.';
+    var fa = $('factAuth'); fa.className = VERIFIED ? 'ok' : 'no'; fa.textContent = VERIFIED ? 'Set up' : 'Not set up yet';
+    var fresh = SESS && SESS.aal === 'aal2' && SESS.fresh_aal2 === true;
+    var fs = $('factSession'); fs.className = fresh ? 'ok' : 'no';
+    fs.textContent = fresh ? 'Code confirmed within the last 5 minutes' : (SESS && SESS.aal === 'aal2' ? 'Code confirmed, but more than 5 minutes ago' : 'Not confirmed with a code');
+    closeConfirm();
+    var g = $('guide'); g.textContent = '';
+    if (!VERIFIED) {
+      g.appendChild(para('Before you can change this setting you need an authenticator app on your account. It takes about two minutes:', 'small'));
+      var ol = document.createElement('ol'); ol.className = 'steps';
+      ['Set up your authenticator (you will scan a code with an app on your phone).', 'Sign out and sign in again when asked.', 'Come back here, confirm a code and turn two-step verification ' + (on ? 'off' : 'on') + '.'].forEach(function (t) { var li = document.createElement('li'); li.textContent = t; ol.appendChild(li); });
+      g.appendChild(ol);
+      g.appendChild(btnLink('Set up your authenticator', mfaUrl('enrol')));
+      return;
+    }
+    if (!fresh) {
+      g.appendChild(para('To change this setting, first confirm a fresh code from your authenticator app.', 'small'));
+      g.appendChild(btnLink('Confirm with my authenticator code', mfaUrl('stepup')));
+      return;
+    }
+    g.appendChild(btnAct(on ? 'Turn off two-step verification…' : 'Turn on two-step verification…', function () { openConfirm(!on); }));
+  }
+
+  function openConfirm(wantOn) {
+    PENDING = wantOn;
+    $('confirm').classList.remove('hidden');
+    $('reasonWrap').classList.toggle('hidden', wantOn);
+    $('reason').value = '';
+    $('confirmText').textContent = wantOn
+      ? 'Turn on two-step verification for ' + (ROW.school_name || 'this school') + '? Everyone who signs in will need an authenticator code. People without an authenticator will be asked to set one up at their next sign-in.'
+      : 'Turn off two-step verification for ' + (ROW.school_name || 'this school') + '? People will be able to sign in with a password only. A reason is required and the change is recorded.';
+    setMsg('', 'info');
+  }
+  function closeConfirm() { PENDING = null; $('confirm').classList.add('hidden'); }
+  $('cancelBtn').addEventListener('click', closeConfirm);
+
+  function showSignOutAgain() {
+    var g = $('guide'); g.textContent = '';
+    g.appendChild(para('Your authenticator was set up during this sign-in. For security, please sign out and sign in again, then come back here.', 'small'));
+    g.appendChild(btnAct('Sign out and sign in again', function () { G.signOutAndLeave(sb); }, 'dark'));
+  }
+
+  $('applyBtn').addEventListener('click', async function () {
+    if (PENDING === null || !SCHOOL) return;
+    var wantOn = PENDING, btn = $('applyBtn'), reason = null;
+    if (!wantOn) {
+      reason = $('reason').value.trim();
+      if (reason.length < 10) { setMsg('Please enter a reason of at least 10 characters.', 'error'); return; }
+      if (reason.length > 1000) { setMsg('The reason must be 1000 characters or fewer.', 'error'); return; }
+    }
+    btn.disabled = true; setMsg('Checking your sign-in…', 'info');
+    try {
+      var f = await G.requireFresh(sb, { navigate: false });
+      if (!f.ok) {
+        if (f.state === 'needs_stepup') { setMsg('A fresh authenticator code is needed first. Nothing was changed.', 'error'); await refresh(); render(); }
+        else if (f.state === 'no_session') { setMsg('Your session has ended. Please log in again.', 'error'); }
+        else setMsg('We could not confirm your sign-in security, so nothing was changed. Please try again.', 'error');
+        return;
+      }
+      setMsg('Applying…', 'info');
+      var res = await sb.rpc('set_school_mfa_required', { p_school_id: SCHOOL, p_required: wantOn, p_reason: wantOn ? null : reason });
+      if (res.error) {
+        var m = G.mapError(res.error), tok = String(res.error.message || '');
+        if (m.kind === 'fresh_mfa_required') { setMsg('A fresh authenticator code is needed. Nothing was changed.', 'error'); await refresh(); render(); }
+        else if (m.kind === 'authenticator_not_established') { setMsg('Nothing was changed. Your authenticator was set up during this sign-in.', 'error'); showSignOutAgain(); closeConfirm(); }
+        else if (m.kind === 'mfa_required') setMsg('Nothing was changed. Two-step verification is required for this school: verify, then try again.', 'error');
+        else if (/reason_required/.test(tok)) setMsg('Please enter a reason of at least 10 characters. Nothing was changed.', 'error');
+        else if (/reason_too_long/.test(tok)) setMsg('The reason must be 1000 characters or fewer. Nothing was changed.', 'error');
+        else if (/setting_missing/.test(tok)) setMsg('This school’s two-step verification record is missing, so only a SOAP Analytics administrator can set it. Please contact SOAP Analytics support. Nothing was changed.', 'error');
+        else if (/not_permitted/.test(tok)) setMsg('You are not permitted to change this setting. Nothing was changed.', 'error');
+        else if (/concurrent_change/.test(tok)) setMsg('The setting was changed by someone else at the same moment. Nothing was changed by this action — please check the current setting and try again.', 'error');
+        else { console.error(res.error); setMsg('The setting could not be changed. Nothing was changed. Please try again, or contact SOAP Analytics support.', 'error'); }
+        return;
+      }
+      var changed = !(res.data && res.data.changed === false);
+      var okRefresh = false;
+      try { okRefresh = await refresh(); } catch (e) { okRefresh = false; }
+      if (okRefresh && ROW) render();
+      else if (ROW && res.data && typeof res.data.mfa_required === 'boolean') { ROW.mfa_required = res.data.mfa_required; render(); }
+      var isOn = ROW ? ROW.mfa_required === true : wantOn;
+      setMsg(!changed ? 'No change: two-step verification was already ' + (isOn ? 'on' : 'off') + '.'
+                      : (isOn ? 'Two-step verification is now on for this school. The change has been recorded.' : 'Two-step verification is now off for this school. The change has been recorded.'), 'ok');
+    } catch (e) {
+      console.error(e);
+      setMsg('The setting could not be confirmed, so please check the current setting before trying again.', 'error');
+    } finally { btn.disabled = false; }
+  });
+
+  async function init() {
+    if (typeof G === 'undefined') { notice('The security check could not be loaded. Please refresh the page.'); return; }
+    if (G.inFrame()) { notice('Please open Security Settings from the portal.'); return; }
+    if (!SCHOOL) { notice('No school was selected.', ['Back to portal', 'portal.html']); return; }
+    $('backLink').href = 'portal.html?school_id=' + encodeURIComponent(SCHOOL);
+    var gate = await G.require(sb, { schoolId: SCHOOL });
+    if (!gate.ok) {
+      if (gate.state === 'no_session') notice('You need to be logged in to see Security Settings.', ['Go to login →', 'login.html']);
+      else if (gate.navigated) notice('Two-step verification required — taking you to verify before your school data is shown…');
+      return;
+    }
+    try {
+      if (!(await refresh())) return;
+    } catch (e) { console.error(e); notice('We could not check your sign-in security. Please try again.'); return; }
+    if (!ROW) { notice('This school is not linked to your account.', ['Back to portal', 'portal.html']); return; }
+    if (ROW.can_change !== true) { notice('Only this school’s Headteacher, a Multi-School Leader assigned to it, or a SOAP Analytics administrator can change security settings.', ['Back to portal', 'portal.html?school_id=' + encodeURIComponent(SCHOOL)]); return; }
+    render();
+  }
+  init();
+})();
+</script>
+</body>
+</html>

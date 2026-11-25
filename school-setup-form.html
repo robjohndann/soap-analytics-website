@@ -4,7 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>SOAP Analytics — School Setup Data Entry Form</title>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<!-- V82 MFA: supabase-js pinned to 2.119.0 (no floating @2); shared gate decides MFA from the server. -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.119.0/dist/umd/supabase.js"></script>
+<script src="mfa-gate.js"></script>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   :root {
@@ -411,6 +413,17 @@
          Edge Function / revoke_viewer_access RPC; nothing here is read by
          saveForm(). All buttons are type="button" so nothing in this card can
          submit the surrounding form. -->
+    <!-- V82 fix: the school two-step verification controls MOVED to the dedicated Security Settings page (portal > Security Settings),
+         available at every package. This card only points there, and only for a person who may change the setting. -->
+    <div class="card" id="mfaCard" style="display:none;">
+      <div class="card-head">Two-step verification</div>
+      <div class="card-body">
+        <p id="mfaState" style="font-size:14px;font-weight:700;margin:0 0 8px;"></p>
+        <p style="font-size:12px;color:var(--muted);margin:0 0 14px;">These controls have moved to <b>Security Settings</b> on your school portal, so they are available whatever package your school has.</p>
+        <a id="mfaMovedLink" href="portal.html" style="display:inline-block;background:#3DCFB8;color:#0D2B4E;border-radius:6px;padding:9px 16px;font-size:13px;font-weight:700;text-decoration:none;">Open Security Settings</a>
+      </div>
+    </div>
+
     <div class="card" id="viewerTrackerCard">
       <div class="card-head">Viewer Tracker</div>
       <div class="card-body">
@@ -653,6 +666,91 @@
     }
   }
 
+  // ============================================================================
+  // V82 MFA. UI routing and clear messages only: row-level security, the guarded functions and set_school_mfa_required
+  // remain the security boundary. The shared gate (mfa-gate.js) decides from the server (my_mfa_session / my_school_mfa_status).
+  // ============================================================================
+  let MFA_SCHOOLS = [];
+  function mfaNotice(kind, partial) {
+    const resume = partial
+      ? ' Part of this save may already have been applied, so reload this page and check School Setup before saving again.'
+      : ' Nothing was saved and your entries are still on this page.';
+    const text = {
+      needs_mfa: 'Two-step verification is now required for this school.' + resume + ' Verify in the new tab, return here and press Save again.',
+      mfa_required: 'Two-step verification is now required for this school.' + resume + ' Verify in the new tab, return here and try again.',
+      fresh_mfa_required: 'A fresh authenticator code is needed.' + resume + ' Confirm it in the new tab, return here and try again.',
+      no_session: 'Your session has ended.' + resume + ' Log in again in the new tab, then return here and try again.',
+      blocked: 'Your account does not yet meet this school\u2019s security requirement.' + resume + ' Please contact SOAP Analytics support.',
+      authenticator_not_established: 'Your authenticator was set up during this sign-in. Please save any entries first, then sign out and sign in again and enter your code.',
+      error: 'We could not confirm your sign-in security.' + resume + ' Please try again.',
+      mfa_check_failed: 'We could not confirm your sign-in security.' + resume + ' Please try again.'
+    }[kind] || ('We could not confirm your sign-in security.' + resume + ' Please try again.');
+    showToast('\u26a0 ' + text.split('. ')[0] + '.', true);
+    let box = document.getElementById('mfaSaveNotice');
+    if (!box) {
+      box = document.createElement('div'); box.id = 'mfaSaveNotice'; box.setAttribute('role', 'alert');
+      box.style.cssText = 'position:fixed;left:5%;right:5%;bottom:84px;z-index:50;background:#fff;color:#1B2A4A;border:2px solid #B3261E;border-radius:10px;padding:14px 16px;box-shadow:0 6px 24px rgba(0,0,0,.25);font-size:14px;line-height:1.5;';
+      document.body.appendChild(box);
+    }
+    box.textContent = '';
+    const p = document.createElement('p'); p.style.margin = '0 0 10px'; p.textContent = text; box.appendChild(p);
+    if (!(SoapMfaGate.inFrame && SoapMfaGate.inFrame())) {
+      const ret = window.location.pathname.replace(/^\/+/, '') + window.location.search;
+      let href = null;
+      if (kind === 'needs_mfa' || kind === 'mfa_required') href = SoapMfaGate._mfaUrl('gate', ret, existingSchoolId);
+      else if (kind === 'fresh_mfa_required') href = SoapMfaGate._mfaUrl('stepup', ret);
+      else if (kind === 'no_session') href = 'login.html';
+      if (href) { const a = document.createElement('a'); a.href = href; a.target = '_blank'; a.rel = 'noopener'; a.textContent = 'Open verification in a new tab'; a.style.cssText = 'font-weight:700;margin-right:16px;'; box.appendChild(a); }
+    }
+    const x = document.createElement('button'); x.type = 'button'; x.textContent = 'Dismiss';
+    x.style.cssText = 'font-size:13px;padding:5px 12px;border-radius:6px;border:1px solid #1B2A4A;background:#fff;color:#1B2A4A;cursor:pointer;';
+    x.addEventListener('click', () => box.remove()); box.appendChild(x);
+  }
+  async function mfaPreSaveOk() {
+    if (typeof SoapMfaGate === 'undefined') { mfaNotice('error'); return false; }
+    const r = await SoapMfaGate.evaluate(sb, { schoolId: existingSchoolId });
+    if (r.ok) { const b = document.getElementById('mfaSaveNotice'); if (b) b.remove(); return true; }
+    mfaNotice(r.state, false);   // needs_mfa | blocked | error | no_session
+    return false;
+  }
+  // Failure branch of the main save. fallbackMsg keeps the original wording for every non-MFA failure.
+  async function mfaSaveFailed(err, fallbackMsg, partial) {
+    if (typeof SoapMfaGate !== 'undefined') {
+      const m = SoapMfaGate.mapError(err);
+      if (m.kind !== 'other') { mfaNotice(m.kind, partial); return; }
+      if (err && (err.code === '42501' || /row-level security/i.test(String(err.message || '')))) {
+        const r = await SoapMfaGate.evaluate(sb, { schoolId: existingSchoolId });
+        if (!r.ok) { mfaNotice(r.state, partial); return; }
+      }
+    }
+    showToast(fallbackMsg, true);
+  }
+  // Edge Function refusals (outcome mfa_required / mfa_fresh_required / mfa_check_failed): returns the friendly text.
+  function mfaEdgeRefusal(outcome) {
+    const m = SoapMfaGate.mapError({ outcome: outcome });
+    mfaNotice(m.kind, false);
+    return m.message;
+  }
+  // RPC refusals (message 'mfa_required' etc.): true if it was an MFA refusal and has been explained.
+  function mfaRpcRefusal(err) {
+    if (typeof SoapMfaGate === 'undefined') return false;
+    const m = SoapMfaGate.mapError(err);
+    if (m.kind === 'other') return false;
+    mfaNotice(m.kind, false);
+    return true;
+  }
+
+  // ---- V82 fix: the school setting moved to security-settings.html. This keeps only a pointer card (UI only). ----
+  function mfaRow() { return MFA_SCHOOLS.find(r => r.school_id === existingSchoolId) || null; }
+  function renderMfaCard() {
+    const card = document.getElementById('mfaCard'); if (!card) return;
+    const row = mfaRow();
+    if (!row || row.can_change !== true) { card.style.display = 'none'; return; }
+    card.style.display = '';
+    document.getElementById('mfaState').textContent = row.mfa_required === true ? 'Two-step verification is ON for this school.' : 'Two-step verification is OFF for this school.';
+    const l = document.getElementById('mfaMovedLink'); if (l) l.href = 'security-settings.html?school_id=' + encodeURIComponent(existingSchoolId);
+  }
+
   async function requireLogin() {
     const banner = document.getElementById('statusBanner');
     const { data: { session } } = await sb.auth.getSession();
@@ -663,6 +761,22 @@
     }
 
     currentUserId = session.user.id;
+
+    // V82 MFA gate: the server decides (my_mfa_session / my_school_mfa_status via SoapMfaGate). NOTHING school-related is
+    // fetched before this passes. UI routing only: RLS and the guarded functions remain the security boundary.
+    if (typeof SoapMfaGate === 'undefined') {
+      banner.textContent = 'The security check could not be loaded, so nothing has been opened. Please refresh the page or return to the portal.';
+      return;
+    }
+    const mfaGate = await SoapMfaGate.require(sb, { schoolId: new URLSearchParams(window.location.search).get('school_id') });
+    if (!mfaGate.ok) {
+      if (mfaGate.state === 'no_session') banner.innerHTML = 'You need to be logged in to fill in a School Setup. <a href="login.html" style="color:#7A5C00;text-decoration:underline;">Go to login \u2192</a>';
+      else if (mfaGate.navigated) banner.textContent = 'Two-step verification required \u2014 taking you to verify before your school data is shown\u2026';
+      else if (SoapMfaGate.inFrame()) banner.textContent = 'This page cannot open until two-step verification is complete. Please open it from the portal.';
+      else banner.textContent = 'This page could not be opened because your sign-in security could not be confirmed. Nothing has been loaded.';
+      return;
+    }
+    MFA_SCHOOLS = mfaGate.schools || [];
 
     const { data: linkRows, error: linkError } = await sb
       .from('school_users').select('role, school_id').eq('auth_user_id', currentUserId);
@@ -694,6 +808,7 @@
     }
 
     existingSchoolId = linkRow.school_id;
+    renderMfaCard();   // V82 MFA: shows the school's setting (read from the gate's server status; change needs a fresh code)
 
     // RC-3.3: schools on an IDSR-only package see ONLY the Viewer Tracker (their actual package decides).
     // UI simplification only; the Viewer functions below are unchanged. If the package cannot be read the full page is shown as before.
@@ -701,7 +816,7 @@
       const { data: pkgRow } = await sb.from('schools').select('package_tier').eq('id', existingSchoolId).maybeSingle();
       if (pkgRow && ['IDSR Intelligence Summary', 'IDSR Intelligence Summary + Dashboard'].includes(pkgRow.package_tier)) {
         viewersOnly = true;
-        document.querySelectorAll('#setupForm > .card').forEach(c => { if (c.id !== 'viewerTrackerCard') c.style.display = 'none'; });
+        document.querySelectorAll('#setupForm > .card').forEach(c => { if (c.id !== 'viewerTrackerCard' && c.id !== 'mfaCard') c.style.display = 'none'; });
         const h1 = document.querySelector('.page-head h1'); if (h1) h1.textContent = 'Manage Viewers';
         const eyebrow = document.querySelector('.page-head .eyebrow'); if (eyebrow) eyebrow.textContent = 'SOAP Analytics \u2014 Viewer Access';
         const sub = document.querySelector('.page-head p'); if (sub) sub.textContent = 'Choose who can view your school\'s published reports.';
@@ -896,6 +1011,7 @@
           if (error.context && typeof error.context.json === 'function') {
             const errBody = await error.context.json();
             if (errBody && errBody.error) detail = errBody.error;
+            if (errBody && /^mfa_/.test(String(errBody.outcome || ''))) detail = mfaEdgeRefusal(errBody.outcome);   // V82 MFA
           }
         } catch (_) { /* fall back to error.message above */ }
         throw new Error(detail);
@@ -935,6 +1051,7 @@
     });
 
     if (revokeErr) {
+      if (mfaRpcRefusal(revokeErr)) return;   // V82 MFA
       alert('Could not remove access: ' + revokeErr.message);
       return;
     }
@@ -1028,6 +1145,7 @@
           if (error.context && typeof error.context.json === 'function') {
             const errBody = await error.context.json();
             if (errBody && errBody.error) detail = errBody.error;
+            if (errBody && /^mfa_/.test(String(errBody.outcome || ''))) detail = mfaEdgeRefusal(errBody.outcome);   // V82 MFA
           }
         } catch (_) { /* fall back to error.message above */ }
         throw new Error(detail);
@@ -1079,6 +1197,7 @@
     } catch (err) {
       console.error(err);
       btn.disabled = false;
+      if (mfaRpcRefusal(err)) { setViewerMsg('Two-step verification is required. Nothing was changed.', 'error'); return; }   // V82 MFA
       setViewerMsg('Could not remove Viewer: ' + (err.message || 'unknown error'), 'error');
     }
   }
@@ -1100,6 +1219,8 @@
     const btn = document.getElementById('saveBtn');
     btn.disabled = true;
     btn.textContent = 'Saving…';
+    let mfaWritesStarted = false;   // V82 MFA: the first write of this save is the schools update below
+    if (!(await mfaPreSaveOk())) { btn.disabled = false; btn.textContent = 'Save School Setup'; return; }   // V82 MFA: re-check before anything is read or written
 
     try {
       const val = id => document.getElementById(id).value || null;
@@ -1231,6 +1352,7 @@
         }
         if (dryErr || !dry || dry.success !== true) {
           const info = dryErr ? await a2ErrInfo(dryErr) : { detail: (dry && dry.error) || 'Unknown error', outcome: dry && dry.outcome };
+          if (/^mfa_/.test(String(info.outcome || ''))) { await mfaSaveFailed({ outcome: info.outcome, message: info.detail }, '', false); return; }   // V82 MFA: no write has happened yet
           if (info.outcome === 'cross_school_review_required') {
             showToast('⚠ Nothing was saved: ' + p.row.email + ' already holds a leadership or administrator account at another school, so a SOAP Analytics administrator must approve adding them (' + p.section + '). Please contact SOAP Analytics support.', true);
             return;
@@ -1270,6 +1392,7 @@
         last_inspection_date: val('lastInspectionDate')
       };
 
+      mfaWritesStarted = true;   // V82 MFA
       console.log('Updating school with id:', schoolId);
       console.log('Payload being saved:', schoolPayload);
       const { data: updatedRows, error: schoolError } = await sb.from('schools').update(schoolPayload).eq('id', schoolId).select();
@@ -1492,7 +1615,7 @@
       showToast((histResult.status === 'failed' ? '⚠ School Setup saved, but' + histWarn : '✓ School Setup saved to the database' + histWarn) + (rpOutcomeNotes.length ? ' ' + rpOutcomeNotes.join(' ') : ''), histResult.status === 'failed', rpOutcomeNotes.length ? 9000 : undefined);
     } catch (err) {
       console.error(err);
-      showToast('⚠ Save failed — see browser console for details', true);
+      await mfaSaveFailed(err, '⚠ Save failed — see browser console for details', mfaWritesStarted);   // V82 MFA: clear message for MFA refusals, original toast otherwise
     } finally {
       btn.disabled = false;
       btn.textContent = 'Save School Setup';

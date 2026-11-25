@@ -4,7 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>SOAP Analytics — IDSR Dashboard</title>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<!-- V82 MFA: supabase-js pinned to 2.119.0 (no floating @2); shared gate decides MFA from the server. -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.119.0/dist/umd/supabase.js"></script>
+<script src="mfa-gate.js"></script>
 <style>
   :root{ --navy:#0D2B4E; --teal:#1A7A6E; --pale:#F0F4F8; --mint:#B9F0E4; --text-dark:#1B2A4A; --text-muted:#5B6B7F; }
   * { box-sizing: border-box; }
@@ -53,7 +55,66 @@
 const SUPABASE_URL = 'https://caopycszjzrmwhxxvtpx.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_2CTGR0PKyRPpSk59lcr3sA_hvvUDX97';
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
-window.IdsrViewer.boot({ kind: 'dashboard', sb: sb });
+// V82 MFA gate. The server decides (SoapMfaGate), judged for the school in the address. NOTHING is fetched (session aside) until it passes:
+// the viewer (admins / school_users / schools / publications / storage) is only started afterwards. UI routing only; RLS and the guarded
+// functions remain the security boundary. Inside an iframe (Admin IDSR hidden publish frame) the gate never redirects: the ready flag is
+// set so the parent fails fast, and publishIdsr is never defined. idsr-v72.js (parsing, calculations, rendering) is unchanged.
+(async function () {
+  var READY = 'idsrDashboardReady';
+  var MSG = {
+    needs_mfa: 'Two-step verification is required for this school. Nothing was published.',
+    mfa_required: 'Two-step verification is required for this school. Nothing was published.',
+    fresh_mfa_required: 'A fresh authenticator code is needed. Nothing was published.',
+    authenticator_not_established: 'Your authenticator was set up during this sign-in. Please sign out and sign in again, then enter your code. Nothing was published.',
+    no_session: 'Your session has ended. Nothing was published.',
+    blocked: 'This account does not meet the security requirement. Nothing was published.',
+    mfa_check_failed: 'Sign-in security could not be confirmed. Nothing was published.',
+    error: 'Sign-in security could not be confirmed. Nothing was published.'
+  };
+  function show(title, body) {
+    var f = document.getElementById('frameWrap'); if (f) f.style.display = 'none';
+    document.getElementById('emptyState').style.display = 'block';
+    document.getElementById('emptyStateTitle').textContent = title;
+    document.getElementById('emptyStateBody').textContent = body;
+  }
+  if (typeof SoapMfaGate === 'undefined') {
+    window[READY] = true;
+    show('Security check unavailable', 'The security check could not be loaded, so nothing has been opened. Please refresh the page or return to the portal.');
+    return;
+  }
+  var schoolId = new URLSearchParams(window.location.search).get('school_id');
+  var g;
+  try { g = await SoapMfaGate.require(sb, { schoolId: schoolId }); } catch (e) { g = { ok: false, state: 'error' }; }
+  if (!g.ok) {
+    if (g.navigated) { show('Verification required', 'Two-step verification is required — taking you to verify before any school data is shown…'); return; }
+    window[READY] = true;
+    if (g.state === 'no_session') show('Please log in', 'You need to be logged in to view this page.');
+    else if (SoapMfaGate.inFrame()) show('Verification required', 'This page cannot open until two-step verification is complete. Please open it from the portal or Admin Dashboard.');
+    else show('Security check could not be completed', 'This page could not be opened because your sign-in security could not be confirmed. Nothing has been loaded.');
+    return;
+  }
+  window.IdsrViewer.boot({ kind: 'dashboard', sb: sb });
+  // V82 MFA: publication safeguard wrapper. Re-checks MFA immediately before the publish RPC (fail closed) and turns MFA refusals
+  // from the server into a clear message. All original publication checks (diagnostics, tie-out, sequence, single flight) still run first-hand inside the original function.
+  var orig = window.publishIdsr;
+  if (typeof orig === 'function') {
+    window.publishIdsr = async function () {
+      var self = this, args = arguments, pre;
+      try { pre = await SoapMfaGate.evaluate(sb, { schoolId: schoolId }); } catch (e) { pre = { ok: false, state: 'error' }; }
+      if (!pre.ok) throw new Error(MSG[pre.state] || MSG.error);
+      try { return await orig.apply(self, args); }
+      catch (e) {
+        var m = SoapMfaGate.mapError(e), kind = m.kind !== 'other' ? m.kind : null;
+        if (!kind && e && (e.code === '42501' || /row-level security/i.test(String(e.message || '')))) {
+          var post; try { post = await SoapMfaGate.evaluate(sb, { schoolId: schoolId }); } catch (e2) { post = { ok: false, state: 'error' }; }
+          if (!post.ok) kind = post.state;
+        }
+        if (kind) throw new Error(MSG[kind] || MSG.error);
+        throw e;
+      }
+    };
+  }
+})();
 </script>
 </body>
 </html>

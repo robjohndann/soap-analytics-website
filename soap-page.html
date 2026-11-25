@@ -4,7 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>SOAP Analytics — School on a Page</title>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<!-- V82 MFA: supabase-js pinned to 2.119.0 (no floating @2); shared gate decides MFA from the server. -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.119.0/dist/umd/supabase.js"></script>
+<script src="mfa-gate.js"></script>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: Arial, Helvetica, sans-serif; background: #F0F4F8; color: #1B2A4A; }
@@ -592,6 +594,28 @@
 
     if (!session) {
       content.innerHTML = '<div class="status-msg">Please <a href="login.html">log in</a> to view this school\'s SOAP.</div>';
+      return;
+    }
+
+    // V82 MFA gate: the server decides (SoapMfaGate), judged for THIS school_id. Nothing school-related, including the
+    // admins lookup below, is fetched before this passes. UI routing only: RLS and the guarded functions stay authoritative.
+    // Inside an iframe (admin.html hidden publish frame) the gate never redirects; soapPageReady is set so the parent fails
+    // fast instead of waiting for its timeout, and publishSoap / the publish controls are never defined.
+    if (typeof SoapMfaGate === 'undefined') {
+      window.soapPageReady = true;
+      content.innerHTML = '<div class="status-msg">The security check could not be loaded, so nothing has been opened. Please refresh the page or return to the portal.</div>';
+      return;
+    }
+    const mfaSchoolId = new URLSearchParams(window.location.search).get('school_id');
+    const mfaGate = await SoapMfaGate.require(sb, { schoolId: mfaSchoolId });
+    if (!mfaGate.ok) {
+      if (mfaGate.state === 'no_session') content.innerHTML = '<div class="status-msg">Please <a href="login.html">log in</a> to view this school\'s SOAP.</div>';
+      else if (mfaGate.navigated) content.innerHTML = '<div class="status-msg">Two-step verification required \u2014 taking you to verify before school data is shown\u2026</div>';
+      else {
+        window.soapPageReady = true;
+        if (SoapMfaGate.inFrame()) content.innerHTML = '<div class="status-msg">This page cannot open until two-step verification is complete. Please open it from the Admin Dashboard.</div>';
+        else content.innerHTML = '<div class="status-msg">This page could not be opened because your sign-in security could not be confirmed. Nothing has been loaded.</div>';
+      }
       return;
     }
 
@@ -1591,6 +1615,24 @@
       const note = document.getElementById('publishNote');
       btn.disabled = true;
       btn.textContent = 'Publishing…';
+      // V82 MFA: re-check before the write; fail closed, nothing is published if the check fails
+      const mfaNoteMsg = {
+        needs_mfa: 'Publish failed \u2014 two-step verification is required for this school. Nothing was published.',
+        mfa_required: 'Publish failed \u2014 two-step verification is required for this school. Nothing was published.',
+        fresh_mfa_required: 'Publish failed \u2014 a fresh authenticator code is needed. Nothing was published.',
+        authenticator_not_established: 'Publish failed \u2014 please sign out and sign in again, then enter your authenticator code. Nothing was published.',
+        no_session: 'Publish failed \u2014 your session has ended. Nothing was published.',
+        blocked: 'Publish failed \u2014 this account does not meet the security requirement. Nothing was published.'
+      };
+      const mfaFail = (kind) => {
+        note.style.color = '#B3261E';
+        note.textContent = mfaNoteMsg[kind] || 'Publish failed \u2014 sign-in security could not be confirmed. Nothing was published.';
+        btn.disabled = false;
+        btn.textContent = 'Publish SOAP';
+      };
+      if (typeof SoapMfaGate === 'undefined') { mfaFail('error'); return; }
+      const mfaPre = await SoapMfaGate.evaluate(sb, { schoolId: school.id });
+      if (!mfaPre.ok) { mfaFail(mfaPre.state); return; }
       const htmlContent = buildStaticSnapshotHtml();
       const { error } = await sb.from('published_soaps').insert({
         school_id: school.id,
@@ -1598,8 +1640,14 @@
         html_content: htmlContent
       });
       if (error) {
+        const mfaMap = SoapMfaGate.mapError(error);
+        let mfaKind = mfaMap.kind !== 'other' ? mfaMap.kind : null;
+        if (!mfaKind && (error.code === '42501' || /row-level security/i.test(String(error.message || '')))) {
+          const mfaPost = await SoapMfaGate.evaluate(sb, { schoolId: school.id });
+          if (!mfaPost.ok) mfaKind = mfaPost.state;
+        }
         note.style.color = '#B3261E';
-        note.textContent = 'Publish failed — see browser console.';
+        note.textContent = mfaKind ? (mfaNoteMsg[mfaKind] || 'Publish failed \u2014 sign-in security could not be confirmed. Nothing was published.') : 'Publish failed — see browser console.';
         console.error(error);
       } else {
         note.style.color = '#0D7377';

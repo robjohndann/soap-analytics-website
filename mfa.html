@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex">
+<title>SOAP Analytics — Two-step verification</title>
+<!-- V82 LOCAL DEVELOPMENT VERSION 0.1. supabase-js pinned to 2.119.0 (no floating @2). -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.119.0/dist/umd/supabase.js"></script>
+<script src="mfa-gate.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: Arial, Helvetica, sans-serif; background: #1B2A4A; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; }
+  .card { background: #fff; border-radius: 12px; padding: 36px 32px; max-width: 420px; width: 100%; box-shadow: 0 20px 60px rgba(0,0,0,0.3); }
+  .eyebrow { font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: #0D7377; font-weight: 700; margin-bottom: 8px; text-align: center; }
+  h1 { font-size: 20px; color: #1B2A4A; text-align: center; margin-bottom: 14px; }
+  p.lead { font-size: 14px; color: #3d4b5f; line-height: 1.5; margin-bottom: 18px; text-align: center; }
+  label { font-size: 12px; font-weight: 700; color: #1B2A4A; display: block; margin-bottom: 6px; }
+  input[type="text"], select { width: 100%; font-family: Arial, Helvetica, sans-serif; font-size: 18px; letter-spacing: 4px; text-align: center; padding: 11px 12px; border: 1px solid #DCE3EA; border-radius: 6px; margin-bottom: 14px; }
+  select { font-size: 14px; letter-spacing: 0; text-align: left; background: #fff; }
+  input:focus, select:focus { outline: none; border-color: #0D7377; box-shadow: 0 0 0 3px rgba(13,115,119,0.12); }
+  .btn { width: 100%; background: #0D7377; color: #fff; font-family: Arial, Helvetica, sans-serif; font-weight: 700; font-size: 14px; border: none; border-radius: 8px; padding: 13px; cursor: pointer; }
+  .btn:hover { background: #0a5c5f; }
+  .btn:disabled { opacity: 0.6; cursor: default; }
+  .link { display: block; width: 100%; text-align: center; margin-top: 16px; font-size: 13px; color: #5A6B80; background: none; border: none; cursor: pointer; text-decoration: underline; font-family: Arial, Helvetica, sans-serif; }
+  .link:hover { color: #0D7377; }
+  .qr { display: block; margin: 0 auto 12px; width: 190px; height: 190px; background: #fff; border: 1px solid #DCE3EA; border-radius: 8px; padding: 6px; }
+  .secret { font-family: "Courier New", monospace; font-size: 14px; letter-spacing: 1px; background: #F3F6F9; border-radius: 6px; padding: 10px; text-align: center; word-break: break-all; margin-bottom: 14px; color: #1B2A4A; user-select: all; }
+  ol.steps { font-size: 13px; color: #3d4b5f; line-height: 1.5; margin: 0 0 14px 18px; }
+  .msg { margin-top: 14px; font-size: 13px; text-align: center; padding: 12px; border-radius: 8px; display: none; line-height: 1.45; }
+  .msg.show { display: block; }
+  .msg.ok { background: #E6F4F1; color: #0D7377; }
+  .msg.err { background: #FBE9E7; color: #B3261E; }
+  .msg.info { background: #EEF3FA; color: #1B2A4A; }
+  .hidden { display: none !important; }
+  .who { font-size: 12px; color: #5A6B80; text-align: center; margin-bottom: 14px; }
+</style>
+</head>
+<body>
+
+<div class="card" id="card" aria-live="polite">
+  <div class="eyebrow">SOAP Analytics</div>
+  <h1 id="title">Checking your sign-in…</h1>
+  <p class="lead" id="lead">One moment.</p>
+  <div class="who hidden" id="who"></div>
+
+  <!-- Enrol: first-time set-up of an authenticator app -->
+  <div id="viewEnrol" class="hidden">
+    <ol class="steps">
+      <li>Install an authenticator app on your phone (for example Microsoft Authenticator, Google Authenticator or 1Password).</li>
+      <li>Scan this code in the app, or type the key below into it.</li>
+      <li>Enter the 6-digit code the app shows, then press Confirm.</li>
+    </ol>
+    <img class="qr" id="qrImg" alt="QR code for your authenticator app" width="190" height="190">
+    <div class="secret" id="secretTxt" aria-label="Set-up key"></div>
+    <form id="enrolForm" autocomplete="off" novalidate>
+      <label for="enrolCode">6-digit code</label>
+      <input type="text" id="enrolCode" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" placeholder="••••••">
+      <button type="submit" class="btn" id="enrolBtn">Confirm and continue</button>
+    </form>
+  </div>
+
+  <!-- Verify / step-up: enter a code from an enrolled authenticator -->
+  <div id="viewVerify" class="hidden">
+    <form id="verifyForm" autocomplete="off" novalidate>
+      <div id="factorRow" class="hidden">
+        <label for="factorSel">Authenticator</label>
+        <select id="factorSel"></select>
+      </div>
+      <label for="verifyCode">6-digit code</label>
+      <input type="text" id="verifyCode" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" placeholder="••••••">
+      <button type="submit" class="btn" id="verifyBtn">Verify</button>
+    </form>
+  </div>
+
+  <!-- Administrator just enrolled: explicit sign-out / sign-in, no automatic return -->
+  <div id="viewAdminDone" class="hidden">
+    <p class="lead" id="adminDoneText">For security, administrator actions only unlock for a sign-in that began with an authenticator you already had. Please sign out and sign in again, then enter your 6-digit code. Nothing else is needed.</p>
+    <button type="button" class="btn" id="adminDoneBtn">Sign out and sign in again</button>
+  </div>
+
+  <div class="msg" id="msg" role="status"></div>
+
+  <button type="button" class="btn hidden" id="retryBtn" style="margin-top:14px;">Try again</button>
+  <button type="button" class="link" id="signOutBtn">Sign out</button>
+</div>
+
+<script>
+(function () {
+  'use strict';
+  // Same project settings as every other V81 page (publishable key only; never a secret).
+  var SUPABASE_URL = 'https://caopycszjzrmwhxxvtpx.supabase.co';
+  var SUPABASE_KEY = 'sb_publishable_2CTGR0PKyRPpSk59lcr3sA_hvvUDX97';
+  var G = window.SoapMfaGate;
+  var sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+  var $ = function (id) { return document.getElementById(id); };
+  var params = new URLSearchParams(window.location.search);
+  var MODE = params.get('mode') === 'stepup' ? 'stepup' : (params.get('mode') === 'enrol' ? 'enrol' : 'gate');   // V82-fix: 'enrol' = voluntary set-up while the school does not require MFA
+  var RETURN = G.safeReturn(params.get('return'), 'portal.html');
+  var UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  var SCHOOL = UUID_RE.test(params.get('school_id') || '') ? params.get('school_id') : null;
+
+  var enrolled = null;      // { factorId } while an enrolment is pending
+  var justEnrolled = false;
+  var isAdminSession = false;
+
+  function show(id, on) { $(id).classList.toggle('hidden', !on); }
+  function setHead(t, l) { $('title').textContent = t; $('lead').textContent = l; }
+  function msg(text, kind) { var m = $('msg'); m.textContent = text || ''; m.className = 'msg' + (text ? ' show ' + (kind || 'info') : ''); }
+  function views(which) { show('viewEnrol', which === 'enrol'); show('viewVerify', which === 'verify'); show('retryBtn', which === 'retry'); show('viewAdminDone', which === 'admindone'); }
+  function who(text) { var w = $('who'); w.textContent = text || ''; w.classList.toggle('hidden', !text); }
+
+  // Sign out is always available, in every state.
+  $('signOutBtn').addEventListener('click', function () { G.signOutAndLeave(sb); });
+  $('retryBtn').addEventListener('click', function () { init(); });
+
+  // Never navigate inside a frame (admin publish workflows load pages in hidden iframes).
+  if (G.inFrame()) {
+    setHead('Open in the main window', 'Two-step verification must be completed in the main browser window, not inside another page.');
+    show('signOutBtn', false);
+    try { window.parent.postMessage({ type: 'soap-mfa-blocked', state: 'mfa_page_in_frame' }, window.location.origin); } catch (e) {}
+    return;
+  }
+
+  function goReturn() {
+    G._clearTrips();
+    msg('Verified. Taking you back…', 'ok');
+    window.location.replace(RETURN);      // RETURN already passed safeReturn(): relative, allow-listed, never mfa/login
+  }
+
+  function codeError(err) {
+    var t = ((err && (err.code || '')) + ' ' + (err && err.message || '')).toLowerCase();
+    var st = err && err.status;
+    if (st === 429 || /rate|too many|over_request/.test(t)) return 'Too many attempts. Please wait a minute, then try again.';
+    if (/expired|challenge/.test(t) && !/invalid totp/.test(t)) return 'That verification request expired. Please enter a fresh code.';
+    if (st === 422 || /verification_failed|invalid totp/.test(t)) return 'That code was not accepted. Enter the current 6-digit code from your authenticator app. If it keeps failing, check that your phone’s clock is set automatically.';
+    if (!st && /fetch|network|load failed/.test(t)) return 'We could not reach the server. Check your connection and try again.';
+    return 'We could not verify that code. Please try again.';
+  }
+
+  function failClosed(text) {
+    setHead('We could not check your sign-in', text || 'For your protection, nothing has been loaded. Check your connection and try again.');
+    views('retry'); msg('', '');
+  }
+
+  async function listTotp() {
+    var r = await sb.auth.mfa.listFactors();
+    if (r.error) throw r.error;
+    var all = (r.data && r.data.all) || [];
+    return {
+      verified: all.filter(function (f) { return f.factor_type === 'totp' && f.status === 'verified'; }),
+      unverified: all.filter(function (f) { return f.factor_type === 'totp' && f.status === 'unverified'; })
+    };
+  }
+
+  async function startEnrol() {
+    if (MODE === 'enrol') setHead('Set up your authenticator', 'This adds an authenticator app to your account so you can manage two-step verification for your school. This takes about two minutes.');
+    else setHead('Set up two-step verification', 'Your school requires a second step when you sign in. This takes about two minutes.');
+    views('enrol'); msg('Preparing your set-up code…', 'info');
+    $('enrolBtn').disabled = true;
+    try {
+      // Clear abandoned, never-verified attempts so the person is not left with stale entries.
+      var f = await listTotp();
+      for (var i = 0; i < f.unverified.length; i++) { try { await sb.auth.mfa.unenroll({ factorId: f.unverified[i].id }); } catch (e) {} }
+      var en = await sb.auth.mfa.enroll({
+        factorType: 'totp',
+        friendlyName: 'Authenticator ' + new Date().toISOString().slice(0, 10) + '-' + Math.random().toString(36).slice(2, 6),
+        issuer: 'SOAP Analytics'
+      });
+      if (en.error || !en.data || !en.data.totp) throw (en.error || new Error('enrol failed'));
+      enrolled = { factorId: en.data.id };
+      $('qrImg').src = en.data.totp.qr_code;                       // data: URI used as an image source only
+      $('secretTxt').textContent = String(en.data.totp.secret).replace(/(.{4})/g, '$1 ').trim();
+      msg('', ''); $('enrolBtn').disabled = false; $('enrolCode').focus();
+    } catch (e) {
+      views('retry'); setHead('Set-up could not start', 'We could not prepare your set-up code. Please try again.'); msg('', '');
+    }
+  }
+
+  function startVerify(factors) {
+    setHead(MODE === 'stepup' ? 'Confirm it’s you' : 'Enter your verification code',
+            MODE === 'stepup' ? 'For this action, please enter a fresh 6-digit code from your authenticator app.'
+                              : 'Enter the 6-digit code from your authenticator app to continue.');
+    var sel = $('factorSel'); sel.textContent = '';
+    factors.forEach(function (f, i) {
+      var o = document.createElement('option'); o.value = f.id;
+      o.textContent = f.friendly_name || ('Authenticator ' + (i + 1)); sel.appendChild(o);
+    });
+    show('factorRow', factors.length > 1);
+    views('verify'); msg('', ''); $('verifyCode').value = ''; $('verifyCode').focus();
+  }
+
+  // After a successful code, ask the server again; only the server's answer lets the person through.
+  async function afterVerified() {
+    if (MODE === 'stepup') {
+      var r = await sb.rpc('my_mfa_session');
+      var s = r && r.data && r.data[0];
+      if (!r.error && s && s.aal === 'aal2' && s.fresh_aal2 === true) { goReturn(); return; }
+      failClosed('Your code was accepted, but we could not confirm it with the server. Please try again.'); return;
+    }
+    var ev = await G.evaluate(sb, { schoolId: SCHOOL });
+    if (ev.ok) { goReturn(); return; }
+    if (ev.state === 'blocked') { showBlocked(); return; }
+    failClosed('Your code was accepted, but we could not confirm it with the server. Please try again.');
+  }
+
+  // The authenticator exists now, but this session started before it did, so the server will refuse administrator
+  // actions (authenticator_not_established) until a new sign-in. The only action offered is to sign out and back in.
+  function showAdminEnrolled() {
+    views('admindone'); msg('', '');
+    setHead('Authenticator added', 'Your two-step verification is now set up.');
+    show('signOutBtn', false);
+    $('adminDoneBtn').focus();
+  }
+  // V82-fix: voluntary set-up (mode=enrol). The authenticator exists now, but changing a school's setting needs a sign-in that began
+  // AFTER it existed (Decision 4), so the only action offered is to sign out and sign in again, then use Security Settings.
+  function showEnrolledVoluntary() {
+    views('admindone'); msg('', '');
+    setHead('Authenticator added', 'Your authenticator is set up. Nothing about your school has changed yet.');
+    $('adminDoneText').textContent = 'For security, a school\u2019s two-step verification can only be changed in a sign-in that began after your authenticator was set up. Please sign out and sign in again, then open Security Settings from your portal.';
+    show('signOutBtn', false);
+    $('adminDoneBtn').focus();
+  }
+  $('adminDoneBtn').addEventListener('click', function () { $('adminDoneBtn').disabled = true; G.signOutAndLeave(sb); });
+
+  function showBlocked() {
+    views('none'); setHead('Access paused', 'Two-step verification is complete, but your account does not yet meet this school’s security requirement and we cannot fix that automatically. Please contact SOAP Analytics support.');
+    msg('', '');
+  }
+
+  $('enrolForm').addEventListener('submit', async function (e) {
+    e.preventDefault();
+    var code = $('enrolCode').value.replace(/\s+/g, '');
+    if (!/^\d{6}$/.test(code) || !enrolled) { msg('Enter the 6-digit code shown in your authenticator app.', 'err'); return; }
+    var b = $('enrolBtn'); b.disabled = true; b.textContent = 'Checking…';
+    var r = await sb.auth.mfa.challengeAndVerify({ factorId: enrolled.factorId, code: code });
+    if (r.error) {
+      msg(codeError(r.error), 'err'); b.disabled = false; b.textContent = 'Confirm and continue'; $('enrolCode').value = ''; $('enrolCode').focus(); return;
+    }
+    justEnrolled = true; enrolled = null;
+    b.textContent = 'Confirm and continue';
+    if (MODE === 'enrol') { showEnrolledVoluntary(); return; }   // V82-fix: voluntary set-up always ends with an explicit sign-out / sign-in (Decision 4)
+    if (isAdminSession) { showAdminEnrolled(); return; }   // administrators: explicit sign-out/sign-in, never an automatic return
+    await afterVerified();
+  });
+
+  $('verifyForm').addEventListener('submit', async function (e) {
+    e.preventDefault();
+    var code = $('verifyCode').value.replace(/\s+/g, '');
+    if (!/^\d{6}$/.test(code)) { msg('Enter the 6-digit code shown in your authenticator app.', 'err'); return; }
+    var b = $('verifyBtn'); b.disabled = true; b.textContent = 'Checking…';
+    var r = await sb.auth.mfa.challengeAndVerify({ factorId: $('factorSel').value, code: code });
+    b.disabled = false; b.textContent = 'Verify';
+    if (r.error) { msg(codeError(r.error), 'err'); $('verifyCode').value = ''; $('verifyCode').focus(); return; }
+    await afterVerified();
+  });
+
+  async function init() {
+    views('none'); msg('', ''); setHead('Checking your sign-in…', 'One moment.');
+    var ev = await G.evaluate(sb, { schoolId: SCHOOL });
+    if (ev.state === 'no_session') { window.location.replace('login.html'); return; }     // login.html only redirects when a session exists: no loop
+    if (ev.state === 'error') { failClosed(); return; }                                    // FAIL CLOSED: never forward on an unknown status
+    isAdminSession = ev.isAdmin;
+
+    var f;
+    try { f = await listTotp(); } catch (e) { failClosed(); return; }
+
+    if (MODE === 'enrol') {
+      // Voluntary enrolment: needs a signed-in session. If an authenticator already exists there is nothing to set up.
+      if (f.verified.length) {
+        views('none'); setHead('You already have an authenticator', 'Your account already has an authenticator app. Nothing more is needed here.');
+        msg('', ''); $('retryBtn').classList.remove('hidden'); $('retryBtn').textContent = 'Back'; $('retryBtn').onclick = function () { window.location.replace(RETURN); };
+        return;
+      }
+      await startEnrol(); return;
+    }
+
+    if (MODE === 'stepup') {
+      if (!f.verified.length) {
+        views('none'); setHead('No authenticator on this account', 'This action needs a code from an authenticator app, and none is set up. Please contact SOAP Analytics support.');
+        return;
+      }
+      startVerify(f.verified); return;
+    }
+
+    // Gate mode: the server decides whether MFA is needed at all.
+    if (ev.state === 'ok') { goReturn(); return; }          // nothing to do (e.g. school does not require it, or already aal2)
+    if (ev.state === 'blocked') { showBlocked(); return; }  // aal2 but still refused: do NOT bounce back to the page
+    // needs_mfa (aal1)
+    if (f.verified.length) { startVerify(f.verified); return; }
+    await startEnrol();
+  }
+
+  init();
+})();
+</script>
+</body>
+</html>
