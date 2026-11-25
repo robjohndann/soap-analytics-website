@@ -413,27 +413,14 @@
          Edge Function / revoke_viewer_access RPC; nothing here is read by
          saveForm(). All buttons are type="button" so nothing in this card can
          submit the surrounding form. -->
-    <!-- V82 MFA: school two-step verification setting. Acts immediately through set_school_mfa_required; independent of Save. -->
+    <!-- V82 fix: the school two-step verification controls MOVED to the dedicated Security Settings page (portal > Security Settings),
+         available at every package. This card only points there, and only for a person who may change the setting. -->
     <div class="card" id="mfaCard" style="display:none;">
       <div class="card-head">Two-step verification</div>
       <div class="card-body">
         <p id="mfaState" style="font-size:14px;font-weight:700;margin:0 0 8px;"></p>
-        <p style="font-size:12px;color:var(--muted);margin:0 0 14px;">
-          When required, everyone who signs in to this school is asked for a code from an authenticator app (and is helped to set one up the first time). Changing this setting takes effect immediately &mdash; it does not depend on Save School Setup &mdash; and always needs a fresh authenticator code from you.
-        </p>
-        <div id="mfaControls">
-          <button type="button" id="mfaPrimaryBtn" onclick="mfaOpenConfirm()" style="background:#3DCFB8;color:#0D2B4E;border:none;border-radius:6px;padding:9px 16px;font-size:13px;font-weight:700;cursor:pointer;"></button>
-          <div id="mfaConfirm" style="display:none;margin-top:14px;padding:12px;border:1px solid var(--border);border-radius:8px;">
-            <p id="mfaConfirmText" style="font-size:13px;margin:0 0 10px;"></p>
-            <div id="mfaReasonWrap" style="display:none;margin-bottom:10px;">
-              <label for="mfaReason" style="display:block;font-size:12px;font-weight:700;margin-bottom:4px;">Reason (10&ndash;1000 characters, recorded in the audit log)</label>
-              <textarea id="mfaReason" rows="3" maxlength="1000" style="width:100%;box-sizing:border-box;"></textarea>
-            </div>
-            <button type="button" id="mfaApplyBtn" onclick="mfaApply()" style="background:#0D2B4E;color:#fff;border:none;border-radius:6px;padding:9px 16px;font-size:13px;font-weight:700;cursor:pointer;margin-right:8px;">Confirm</button>
-            <button type="button" id="mfaCancelBtn" onclick="mfaCloseConfirm()" style="background:#fff;color:#0D2B4E;border:1px solid #0D2B4E;border-radius:6px;padding:8px 14px;font-size:13px;font-weight:700;cursor:pointer;">Cancel</button>
-          </div>
-        </div>
-        <div id="mfaMsg" role="status" style="font-size:12px;font-weight:700;margin-top:10px;min-height:16px;"></div>
+        <p style="font-size:12px;color:var(--muted);margin:0 0 14px;">These controls have moved to <b>Security Settings</b> on your school portal, so they are available whatever package your school has.</p>
+        <a id="mfaMovedLink" href="portal.html" style="display:inline-block;background:#3DCFB8;color:#0D2B4E;border-radius:6px;padding:9px 16px;font-size:13px;font-weight:700;text-decoration:none;">Open Security Settings</a>
       </div>
     </div>
 
@@ -753,100 +740,15 @@
     return true;
   }
 
-  // ---- Headteacher setting: set_school_mfa_required(p_school_id uuid, p_required boolean, p_reason text) ----
-  let mfaPending = null;   // true = turning ON, false = turning OFF
+  // ---- V82 fix: the school setting moved to security-settings.html. This keeps only a pointer card (UI only). ----
   function mfaRow() { return MFA_SCHOOLS.find(r => r.school_id === existingSchoolId) || null; }
-  function setMfaMsg(text, kind) {
-    const el = document.getElementById('mfaMsg'); if (!el) return;
-    el.style.color = kind === 'error' ? 'var(--bad)' : (kind === 'ok' ? 'var(--good)' : 'var(--muted)');
-    el.textContent = text;
-  }
   function renderMfaCard() {
     const card = document.getElementById('mfaCard'); if (!card) return;
     const row = mfaRow();
-    const st = document.getElementById('mfaState'), ctl = document.getElementById('mfaControls');
+    if (!row || row.can_change !== true) { card.style.display = 'none'; return; }
     card.style.display = '';
-    mfaCloseConfirm();
-    if (!row) { st.textContent = 'The two-step verification setting for this school could not be read, so it cannot be changed from here.'; ctl.style.display = 'none'; return; }
-    const on = row.mfa_required === true;
-    st.textContent = on ? 'Two-step verification is REQUIRED for everyone who signs in to this school.'
-                        : 'Two-step verification is NOT currently required for this school.';
-    if (row.can_change !== true) { ctl.style.display = 'none'; setMfaMsg('Only this school\u2019s Headteacher (or a SOAP Analytics administrator) can change this setting.', 'info'); return; }
-    ctl.style.display = '';
-    document.getElementById('mfaPrimaryBtn').textContent = on ? 'Turn off two-step verification\u2026' : 'Require two-step verification';
-  }
-  function mfaOpenConfirm() {
-    const row = mfaRow(); if (!row || row.can_change !== true) return;
-    mfaPending = row.mfa_required !== true;   // the opposite of the server's current value
-    document.getElementById('mfaConfirm').style.display = '';
-    document.getElementById('mfaReasonWrap').style.display = mfaPending ? 'none' : '';
-    document.getElementById('mfaReason').value = '';
-    document.getElementById('mfaConfirmText').textContent = mfaPending
-      ? 'Everyone signing in to this school will be asked for an authenticator code. Users without an authenticator will be guided to set one up. You will be asked for a fresh code to confirm this change.'
-      : 'Turning this off removes the two-step requirement for this school. Users\u2019 authenticators are not deleted. You will be asked for a fresh code, and the reason you give is recorded.';
-    setMfaMsg('', 'info');
-  }
-  function mfaCloseConfirm() {
-    mfaPending = null;
-    const c = document.getElementById('mfaConfirm'); if (c) c.style.display = 'none';
-  }
-  async function mfaApply() {
-    if (mfaPending === null || !existingSchoolId) return;
-    const wantOn = mfaPending;
-    const btn = document.getElementById('mfaApplyBtn');
-    let reason = null;
-    if (!wantOn) {
-      reason = document.getElementById('mfaReason').value.trim();
-      if (reason.length < 10) { setMfaMsg('Please enter a reason of at least 10 characters.', 'error'); return; }
-      if (reason.length > 1000) { setMfaMsg('The reason must be 1000 characters or fewer.', 'error'); return; }
-    }
-    if (typeof SoapMfaGate === 'undefined') { setMfaMsg('The security check could not be loaded. Please refresh the page.', 'error'); return; }
-    btn.disabled = true; setMfaMsg('Checking your sign-in\u2026', 'info');
-    try {
-      // Courtesy pre-check only (never navigates, so unsaved form entries are never lost). The SERVER enforces freshness.
-      const f = await SoapMfaGate.requireFresh(sb, { navigate: false });
-      if (!f.ok) {
-        if (f.state === 'needs_stepup') { setMfaMsg('A fresh authenticator code is needed first.', 'error'); mfaNotice('fresh_mfa_required', false); }
-        else if (f.state === 'no_session') { setMfaMsg('Your session has ended. Please log in again.', 'error'); mfaNotice('no_session', false); }
-        else setMfaMsg('We could not confirm your sign-in security, so nothing was changed. Please try again.', 'error');
-        return;
-      }
-      setMfaMsg('Applying\u2026', 'info');
-      const { data, error } = await sb.rpc('set_school_mfa_required', { p_school_id: existingSchoolId, p_required: wantOn, p_reason: wantOn ? null : reason });
-      if (error) {
-        const tok = [error.message, error.hint, error.code].filter(Boolean).join(' ');
-        const m = SoapMfaGate.mapError(error);
-        if (m.kind === 'fresh_mfa_required') { setMfaMsg('A fresh authenticator code is needed. Nothing was changed.', 'error'); mfaNotice('fresh_mfa_required', false); }
-        else if (m.kind === 'authenticator_not_established') { setMfaMsg('Nothing was changed. Your authenticator was set up during this sign-in: sign out and sign in again with your code, then retry.', 'error'); mfaNotice('authenticator_not_established', false); }
-        else if (m.kind === 'mfa_required') { setMfaMsg('Nothing was changed. Two-step verification is required for this school: verify, then try again.', 'error'); mfaNotice('mfa_required', false); }
-        else if (/reason_required/.test(tok)) setMfaMsg('Please enter a reason of at least 10 characters. Nothing was changed.', 'error');
-        else if (/reason_too_long/.test(tok)) setMfaMsg('The reason must be 1000 characters or fewer. Nothing was changed.', 'error');
-        else if (/setting_missing/.test(tok)) setMfaMsg('This school\u2019s two-step verification record is missing, so only a SOAP Analytics administrator can set it. Please contact SOAP Analytics support. Nothing was changed.', 'error');
-        else if (/not_permitted/.test(tok)) setMfaMsg('You are not permitted to change this setting. Nothing was changed.', 'error');
-        else if (/concurrent_change/.test(tok)) setMfaMsg('The setting was changed by someone else at the same moment. Nothing was changed by this action \u2014 please check the current setting and try again.', 'error');
-        else { console.error(error); setMfaMsg('The setting could not be changed. Nothing was changed. Please try again, or contact SOAP Analytics support.', 'error'); }
-        return;
-      }
-      // Success is only what the server reports; re-read the status so the card shows the server's truth.
-      let after = null;
-      try {
-        const st = await sb.rpc('my_school_mfa_status');
-        if (!st.error && Array.isArray(st.data)) { MFA_SCHOOLS = st.data; after = mfaRow(); }
-      } catch (_) { /* fall back to the function's own answer below */ }
-      if (!after && data && typeof data.mfa_required === 'boolean') {
-        const r = mfaRow(); if (r) r.mfa_required = data.mfa_required;
-      }
-      renderMfaCard();
-      const done = mfaRow() ? mfaRow().mfa_required === true : wantOn;
-      setMfaMsg(data && data.changed === false
-        ? 'No change was needed: two-step verification was already ' + (done ? 'required' : 'not required') + '.'
-        : (done ? 'Two-step verification is now required for this school.' : 'Two-step verification is now off for this school. The change has been recorded.'), 'ok');
-    } catch (e) {
-      console.error(e);
-      setMfaMsg('The setting could not be confirmed, so please check the current setting before trying again.', 'error');
-    } finally {
-      btn.disabled = false;
-    }
+    document.getElementById('mfaState').textContent = row.mfa_required === true ? 'Two-step verification is ON for this school.' : 'Two-step verification is OFF for this school.';
+    const l = document.getElementById('mfaMovedLink'); if (l) l.href = 'security-settings.html?school_id=' + encodeURIComponent(existingSchoolId);
   }
 
   async function requireLogin() {

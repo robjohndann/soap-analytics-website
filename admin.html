@@ -696,6 +696,120 @@
   }
 
 
+  // ---- V82 fix: school-level two-step verification control (set_school_mfa_required) inside each school's card (Admin > Security). ----
+  // SEPARATE from the personal administrator setting above (set_admin_mfa). Status comes from my_school_mfa_status() (an administrator sees
+  // every school) and my_mfa_session(). UI only: the function re-checks authority, a fresh code (5 minutes), an authenticator enrolled before
+  // this sign-in, the reason rules and writes the audit row.
+  const SMFA = {};   // schoolId -> { row, sess }
+  function smfaEl(id) { return document.getElementById(id); }
+  function smfaBox(schoolId) { return smfaEl('smfa-' + schoolId); }
+  function smfaMsgSet(schoolId, text, kind) {
+    const el = document.getElementById('smfaMsg-' + schoolId); if (!el) return;
+    el.style.color = kind === 'error' ? '#B3261E' : kind === 'ok' ? '#1A7A6E' : '#5A6B80';
+    el.textContent = text || '';
+  }
+  async function smfaFetch(schoolId) {
+    const [st, se] = await Promise.all([sb.rpc('my_school_mfa_status'), sb.rpc('my_mfa_session')]);
+    if (st.error || !Array.isArray(st.data)) throw (st.error || new Error('status unavailable'));
+    const row = st.data.find(r => r.school_id === schoolId) || null;
+    const sess = (!se.error && Array.isArray(se.data) ? se.data[0] : null) || null;
+    SMFA[schoolId] = { row: row, sess: sess };
+    return SMFA[schoolId];
+  }
+  async function smfaLoad(schoolId) {
+    const box = smfaBox(schoolId); if (!box) return;
+    try { await smfaFetch(schoolId); smfaRender(schoolId); }
+    catch (e) { console.error(e); box.textContent = ''; const d = document.createElement('div'); d.className = 'school-meta'; d.textContent = 'The school’s two-step verification status could not be loaded. Please try again.'; box.appendChild(d); }
+  }
+  function smfaRender(schoolId) {
+    const box = smfaBox(schoolId), c = SMFA[schoolId]; if (!box || !c) return;
+    box.textContent = '';
+    if (!c.row) { const d = document.createElement('div'); d.className = 'school-meta'; d.textContent = 'This school has no two-step verification record to show.'; box.appendChild(d); return; }
+    const on = c.row.mfa_required === true;
+    const fresh = !!(c.sess && c.sess.aal === 'aal2' && c.sess.fresh_aal2 === true);
+    const mk = (tag, text, css) => { const e = document.createElement(tag); if (text) e.textContent = text; if (css) e.style.cssText = css; return e; };
+    box.appendChild(mk('p', 'Two-step verification for this school is ' + (on ? 'ON' : 'OFF') + '.', 'font-size:14px;font-weight:700;margin:0 0 6px;color:' + (on ? '#1A7A6E' : '#7A5C00') + ';'));
+    box.appendChild(mk('p', fresh ? 'Your sign-in has a fresh authenticator code (within the last 5 minutes).' : 'To change this, a fresh authenticator code is needed (entered within the last 5 minutes).', 'font-size:12px;color:#5A6B80;margin:0 0 10px;'));
+    box.appendChild(mk('p', 'This is the school’s setting. It is separate from your own administrator two-step verification above. Changes are recorded in the audit log; turning it OFF needs a reason.', 'font-size:12px;color:#5A6B80;margin:0 0 12px;'));
+    const btn = mk('button', on ? 'Turn off for this school…' : 'Turn on for this school…', 'background:#3DCFB8;color:#0D2B4E;border:none;border-radius:6px;padding:9px 16px;font-size:13px;font-weight:700;cursor:pointer;margin-right:8px;');
+    btn.type = 'button'; btn.addEventListener('click', () => smfaOpen(schoolId, !on)); box.appendChild(btn);
+    if (!fresh) {
+      const a = mk('a', 'Open verification in a new tab', 'font-size:13px;font-weight:700;margin-right:12px;'); a.href = SoapMfaGate._mfaUrl('stepup', 'admin.html'); a.target = '_blank'; a.rel = 'noopener'; box.appendChild(a);
+      const r = mk('button', 'I have verified: refresh', 'background:#fff;color:#0D2B4E;border:1px solid #0D2B4E;border-radius:6px;padding:8px 14px;font-size:13px;font-weight:700;cursor:pointer;');
+      r.type = 'button'; r.addEventListener('click', () => smfaLoad(schoolId)); box.appendChild(r);
+    }
+    const panel = mk('div', '', 'display:none;margin-top:14px;padding:12px;border:1px solid #DCE3EA;border-radius:8px;'); panel.id = 'smfaPanel-' + schoolId;
+    panel.appendChild(mk('p', '', 'font-size:13px;margin:0 0 10px;')).id = 'smfaText-' + schoolId;
+    const rw = mk('div', '', 'display:none;margin-bottom:10px;'); rw.id = 'smfaReasonWrap-' + schoolId;
+    const lb = mk('label', 'Reason (10–1000 characters, recorded in the audit log)', 'display:block;font-size:12px;font-weight:700;margin-bottom:4px;'); lb.htmlFor = 'smfaReason-' + schoolId; rw.appendChild(lb);
+    const ta = mk('textarea', '', 'width:100%;box-sizing:border-box;'); ta.id = 'smfaReason-' + schoolId; ta.rows = 3; ta.maxLength = 1000; rw.appendChild(ta);
+    panel.appendChild(rw);
+    const ok = mk('button', 'Confirm', 'background:#0D2B4E;color:#fff;border:none;border-radius:6px;padding:9px 16px;font-size:13px;font-weight:700;cursor:pointer;margin-right:8px;'); ok.type = 'button'; ok.id = 'smfaApply-' + schoolId;
+    ok.addEventListener('click', () => smfaApply(schoolId)); panel.appendChild(ok);
+    const no = mk('button', 'Cancel', 'background:#fff;color:#0D2B4E;border:1px solid #0D2B4E;border-radius:6px;padding:8px 14px;font-size:13px;font-weight:700;cursor:pointer;'); no.type = 'button';
+    no.addEventListener('click', () => { panel.style.display = 'none'; }); panel.appendChild(no);
+    box.appendChild(panel);
+    const m = mk('div', '', 'font-size:12px;font-weight:700;margin-top:10px;min-height:16px;'); m.id = 'smfaMsg-' + schoolId; box.appendChild(m);
+  }
+  function smfaOpen(schoolId, wantOn) {
+    const c = SMFA[schoolId]; if (!c || !c.row) return;
+    c.pending = wantOn;
+    smfaEl('smfaPanel-' + schoolId).style.display = '';
+    smfaEl('smfaReasonWrap-' + schoolId).style.display = wantOn ? 'none' : '';
+    smfaEl('smfaReason-' + schoolId).value = '';
+    smfaEl('smfaText-' + schoolId).textContent = wantOn
+      ? 'Turn ON two-step verification for ' + (c.row.school_name || 'this school') + '? Everyone who signs in to it will need an authenticator code.'
+      : 'Turn OFF two-step verification for ' + (c.row.school_name || 'this school') + '? People will be able to sign in with a password only. A reason is required.';
+    smfaMsgSet(schoolId, '', 'info');
+  }
+  async function smfaApply(schoolId) {
+    const c = SMFA[schoolId]; if (!c || c.pending === undefined || c.pending === null) return;
+    const wantOn = c.pending, btn = smfaEl('smfaApply-' + schoolId);
+    let reason = null;
+    if (!wantOn) {
+      reason = smfaEl('smfaReason-' + schoolId).value.trim();
+      if (reason.length < 10) { smfaMsgSet(schoolId, 'Please enter a reason of at least 10 characters.', 'error'); return; }
+      if (reason.length > 1000) { smfaMsgSet(schoolId, 'The reason must be 1000 characters or fewer.', 'error'); return; }
+    }
+    if (typeof SoapMfaGate === 'undefined') { smfaMsgSet(schoolId, 'The security check could not be loaded. Please refresh the page.', 'error'); return; }
+    btn.disabled = true; smfaMsgSet(schoolId, 'Checking your sign-in…', 'info');
+    try {
+      const f = await SoapMfaGate.requireFresh(sb, { navigate: false });
+      if (!f.ok) {
+        if (f.state === 'needs_stepup') { smfaMsgSet(schoolId, 'A fresh authenticator code is needed first. Nothing was changed.', 'error'); mfaBanner('fresh_mfa_required'); }
+        else if (f.state === 'no_session') { smfaMsgSet(schoolId, 'Your session has ended. Please log in again.', 'error'); mfaBanner('no_session'); }
+        else smfaMsgSet(schoolId, 'We could not confirm your sign-in security, so nothing was changed. Please try again.', 'error');
+        return;
+      }
+      smfaMsgSet(schoolId, 'Applying…', 'info');
+      const { data, error } = await sb.rpc('set_school_mfa_required', { p_school_id: schoolId, p_required: wantOn, p_reason: wantOn ? null : reason });
+      if (error) {
+        const kind = mfaKind(error), tok = String(error.originalMessage || error.message || '');
+        if (kind === 'fresh_mfa_required') { smfaMsgSet(schoolId, 'A fresh authenticator code is needed. Nothing was changed.', 'error'); mfaBanner(kind); }
+        else if (kind === 'authenticator_not_established') { smfaMsgSet(schoolId, 'Nothing was changed. Your authenticator was set up during this sign-in: sign out and sign in again with your code, then try again.', 'error'); mfaBanner(kind); }
+        else if (kind === 'mfa_required') smfaMsgSet(schoolId, 'Nothing was changed. Two-step verification is required: verify, then try again.', 'error');
+        else if (kind === 'mfa_check_failed') smfaMsgSet(schoolId, 'We could not confirm your two-step verification status. Nothing was changed. Please try again.', 'error');
+        else if (/reason_required/.test(tok)) smfaMsgSet(schoolId, 'Please enter a reason of at least 10 characters. Nothing was changed.', 'error');
+        else if (/reason_too_long/.test(tok)) smfaMsgSet(schoolId, 'The reason must be 1000 characters or fewer. Nothing was changed.', 'error');
+        else if (/not_permitted/.test(tok)) smfaMsgSet(schoolId, 'You are not permitted to change this setting. Nothing was changed.', 'error');
+        else if (/school_not_found/.test(tok)) smfaMsgSet(schoolId, 'This school could not be found. Nothing was changed.', 'error');
+        else if (/concurrent_change/.test(tok)) smfaMsgSet(schoolId, 'The setting was changed by someone else at the same moment. Nothing was changed by this action — please check the current setting and try again.', 'error');
+        else { console.error(error); smfaMsgSet(schoolId, 'The setting could not be changed. Nothing was changed. Please try again, or contact SOAP Analytics support.', 'error'); }
+        return;
+      }
+      let ok = false;
+      try { await smfaFetch(schoolId); ok = true; } catch (e) { ok = false; }
+      if (ok) smfaRender(schoolId);
+      const nowOn = ok && SMFA[schoolId].row ? SMFA[schoolId].row.mfa_required === true : (data && typeof data.mfa_required === 'boolean' ? data.mfa_required : wantOn);
+      smfaMsgSet(schoolId, data && data.changed === false
+        ? 'No change was needed: two-step verification was already ' + (nowOn ? 'on' : 'off') + '.'
+        : (nowOn ? 'Two-step verification is now ON for this school. The change has been recorded.' : 'Two-step verification is now OFF for this school. The change has been recorded.'), 'ok');
+    } catch (err) {
+      console.error(err);
+      smfaMsgSet(schoolId, 'The setting could not be confirmed, so please check the current setting before trying again.', 'error');
+    } finally { const b = smfaEl('smfaApply-' + schoolId); if (b) b.disabled = false; }
+  }
+
   // V76: the completion calculations (V74 rules: cumulative, next-period start_date <= today,
   // future periods and duplicate cells excluded) moved UNCHANGED into completion-core.js so
   // Admin, Portal and the server-side reminder function share one implementation.
@@ -888,6 +1002,7 @@
     document.getElementById('panel-' + schoolId + '-' + tabKey).classList.add('active');
     if (tabKey === 'users') ensureViewersLoaded(schoolId); // V64 Stage 5 — lazy-load Viewers on first open
     if (tabKey === 'users') ensureAccessLoaded(schoolId);  // V67 — lazy-load names/emails/activation status
+    if (tabKey === 'security') smfaLoad(schoolId);          // V82 fix — school-level two-step verification control (separate from the personal admin setting)
   }
 
   // Groups the 22 existing tabs into 5 top-level headings (School Setup,
@@ -1694,6 +1809,7 @@
             <button type="button" class="tab-btn" data-group="soapidsr" style="display:none;" onclick="switchTab(event,'${s.id}','idsrdash')">IDSR Dashboard</button>
             <button type="button" class="tab-btn" data-group="admingroup" style="display:none;" onclick="switchTab(event,'${s.id}','package')">Package</button>
             <button type="button" class="tab-btn" data-group="admingroup" style="display:none;" data-v69-users-tab onclick="switchTab(event,'${s.id}','users')">Users & Access</button>
+            <button type="button" class="tab-btn" data-group="admingroup" style="display:none;" data-v82-security-tab onclick="switchTab(event,'${s.id}','security')">Security</button>
             <button type="button" class="tab-btn" data-group="amendgroup" style="display:none;color:#0D7377;" onclick="switchTab(event,'${s.id}','amend')">✎ Amend Data</button>
           </div>
 
@@ -1851,6 +1967,12 @@
             <div class="detail-section" style="margin-top:0;">
               <h4>Users & Access</h4>
               ${renderUsersAccessFragment(s)}
+            </div>
+          </div>
+          <div class="tab-panel" id="panel-${s.id}-security">
+            <div class="detail-section" style="margin-top:0;">
+              <h4>Security &mdash; school two-step verification</h4>
+              <div id="smfa-${s.id}"><div class="school-meta">Loading&hellip;</div></div>
             </div>
           </div>
           <div class="tab-panel" id="panel-${s.id}-amend">

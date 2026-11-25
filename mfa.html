@@ -96,7 +96,7 @@
 
   var $ = function (id) { return document.getElementById(id); };
   var params = new URLSearchParams(window.location.search);
-  var MODE = params.get('mode') === 'stepup' ? 'stepup' : 'gate';
+  var MODE = params.get('mode') === 'stepup' ? 'stepup' : (params.get('mode') === 'enrol' ? 'enrol' : 'gate');   // V82-fix: 'enrol' = voluntary set-up while the school does not require MFA
   var RETURN = G.safeReturn(params.get('return'), 'portal.html');
   var UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   var SCHOOL = UUID_RE.test(params.get('school_id') || '') ? params.get('school_id') : null;
@@ -155,7 +155,8 @@
   }
 
   async function startEnrol() {
-    setHead('Set up two-step verification', 'Your school requires a second step when you sign in. This takes about two minutes.');
+    if (MODE === 'enrol') setHead('Set up your authenticator', 'This adds an authenticator app to your account so you can manage two-step verification for your school. This takes about two minutes.');
+    else setHead('Set up two-step verification', 'Your school requires a second step when you sign in. This takes about two minutes.');
     views('enrol'); msg('Preparing your set-up code…', 'info');
     $('enrolBtn').disabled = true;
     try {
@@ -212,6 +213,15 @@
     show('signOutBtn', false);
     $('adminDoneBtn').focus();
   }
+  // V82-fix: voluntary set-up (mode=enrol). The authenticator exists now, but changing a school's setting needs a sign-in that began
+  // AFTER it existed (Decision 4), so the only action offered is to sign out and sign in again, then use Security Settings.
+  function showEnrolledVoluntary() {
+    views('admindone'); msg('', '');
+    setHead('Authenticator added', 'Your authenticator is set up. Nothing about your school has changed yet.');
+    $('adminDoneText').textContent = 'For security, a school\u2019s two-step verification can only be changed in a sign-in that began after your authenticator was set up. Please sign out and sign in again, then open Security Settings from your portal.';
+    show('signOutBtn', false);
+    $('adminDoneBtn').focus();
+  }
   $('adminDoneBtn').addEventListener('click', function () { $('adminDoneBtn').disabled = true; G.signOutAndLeave(sb); });
 
   function showBlocked() {
@@ -230,6 +240,7 @@
     }
     justEnrolled = true; enrolled = null;
     b.textContent = 'Confirm and continue';
+    if (MODE === 'enrol') { showEnrolledVoluntary(); return; }   // V82-fix: voluntary set-up always ends with an explicit sign-out / sign-in (Decision 4)
     if (isAdminSession) { showAdminEnrolled(); return; }   // administrators: explicit sign-out/sign-in, never an automatic return
     await afterVerified();
   });
@@ -254,6 +265,16 @@
 
     var f;
     try { f = await listTotp(); } catch (e) { failClosed(); return; }
+
+    if (MODE === 'enrol') {
+      // Voluntary enrolment: needs a signed-in session. If an authenticator already exists there is nothing to set up.
+      if (f.verified.length) {
+        views('none'); setHead('You already have an authenticator', 'Your account already has an authenticator app. Nothing more is needed here.');
+        msg('', ''); $('retryBtn').classList.remove('hidden'); $('retryBtn').textContent = 'Back'; $('retryBtn').onclick = function () { window.location.replace(RETURN); };
+        return;
+      }
+      await startEnrol(); return;
+    }
 
     if (MODE === 'stepup') {
       if (!f.verified.length) {

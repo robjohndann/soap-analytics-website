@@ -37,7 +37,7 @@
     'portal': 1, 'admin': 1,
     'soap-dashboard': 1, 'soap-page': 1, 'exemplar-soap': 1,
     'idsr-soap': 1, 'idsr-dashboard': 1,
-    'school-setup-form': 1, 'set-password': 1,
+    'school-setup-form': 1, 'set-password': 1, 'security-settings': 1,
     'achievement-form': 1, 'attendance-form': 1, 'context-form': 1,
     'curriculum-form': 1, 'finance-form': 1, 'inclusion-form': 1,
     'leadership-form': 1, 'pdw-form': 1, 'safeguarding-form': 1
@@ -294,7 +294,7 @@
   }
 
   window.SoapMfaGate = {
-    version: '0.2-local',
+    version: '0.3-local',
     require: requireGate,
     requireFresh: requireFresh,
     evaluate: evaluate,

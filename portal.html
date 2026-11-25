@@ -927,6 +927,26 @@
         </div>
       </div>`;
 
+    // V82 fix: Security Settings. Shown at EVERY package (IDSR-only included) to a person who may change this school's two-step
+    // verification, as reported by the server (my_school_mfa_status.can_change: Headteacher or an assigned Multi-School Leader; admins
+    // use the Admin Dashboard). UI only: set_school_mfa_required re-checks authority, freshness and school isolation.
+    {
+      const secRow = (mfaEv.schools || []).find(r => r.school_id === linkRow.school_id);
+      if (!isViewer && secRow && secRow.can_change === true) {
+        const secOn = secRow.mfa_required === true;
+        accordionHtml += `
+        <div>
+          <button type="button" class="bar" id="bar-security" onclick="toggleAccordion('security');">
+            <span class="bar-label">Security Settings</span>
+            <span class="bar-right"><span class="badge ${secOn ? 'live' : ''}" id="securityBadge">2-step ${secOn ? 'ON' : 'OFF'}</span><i class="chev" id="chev-security">▾</i></span>
+          </button>
+          <div class="panel" id="panel-security">
+            <a class="form-row" href="security-settings.html?school_id=${encodeURIComponent(linkRow.school_id)}"><span class="name">Two-step verification</span></a>
+          </div>
+        </div>`;
+      }
+    }
+
     // V64 Stage 6 — View My SOAP is the ONE panel Leadership and Viewer share.
     // Package behaviour is unchanged: features.soap → the published list as before;
     // otherwise the existing locked bar. The published_soaps query and the
