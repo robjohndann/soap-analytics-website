@@ -261,7 +261,14 @@
     var yg = S.yearGroupProfile;
     if (!yg || yg.status !== 'ok' || !yg.data || !yg.data.rows || !yg.data.rows.length) return false;
     if (yg.data.rows.some(function (r) { return /^Year (12|13|14)$/i.test(r.year); })) return false;
-    return ['post16QualTypes', 'post16Retention', 'post16Entries', 'post16Summary'].every(function (k) { return S[k] && S[k].status === 'absent'; });
+    // V84: the 16-18 sections must carry no sixth-form results: absent, or Ofsted's own "no data" statement, or (qualification types only) a table whose every cell is "No data" or zero.
+    // This is only a secondary check; the school-phase evidence above (no sixth-form roll row, no Year 12-14 in the year-group roll) is what confirms there is no sixth form.
+    return ['post16QualTypes', 'post16Retention', 'post16Entries', 'post16Summary'].every(function (k) {
+      var x = S[k]; if (!x) return false;
+      if (x.status === 'absent') return true;
+      if (x.status === 'empty' && x.sourceStatedNoData) return true;
+      return k === 'post16QualTypes' && x.status === 'ok' && !!x.data && x.data.rows.every(function (r) { return r.cells.every(function (c) { return c.num == null || c.num === 0; }); });
+    });
   }
   function fmt(num, dp, unit) {
     if (num == null || !isFinite(num)) return '—';
@@ -2923,6 +2930,8 @@
               right: nm.value == null ? avgCell(null, nid + ':avg') : { id: nid + ':avg', num: nm.value, disp: Core.fmt(nm.value, nm.dp, '%'), band: null, est: false, kind: 'avg', say: 'mean of the national figures for the leaver years shown' } });
           }
         });
+        // V84: a secondary school confirmed to have no sixth form (school-phase evidence, never merely missing post-16 data) shows no 16-18 destination rows
+        if (!(opts && opts.cards) && Core.noSixthForm(model)) card.rows = card.rows.filter(function (r) { return !/^After 16-18/.test(r.key || ''); });
         // V77-03 Stage 3 (D8): the leaver year in the heading; (G7) the all-missing 16-18 rows become ONE row that quotes the source, only when the source says so and every cell is missing
         if (opts && opts.destNoData1618) {
           var is1618 = function (r) { return /^After 16-18/.test(r.key || ''); }, grp = card.rows.filter(is1618);
@@ -4139,8 +4148,9 @@
     }
     return '<div class="panel"><h4 aria-level="2">' + esc(title) + '</h4>' + t + '</div>';
   }
-  function pageSixth(types, ret, ent, summ) {
+  function pageSixth(types, ret, ent, summ, noSix) {
     var h = head(null, 'Sixth Form: Qualifications & Retention', 'Qualification types, retention and subject entries for 16 to 18 students');
+    if (noSix) return h + '<div class="notice n-absent"><b>No sixth form.</b> This school has no sixth form: the report shows no Year 12 or 13 pupils on roll. Nothing is shown as zero.</div>';
     h += '<div class="statusline">Qualification types ' + chip(types) + ' Retention ' + chip(ret) + ' Subject entries ' + chip(ent) + ' Summary ' + chip(summ) + '</div>';
     if ([types, ret, ent, summ].every(function (s) { return s.status === 'absent'; })) return h + '<div class="notice n-absent"><b>No 16 to 18 sections in this report.</b> The school may have no sixth form, or no 16 to 18 data was supplied. Nothing is shown and nothing is treated as zero; the A Level headline page is likewise marked not applicable.</div>';
     h += banner(types, 'qualification types') + banner(ret, 'retention') + banner(ent, 'subject entries') + banner(summ, 'the 16 to 18 summary');
@@ -4226,11 +4236,12 @@
   // ───────────── 7. Destinations in detail ─────────────
   function lbOfDest(label) { return /not sustained/i.test(label) ? true : false; }
   function rateableDest(label) { return /^sustained education, employment or training$/i.test(label) || /^destination not sustained$/i.test(label); }
-  function pageDestinations(sec) {
+  function pageDestinations(sec, noSix) {
     var h = head(sec, 'Destinations in Detail', 'All destination categories after key stage 4 and after 16 to 18, with the official significance verdict for each');
     h += banner(sec, 'destinations'); if (sec.status === 'absent' || sec.status === 'failed') return h + guidance(sec);
     h += '<div class="notice n-info">Colour is shown only for “sustained education, employment or training” and “destination not sustained” (reversed: higher is worse), using the official significance verdict. The source gives no national percentage, so no gap is calculated. “Not available” beside a percentage is the source’s verdict that significance could not be assessed; the percentage itself is real.</div>';
     [['ks4', 'After key stage 4'], ['post16', 'After 16 to 18']].forEach(function (p) {
+      if (noSix && p[0] === 'post16') return;   // V84: confirmed no sixth form: no 16 to 18 destinations block
       var tabs = sec.data[p[0]];
       if (!tabs.length) { h += '<h3 aria-level="2" class="blockh">' + p[1] + '</h3><div class="notice n-absent"><b>Not in this report.</b> Nothing is treated as zero.</div>'; return; }
       h += '<h3 aria-level="2" class="blockh">' + p[1] + '</h3>';
@@ -4364,8 +4375,8 @@
   }
 
   // ───────────── expected cells (tie-out enumerator; walks the extractor data, not the HTML) ─────────────
-  function expected(ex, model) {
-    var out = [], S = ex ? ex.sections : {};
+  function expected(ex, model, opts) {
+    var out = [], S = ex ? ex.sections : {}, NOSIX = !!(opts && opts.noSix);
     function add(id, c) { out.push(enc(id, c)); }
     function ok(s) { return s && s.data && (s.status === 'ok' || s.status === 'partial' || s.status === 'empty'); }
     var s;
@@ -4386,10 +4397,10 @@
     if (ok(s = S.pupilMovement)) s.data.rows.forEach(function (r, ri) { r.cells.forEach(function (c, i) { add('x:mv:' + ri + ':' + i, c); }); });
     if (ok(s = S.alternativeProvision)) s.data.terms.forEach(function (t, ti) { if (t.state !== 'rows') return; t.rows.forEach(function (r, ri) { [['total', r.total], ['ft', r.fullTime], ['pt', r.partTime]].forEach(function (p) { if (p[1]) add('x:ap:' + ti + ':' + ri + ':' + p[0], p[1]); }); }); });
     if (ok(s = S.ks4Entries)) s.data.rows.forEach(function (r, ri) { r.entries.forEach(function (c, i) { add('x:ks4e:' + ri + ':' + i, c); }); add('x:ks4e:' + ri + ':aps', r.aps); });
-    if (ok(s = S.post16QualTypes)) s.data.rows.forEach(function (r, ri) { r.cells.forEach(function (c, i) { add('x:q16t:' + ri + ':' + i, c); }); });
-    if (ok(s = S.post16Retention)) s.data.rows.forEach(function (r, ri) { r.cells.forEach(function (c, i) { add('x:q16r:' + ri + ':' + i, c); }); });
-    if (ok(s = S.post16Entries)) s.data.rows.forEach(function (r, ri) { r.cells.forEach(function (c, i) { add('x:q16e:' + ri + ':' + i, c); }); });
-    if (ok(s = S.post16Summary)) [['attainment', 'x:p16s:att'], ['progress', 'x:p16s:prog'], ['priorLow', 'x:p16s:low'], ['priorMid', 'x:p16s:mid'], ['priorHigh', 'x:p16s:high']].forEach(function (k) {
+    if (!NOSIX && ok(s = S.post16QualTypes)) s.data.rows.forEach(function (r, ri) { r.cells.forEach(function (c, i) { add('x:q16t:' + ri + ':' + i, c); }); });
+    if (!NOSIX && ok(s = S.post16Retention)) s.data.rows.forEach(function (r, ri) { r.cells.forEach(function (c, i) { add('x:q16r:' + ri + ':' + i, c); }); });
+    if (!NOSIX && ok(s = S.post16Entries)) s.data.rows.forEach(function (r, ri) { r.cells.forEach(function (c, i) { add('x:q16e:' + ri + ':' + i, c); }); });
+    if (!NOSIX && ok(s = S.post16Summary)) [['attainment', 'x:p16s:att'], ['progress', 'x:p16s:prog'], ['priorLow', 'x:p16s:low'], ['priorMid', 'x:p16s:mid'], ['priorHigh', 'x:p16s:high']].forEach(function (k) {
       var D = s.data[k[0]]; if (!D) return;
       D.rows.forEach(function (r, ri) { r.cells.forEach(function (c, i) { add(k[1] + ':' + ri + ':' + i, c); }); });
       if (D.cohorts) D.cohorts.rows.forEach(function (r, ri) { r.cells.forEach(function (c, i) { add(k[1] + ':co:' + ri + ':' + i, c); }); });
@@ -4400,7 +4411,7 @@
       if (o.cohorts) o.cohorts.rows.forEach(function (r, ri) { r.cells.forEach(function (c, i) { add(id + ':co:' + ri + ':' + i, c); }); });
     }); }); });
     if (ok(s = S.eyfsNationals)) s.data.rows.forEach(function (r, ri) { add('x:eyfs:' + ri, r.cell); });
-    if (ok(s = S.destinationsDetail)) ['ks4', 'post16'].forEach(function (k) { s.data[k].forEach(function (T, ti) { T.rows.forEach(function (r, ri) { r.cells.forEach(function (c, i) { add('x:dest:' + k + ':' + ti + ':' + ri + ':' + i, c); }); }); }); });
+    if (ok(s = S.destinationsDetail)) ['ks4', 'post16'].forEach(function (k) { if (NOSIX && k === 'post16') return; s.data[k].forEach(function (T, ti) { T.rows.forEach(function (r, ri) { r.cells.forEach(function (c, i) { add('x:dest:' + k + ':' + ti + ':' + ri + ':' + i, c); }); }); }); });
     if (ok(s = S.ethnicity)) s.data.rows.forEach(function (r, ri) { r.cells.forEach(function (c, i) { add('x:eth:' + ri + ':' + i, c); }); });
     if (ok(s = S.senNeeds)) s.data.tables.forEach(function (T, ti) { T.rows.forEach(function (r, ri) { r.cells.forEach(function (c, i) { add('x:sen:' + ti + ':' + ri + ':' + i, c); }); }); });
     if (ok(s = S.yearGroupProfile)) s.data.rows.forEach(function (r, ri) { r.cells.forEach(function (c, i) { add('x:yg:' + ri + ':' + i, c); }); });
@@ -5341,6 +5352,7 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
     var PRIM = ctx.reportType === 'primary', AT = ctx.reportType === 'all-through' || PRIM, PG = PRIM ? PAGES_P : AT ? PAGES_AT : PAGES;
     setPhases(PRIM);
     var V = Core.buildViews(model), ex = model.extra || null, tables = valueTables(model, V, AT, PRIM), S = function (k) { return sec(ex, k); };
+    var NOSIX = !AT && Core.noSixthForm(model);   // V84: confirmed no sixth form (secondary reports only)
     var hasSixth = V.alevel.rows.some(function (r) { return r.present !== false && r.cells.some(function (c) { return c && c.num != null; }); });
     var pageHtml = {}, AN = AT ? atAnalysis(model, ex, tables) : null, FIRSTPH = {}; if (AT) PHASES.forEach(function (p) { FIRSTPH[PHASE_FIRST[p[0]]] = p[0]; });
     function valuePage(key, extraBefore) {
@@ -5359,9 +5371,9 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
       else if (k === 'behaviour') h = X.pages.behaviour(S('suspensions'), S('permExclusions'));
       else if (k === 'movement') h = X.pages.movement(S('pupilMovement'), S('alternativeProvision'));
       else if (k === 'ks4entries') h = X.pages.ks4Entries(S('ks4Entries'));
-      else if (k === 'sixthform') h = X.pages.sixth(S('post16QualTypes'), S('post16Retention'), S('post16Entries'), S('post16Summary'));
+      else if (k === 'sixthform') h = X.pages.sixth(S('post16QualTypes'), S('post16Retention'), S('post16Entries'), S('post16Summary'), NOSIX);
       else if (k === 'similar') h = X.pages.similar(S('ks4Summary'));
-      else if (k === 'destdetail') h = X.pages.destinations(S('destinationsDetail'));
+      else if (k === 'destdetail') h = X.pages.destinations(S('destinationsDetail'), NOSIX);
       else if (k === 'findings') h = X.pages.findings(S('officialFindings'), S('trust'), model.context && model.context.staffing);
       else if (k === 'ks2summary') h = X.pages.similar(S('ks2Summary'), { tab: 'sim2', prefix: 'x:sim2', title: 'KS2 National & Similar Schools', sub: 'Key stage 2 results against the national average and, separately, against similar schools — official averages and bandings', label: 'KS2 summaries' }) + atNotPublished(ctx);
       else if (k === 'eyfs') h = X.pages.eyfs(S('eyfsNationals'));
@@ -5426,7 +5438,7 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
         }
       });
     });
-    return out.concat(X.expected(model.extra || null, model));
+    return out.concat(X.expected(model.extra || null, model, { noSix: !AT && Core.noSixthForm(model) }));
   }
 
   return { DASH_VERSION: DASH_VERSION, build: build, buildDashboardSnapshot: function (model, ctx) { return build(model, SI.normCtx(ctx), {}); }, expectedCells: expectedCells, DASH_SCRIPT: DASH_SCRIPT, CSS: CSS, PAGES: PAGES, PAGES_AT: PAGES_AT, valueTables: valueTables, analytics: analytics, concerns: concerns, _internals: { rankKey: rankKey, describe: describe, adverseOfficial: adverseOfficial, block: block, subjectTable: subjectTable, flat: flat, LABEL: LABEL } };
