@@ -1067,7 +1067,8 @@
   }
   /** V77-07 A4: the "Year 11 context" column of a cohort table holds a plain-text label (e.g. "Low - Stability"), not a figure. Kept verbatim as a text cell; any other text in this column, and every non-label cell elsewhere, still goes through cellOf and warns as before. */
   function contextLabelCell(colName, rawIn) {
-    if (!/^year (?:11|12|13) context$/i.test(String(colName || '').trim())) return null;   // the label is kept literally; it is never mapped to another cohort
+    var cn = String(colName || '').trim();
+    if (!/^year (?:11|12|13) context$/i.test(cn) && !(PRIM_CTX && /^(?:key stage 2 \(year 6\)|mtc \(year 4\)|phonics \(year 1\)) \u2014 context$/i.test(cn))) return null;   // V83: only in a primary-only report, the KS2 / MTC / phonics context columns carry the same plain-text labels (all-through and secondary parsing is untouched)   // the label is kept literally; it is never mapped to another cohort
     var raw = norm(rawIn);
     return /^[A-Za-z][A-Za-z ]*[A-Za-z]\s*[-\u2013]\s*[A-Za-z][A-Za-z ]*[A-Za-z]$/.test(raw) ? { raw: raw, st: 'label' } : null;
   }
@@ -1151,14 +1152,14 @@
       e = out[key] = { label: label, rows: {}, used: false };
       arr(tbl.querySelectorAll('tbody tr')).forEach(function (tr) {
         var cells = arr(tr.querySelectorAll('td,th')); if (cells.length !== ids.length) return;
-        var yr = txt(cells[iy]); if (!/^(20\d\d|3-year)/.test(yr)) return;
+        var yr = txt(cells[iy]); if (!/^(20\d\d|[23]-year)/.test(yr)) { if (yr) w.push('similar-school detail ' + label + ': unrecognised reporting-period label "' + yr + '" (row not shown)'); return; }   // V83 KB-1: a non-blank unrecognised label is reported, never dropped silently
         var a = cellOf(cells[ia].textContent); countUnparsed([a], 'similar-school average ' + yr, w);
         e.rows[yr] = { avg: a, band: ib >= 0 ? txt(cells[ib]) : '', cohort: ic >= 0 ? txt(cells[ic]) : '' };
       });
     });
     return out;
   }
-  function yearKey(y) { return /^3-year/i.test(norm(y)) ? '3-year' : norm(y); }
+  function yearKey(y) { var m = /^([23])-year/i.exec(norm(y)); return m ? m[1] + '-year' : norm(y); }
   /** Attach row.simAvg to every summary row that has a detail table; returns { avgs, rows } and warns on any detail table or year that could not be placed. */
   function attachSimAvg(out, det, w, label) {
     var placed = 0, avgs = 0;
@@ -1351,7 +1352,15 @@
     return c;
   }
 
-  function attach(model, doc) { model.extra = extract(doc); return model; }
+  var PRIM_CTX = false;
+  function primaryOnlyModel(model) {
+    try {
+      var Cls = typeof require === 'function' && typeof module === 'object' ? require('./idsr-classify.js') : (typeof self !== 'undefined' ? self : this).IdsrClassify, keys = Object.keys(model.measures || {}), any = false;
+      if (!Cls || !keys.length) return false;
+      return keys.every(function (k) { var p = Cls.phaseOf(k); if (p === 'primary') any = true; return p === 'whole' || p === 'primary'; }) && any;
+    } catch (e) { return false; }
+  }
+  function attach(model, doc) { PRIM_CTX = primaryOnlyModel(model); try { model.extra = extract(doc); } finally { PRIM_CTX = false; } return model; }
   Core.extraHook = function (doc, model) { attach(model, doc); };   // Core.parse now attaches model.extra whenever this module is loaded
 
   return { EXTRA_VERSION: EXTRA_VERSION, extract: extract, attach: attach, coverage: coverage, cellOf: cellOf, destCell: destCell, _internals: { yearGroupAbsence: yearGroupAbsence, ks4Summary: ks4Summary } };
@@ -4659,9 +4668,24 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
       });
     }
     build('ks2', P.ks2); build('ks2dis', P.ks2dis);
+    // V83 QA: the disadvantage gap (Gap and Gap trend, as published) for the disadvantaged pupils' measures. Primary only; never rated, ranked, derived or averaged.
+    function gapBlock(page, pairs, title) {
+      var specs = pairs.map(function (p) { var k = splitKey(p[1]); return { section: p[0], group: k.group, measure: k.measure }; }).filter(function (sp) { var e = Core.findEntry(model, sp.group, sp.measure, true); return e && e.rows.some(function (r) { return r.gap && r.gap.num != null; }); });
+      if (!specs.length) return;
+      var rows = [];
+      specs.forEach(function (sp) {
+        var e = Core.findEntry(model, sp.group, sp.measure), cols = Core.axisFor([e], 'annual'), ar = Core.buildRow(model, sp, cols, 'annual');
+        cols.forEach(function (col, ci) { var c = ar.cells[ci]; if (c && (c.gap || c.num != null)) rows.push({ type: 'grow', idx: rows.length, label: sp.section, year: col.label, c: c, lowerBetter: ar.lowerBetter }); });
+        var x = null; e.rows.forEach(function (r) { if (r.periodKind === 'rolling3') x = r; });
+        if (x) { var rr = Core.buildRow(model, sp, [{ label: x.label, year: null, startYear: null }], 'rolling3'); if (rr.cells[0]) rows.push({ type: 'grow', idx: rows.length, label: sp.section, year: x.label + ' (DfE published)', c: rr.cells[0], lowerBetter: rr.lowerBetter }); }
+      });
+      if (rows.length) T.push({ page: page, key: 'gap', nt: { gapp: true, noRate: true, noAvg: true, cols: [], rows: rows }, o: { title: title, anchor: 'sub-' + page + '-gap', sub: 'Gap = the disadvantaged pupils’ result minus the national non-disadvantaged result, and the gap trend, exactly as published in the IDSR. They are never rated, ranked or recalculated by SOAP. “Not available” and “Not applicable” are the source’s own words.' } });
+    }
+    if (PRIM) gapBlock('ks2dis', P.ks2dis, 'Disadvantage gap — attainment against the national non-disadvantaged figure');
     build('mtcphonics', [['Year 4 MTC score', 'All pupils - Year 4 MTC score'], ['Phonics: expected standard (%)', 'All pupils - Phonics expected standard']], true);
     // V83 (primary): KS2 progress and the prior-attainer groups (only the measures the source actually contains)
     if (P.progress) build('ks2progress', P.progress);
+    if (PRIM && P.progress) gapBlock('ks2progress', P.progress.filter(function (q) { return /^Disadvantaged pupils - /.test(q[1]); }), 'Disadvantage gap — progress against the national non-disadvantaged figure');
     (P.prior || []).forEach(function (g) { build('ks2prior-' + g[0], g[1]); });
     return T;
   }
@@ -4678,6 +4702,22 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
     '.chg-table td{font-size:12.5px;vertical-align:top}.ov-other{margin:16px 0}.ov-other summary{cursor:pointer;font-weight:700;padding:8px 0}.ov-links{display:flex;flex-wrap:wrap;gap:8px}.ov-link{border:0;border-radius:8px;background:var(--navy);color:#fff;padding:8px 14px;font-weight:600;cursor:pointer}.ov-link:focus-visible{outline:3px solid #FFC83D;outline-offset:2px}.entries-panel{margin-top:14px}.ov-np{margin:14px 0}.ov-excl{margin-top:6px}.badge.off{background:#EDE9F7;color:#2d2466}' +
     '#page-overview .narrative-item{padding:10px 16px}#page-overview .narr-p{margin:4px 0;line-height:1.4}#page-overview .narr-basis{margin:6px 0 0}#page-overview .ph-tiles{margin:10px 0}#page-overview .ph-tile{padding:6px 12px}#page-overview .ph-n{margin:1px 0 6px}#page-overview .ph-leg{margin-top:4px}#page-overview .exec-grid{gap:14px;margin-bottom:16px}#page-overview .exec-panel{padding:14px 18px}#page-overview .exec-panel .exec-count{margin-bottom:8px}#page-overview .ov-col{gap:10px}#page-overview .ov-row{padding:2px 8px}#page-overview table.data-table td,#page-overview table.data-table th{padding-top:5px;padding-bottom:5px}#page-overview .ov-other{margin:10px 0}#page-overview .ov-other summary{padding:5px 0}#page-overview .ov-np{margin:10px 0}#page-overview .heatmap-title{margin:6px 0 8px}' +
     '@media(max-width:900px){.ph-tiles{grid-template-columns:1fr 1fr}.ov-row{flex-wrap:wrap}.ov-l,.ov-v{white-space:normal;flex-basis:100%}}';
+  /** V83 QA (primary): the disadvantage gap table, one row per measure and year, every figure read from the IDSR (Gap and Gap trend are never calculated here). */
+  function blockGap(pageKey, tb) {
+    var nt = tb.nt, o = tb.o, base = 'd:' + pageKey + ':' + tb.key;
+    var h = '<h3 aria-level="2" class="blockh" id="' + esc(o.anchor) + '">' + esc(o.title) + '</h3><p class="psub">' + esc(o.sub) + '</p>';
+    var t = '<table class="data-table gap-table" id="tbl-' + esc(pageKey + '-' + tb.key) + '"><thead><tr><th>Metric</th><th>Year</th><th>Pupils</th><th>School</th><th>National non-disadvantaged</th><th>Gap</th><th>Gap trend</th></tr></thead><tbody>';
+    function plain(id, num, disp, cls, tip) { return '<td class="' + cls + '" data-id="' + esc(id) + '" data-v="' + (num == null ? '' : esc(String(num))) + '" data-d="' + esc(disp) + '"' + (tip ? ' title="' + esc(tip) + '"' : '') + '>' + esc(disp) + '</td>'; }
+    nt.rows.forEach(function (r) {
+      var c = r.c, b = base + ':' + r.idx, no = c.natOther && c.natOther.num != null ? c.natOther : null;
+      t += '<tr class="gap-row"><td class="lab">' + esc(r.label) + '</td><td>' + esc(r.year) + '</td><td>' + (c.n != null ? esc(String(c.n)) : '—') + '</td>' +
+        plain(b + ':s', c.num, c.num == null ? missTok(c.reason)[0] : c.disp, 'gaps', 'School result for this year (also in the table above)') +
+        plain(b + ':o', no ? no.num : null, no ? no.disp : '—', 'gapo', 'National non-disadvantaged figure, as published') +
+        plain(b + ':g', c.gap ? c.gap.num : null, c.gap ? c.gap.disp : '—', 'gapc', 'Gap to the national non-disadvantaged figure, as published; not rated') +
+        plain(b + ':t', null, c.trend || '—', 'gapt', 'Gap trend, as published') + '</tr>';
+    });
+    return h + '<div class="panel">' + t + '</tbody></table></div>';
+  }
   function blockR3(pageKey, tb) {
     var nt = tb.nt, o = tb.o, base = 'd:' + pageKey + ':' + tb.key, lab = nt.rolling || '3-year';
     var h = '<h3 aria-level="2" class="blockh" id="' + esc(o.anchor) + '">' + esc(o.title) + '</h3><p class="psub">' + esc(o.sub) + '</p>';
@@ -4727,6 +4767,7 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
 
   /** One detail block: table (left) + chart panel (right). Returns html. */
   function block(pageKey, tb) {
+    if (tb.nt.gapp) return blockGap(pageKey, tb);
     if (tb.nt.r3) return blockR3(pageKey, tb);
     var nt = tb.nt, o = tb.o, base = 'd:' + pageKey + ':' + tb.key, charts = [];
     var unitSeries = nt.dest ? 'School' : 'School vs National';
@@ -5096,7 +5137,7 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
   }
   var CONTEXT_TILES = [['yeargroup', 'Attendance by Year Group', 'yearGroupAbsence'], ['behaviour', 'Suspensions & Exclusions', ['suspensions', 'permExclusions']], ['movement', 'Pupil Movement & AP', ['pupilMovement', 'alternativeProvision']], ['ks4entries', 'KS4 Subject Entries', 'ks4Entries'], ['sixthform', 'Sixth Form', ['post16QualTypes', 'post16Retention', 'post16Entries', 'post16Summary']], ['similar', 'Similar-School Comparison', 'ks4Summary'], ['ks2summary', 'KS2 National & Similar Schools', 'ks2Summary'], ['eyfs', 'EYFS National Context', 'eyfsNationals'], ['destdetail', 'Destinations in Detail', 'destinationsDetail'], ['findings', 'Context & Official Findings', 'officialFindings']];
   /** The School Context page (G2): the five context tabs and the section tiles, moved verbatim from the Overview. */
-  function contextPage(model, ex) {
+  function contextPage(model, ex, prim) {
     var sx = function (k) { return sec(ex, k); };
     var tabs = [['chr', 'School Characteristics', X.ctx.characteristics(model.context && model.context.characteristics)], ['eth', 'Ethnicity', X.ctx.ethnicity(sx('ethnicity'))], ['sen', 'SEN', X.ctx.sen(sx('senNeeds'))], ['yg', 'Year Group', X.ctx.yearGroup(sx('yearGroupProfile'))], ['pa', 'Prior Attainment', X.ctx.prior(sx('priorAttainmentByYear'))]];
     var h = '<h1 class="page-title" tabindex="-1">School Context</h1><div class="page-sub">School characteristics, ethnicity, special educational needs, year-group profile and prior attainment, and the other context sections — as printed in the source IDSR.</div>';
@@ -5105,6 +5146,7 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
     h += '<div class="heatmap-title" style="margin-top:24px;">School context sections</div><div class="heatmap-grid">' + CONTEXT_TILES.map(function (t) {
       var secs = [].concat(t[2]).map(sx), allAbsent = secs.every(function (s) { return s.status === 'absent'; });
       var st = allAbsent ? { status: 'absent' } : (secs.some(function (s) { return s.status === 'failed'; }) ? { status: 'failed' } : secs.some(function (s) { return s.status === 'partial'; }) ? { status: 'partial' } : secs.every(function (s) { return s.status === 'ok' || s.status === 'absent'; }) ? { status: 'ok' } : { status: 'empty', sourceStatedNoData: secs.filter(function (s) { return s.status === 'empty'; }).every(function (s) { return s.sourceStatedNoData; }) });
+      if (prim && ['ks4entries', 'sixthform', 'similar', 'destdetail'].indexOf(t[0]) >= 0) return '<div class="tile"><div class="tile-name">' + esc(t[1]) + '</div><div class="tile-meta">' + X.chip(st) + '</div></div>';   // V83: a primary report has no such page, so the tile shows its status but is not a dead link
       return '<div class="tile go" tabindex="0" role="link" data-go="' + t[0] + '"><div class="tile-name">' + esc(t[1]) + '</div><div class="tile-meta">' + X.chip(st) + '</div></div>';
     }).join('') + '</div>';
     return h;
@@ -5308,7 +5350,7 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
     PG.forEach(function (p) {
       var k = p[0], h = '';
       if (k === 'overview') h = AT ? overviewPageAT(model, ex, tables, ctx, AN) : overviewPage(model, ex, tables, ctx);
-      else if (k === 'context') h = contextPage(model, ex);
+      else if (k === 'context') h = contextPage(model, ex, PRIM);
       else if (TITLES[k]) h = valuePage(k, k === 'attendance' ? '<div class="notice n-info">Permanent exclusions appear in the annual table as counts with the national count; the totals and reasons are on the <a href="#card=behaviour" data-go="behaviour" class="inl">Suspensions &amp; Exclusions</a> page.</div>' : '');
       else if (k === 'yeargroup') h = X.pages.yearGroupAbsence(S('yearGroupAbsence'));
       else if (k === 'behaviour') h = X.pages.behaviour(S('suspensions'), S('permExclusions'));
@@ -5359,6 +5401,7 @@ return {BASIS,compose,yr,dir,TARGET,CEILING,materialTip,DECLINE_MIN_NORM};
     function add(id, num, disp) { out.push({ id: id, v: num == null ? '' : String(num), d: disp }); }
     tables.forEach(function (tb) {
       var nt = tb.nt, base = 'd:' + tb.page + ':' + tb.key;
+      if (nt.gapp) { nt.rows.forEach(function (r) { var c = r.c, b = base + ':' + r.idx, no = c.natOther && c.natOther.num != null ? c.natOther : null; add(b + ':s', c.num, c.num == null ? missTok(c.reason)[0] : c.disp); add(b + ':o', no ? no.num : null, no ? no.disp : '—'); add(b + ':g', c.gap ? c.gap.num : null, c.gap ? c.gap.disp : '—'); add(b + ':t', null, c.trend || '—'); }); return; }
       if (nt.r3) { nt.rows.forEach(function (r) { var c = r.cells[0], b = base + ':' + r.idx + ':0'; if (!c) return; add(b + ':s', c.num, c.num == null ? missTok(c.reason)[0] : c.disp); add(b + ':n', c.nat && c.nat.num != null ? c.nat.num : null, c.nat && c.nat.num != null ? c.nat.disp : '—'); }); return; }
       nt.rows.forEach(function (r) {
         if (r.type !== 'row') return;
